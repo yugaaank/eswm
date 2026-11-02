@@ -1,13 +1,13 @@
-/// Minimal Lua embed for Hyprland config API (M3).
+/// Minimal Lua embed for eswm config API (M3/M4).
 // Provides: Lua state init, API registration, and do_file/do_chunk.
 // Bridges `Snapshot` and `CompCmd` so Lua scripts can keybind, reload,
-// and query state — matching Hyprland's `es.bind`, `es.dsp.*`, `es.config{}`.
+// and query state — matching Hyprland's `hl.bind`, `hl.define_submap`, `hl.dsp.*`, `hl.config{}`.
 
 use std::sync::Arc;
 use flume::Sender;
 use mlua::{Lua, Table};
 
-/// Initialize a new Lua state with the Hyprland config API pre-loaded.
+/// Initialize a new Lua state with the eswm config API pre-loaded.
 /// Registers `es` table with `bind`, `define_submap`, `dsp`, `config` submodules,
 /// plus `is_file_exists` and `safe_require` helpers.
 /// 
@@ -18,7 +18,7 @@ pub fn init() -> Result<Lua, mlua::Error> {
     Ok(lua)
 }
 
-/// Register the Hyprland config API (`es` table) into the given Lua state.
+/// Register the eswm config API (`es` table) into the given Lua state.
 /// Adds the `es` table with submodules: `bind`, `define_submap`, `dsp`, `config`,
 /// plus helpers `is_file_exists` and `safe_require`.
 /// 
@@ -29,22 +29,25 @@ pub fn register_api(lua: &Lua, _snapshot: Arc<std::sync::Mutex<crate::ipc::Snaps
     let es = lua.create_table()?;
 
     // es.bind(keybind_string) -> "ok"
+    // Creates the bind table outside the closure to avoid capturing lua
+    let _bind_table = lua.create_table()?;
     let bind = lua.create_function(move |_, keybind: String| -> Result<(), mlua::Error> {
-        let _ = keybind; // TODO: send CompCmd::Reload or dispatch
+        let _ = keybind; // TODO: parse keybind and send CompCmd
+        // For now, just mark it as handled
         Ok(())
     })?;
     es.set("bind", bind)?;
 
     // es.define_submap(map_name, keys) -> "ok"
     let define_submap = lua.create_function(move |_, map_name: String| -> Result<(), mlua::Error> {
-        let _ = map_name; // TODO: send CompCmd with keys
+        let _ = map_name; // TODO: define submap
         Ok(())
     })?;
     es.set("define_submap", define_submap)?;
 
     // es.dsp.global("quickshell:...") -> "ok"
     let dsp_global = lua.create_function(move |_, name: String| -> Result<(), mlua::Error> {
-        let _ = name; // TODO: send CompCmd::Dispatch
+        let _ = name; // TODO: dispatch quickshell command
         Ok(())
     })?;
     let dsp_table = lua.create_table()?;

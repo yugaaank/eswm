@@ -304,6 +304,20 @@ pub fn handle_request(request: &str, snap: &Arc<Mutex<Snapshot>>, cmd_tx: &flume
         (false, _, "startup") | (false, _, "startupscripts") => "ok".into(),
         (false, _, "notify") => "ok".into(), // notify [icon] [time_ms] text
         (false, _, "setcursor") => "ok".into(),
+        // Keyword/reload dispatch via Lua API
+        (false, _, "bind") => {
+            // Parse "keybind_string" from args; send as CompCmd::Unsupported for now
+            // In full implementation, parse Hyprland keybind format and dispatch
+            let _keybind = args.trim().to_string();
+            let _ = cmd_tx.send(CompCmd::Unsupported(format!("bind {}", _keybind)));
+            "ok".to_string()
+        }
+        (false, _, "define_submap") => {
+            // Parse "map_name" from args; send as CompCmd
+            let map_name = args.trim().split_whitespace().next().unwrap_or("").to_string();
+            let _ = cmd_tx.send(CompCmd::Unsupported(format!("define_submap {}", map_name)));
+            "ok".to_string()
+        }
         // Hyprland answers unknown commands with "invalid request"; hyprctl
         // exits 0 and eswm depends on those failing soft
         _ => "invalid request".to_string(),
