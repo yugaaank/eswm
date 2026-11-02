@@ -1,0 +1,145 @@
+{
+"mice": [
+    {
+        "address": "0x5569a789bd60",
+        "name": "compx-2.4g-receiver-mouse",
+        "defaultSpeed": 0.00000,
+        "scrollFactor": -1.00
+    },    {
+        "address": "0x5569a7362b80",
+        "name": "compx-2.4g-receiver-consumer-control-1",
+        "defaultSpeed": 0.00000,
+        "scrollFactor": -1.00
+    },    {
+        "address": "0x5569a7416220",
+        "name": "asue1306:00-04f3:3284-mouse",
+        "defaultSpeed": 0.00000,
+        "scrollFactor": -1.00
+    },    {
+        "address": "0x5569a62706c0",
+        "name": "asue1306:00-04f3:3284-touchpad",
+        "defaultSpeed": 0.00000,
+        "scrollFactor": -1.00
+    }
+],
+"keyboards": [
+    {
+        "address": "0x5569a6fd6e00",
+        "name": "compx-2.4g-receiver",
+        "rules": "",
+        "model": "",
+        "layout": "nz",
+        "variant": "",
+        "options": "",
+        "active_layout_index": 0,
+        "active_keymap": "English (New Zealand)",
+        "capsLock": false,
+        "numLock": true,
+        "main": false
+    },    {
+        "address": "0x5569a6fe14d0",
+        "name": "compx-2.4g-receiver-consumer-control",
+        "rules": "",
+        "model": "",
+        "layout": "nz",
+        "variant": "",
+        "options": "",
+        "active_layout_index": 0,
+        "active_keymap": "English (New Zealand)",
+        "capsLock": false,
+        "numLock": true,
+        "main": false
+    },    {
+        "address": "0x5569a735f240",
+        "name": "compx-2.4g-receiver-system-control",
+        "rules": "",
+        "model": "",
+        "layout": "nz",
+        "variant": "",
+        "options": "",
+        "active_layout_index": 0,
+        "active_keymap": "English (New Zealand)",
+        "capsLock": false,
+        "numLock": true,
+        "main": false
+    },    {
+        "address": "0x5569a78a9b80",
+        "name": "ite5570:00-048d:8051",
+        "rules": "",
+        "model": "",
+        "layout": "nz",
+        "variant": "",
+        "options": "",
+        "active_layout_index": 0,
+        "active_keymap": "English (New Zealand)",
+        "capsLock": false,
+        "numLock": true,
+        "main": false
+    },    {
+        "address": "0x5569a73e45b0",
+        "name": "video-bus",
+        "rules": "",
+        "model": "",
+        "layout": "nz",
+        "variant": "",
+        "options": "",
+        "active_layout_index": 0,
+        "active_keymap": "English (New Zealand)",
+        "capsLock": false,
+        "numLock": true,
+        "main": false
+    },    {
+        "address": "0x5569a73bc290",
+        "name": "power-button",
+        "rules": "",
+        "model": "",
+        "layout": "nz",
+        "variant": "",
+        "options": "",
+        "active_layout_index": 0,
+        "active_keymap": "English (New Zealand)",
+        "capsLock": false,
+        "numLock": true,
+        "main": false
+    },    {
+        "address": "0x5569a78693d0",
+        "name": "asus-wmi-hotkeys",
+        "rules": "",
+        "model": "",
+        "layout": "nz",
+        "variant": "",
+        "options": "",
+        "active_layout_index": 0,
+        "active_keymap": "English (New Zealand)",
+        "capsLock": false,
+        "numLock": true,
+        "main": false
+    },    {
+        "address": "0x5569a78e9930",
+        "name": "at-translated-set-2-keyboard",
+        "rules": "",
+        "model": "",
+        "layout": "nz",
+        "variant": "",
+        "options": "",
+        "active_layout_index": 0,
+        "active_keymap": "English (New Zealand)",
+        "capsLock": false,
+        "numLock": true,
+        "main": true
+    }
+],
+"tablets": [
+
+],
+"touch": [
+
+],
+"switches": [
+    {
+        "address": "0x5569a7c21ce0",
+        "name": "Lid Switch"
+    }
+]
+}
+

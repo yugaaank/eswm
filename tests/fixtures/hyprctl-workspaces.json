@@ -1,0 +1,27 @@
+[{
+    "address": "1",
+    "id": 1,
+    "type": "normal",
+    "name": "1",
+    "monitor": "eDP-1",
+    "monitorID": 0,
+    "windows": 1,
+    "hasfullscreen": false,
+    "lastwindow": "0x5569a73f5f80",
+    "lastwindowtitle": "Compositing manager - Wikipedia",
+    "ispersistent": false,
+    "tiledLayout": "dwindle"
+},{
+    "address": "2",
+    "id": 2,
+    "type": "normal",
+    "name": "2",
+    "monitor": "eDP-1",
+    "monitorID": 0,
+    "windows": 1,
+    "hasfullscreen": false,
+    "lastwindow": "0x5569a7c25010",
+    "lastwindowtitle": "OC | Simple Wayland compositor with Hyprla…",
+    "ispersistent": false,
+    "tiledLayout": "dwindle"
+}]

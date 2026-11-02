@@ -1,0 +1,109 @@
+{
+"eDP-1": {
+    "levels": {
+
+        "0": [
+                {
+                    "address": "0x5569a718d270",
+                    "x": 0,
+                    "y": 0,
+                    "w": 1920,
+                    "h": 1200,
+                    "alpha": 1,
+                    "namespace": "wallpaper",
+                    "pid": 1301
+                },                {
+                    "address": "0x5569a7c94620",
+                    "x": 0,
+                    "y": 0,
+                    "w": 1920,
+                    "h": 1200,
+                    "alpha": 1,
+                    "namespace": "quickshell:background",
+                    "pid": 1335
+                }
+        ],
+        "1": [
+],
+        "2": [
+                {
+                    "address": "0x5569a7ce43d0",
+                    "x": 1919,
+                    "y": 1199,
+                    "w": 1,
+                    "h": 1,
+                    "alpha": 1,
+                    "namespace": "quickshell",
+                    "pid": 1335
+                },                {
+                    "address": "0x5569a7c87c50",
+                    "x": 530,
+                    "y": 0,
+                    "w": 860,
+                    "h": 540,
+                    "alpha": 1,
+                    "namespace": "quickshell:island",
+                    "pid": 1335
+                },                {
+                    "address": "0x5569a60fefc0",
+                    "x": 520,
+                    "y": 1198,
+                    "w": 880,
+                    "h": 2,
+                    "alpha": 1,
+                    "namespace": "quickshell:dockEdge",
+                    "pid": 1335
+                }
+        ],
+        "3": [
+                {
+                    "address": "0x5569a7c6a3c0",
+                    "x": 0,
+                    "y": 0,
+                    "w": 250,
+                    "h": 23,
+                    "alpha": 1,
+                    "namespace": "quickshell:screenCorners",
+                    "pid": 1335
+                },                {
+                    "address": "0x5569a7c78bc0",
+                    "x": 1670,
+                    "y": 0,
+                    "w": 250,
+                    "h": 23,
+                    "alpha": 1,
+                    "namespace": "quickshell:screenCorners",
+                    "pid": 1335
+                },                {
+                    "address": "0x5569a7c7b450",
+                    "x": 0,
+                    "y": 1177,
+                    "w": 250,
+                    "h": 23,
+                    "alpha": 1,
+                    "namespace": "quickshell:screenCorners",
+                    "pid": 1335
+                },                {
+                    "address": "0x5569a7c7e310",
+                    "x": 1670,
+                    "y": 1177,
+                    "w": 250,
+                    "h": 23,
+                    "alpha": 1,
+                    "namespace": "quickshell:screenCorners",
+                    "pid": 1335
+                },                {
+                    "address": "0x5569a7c85c30",
+                    "x": 1470,
+                    "y": 0,
+                    "w": 450,
+                    "h": 750,
+                    "alpha": 1,
+                    "namespace": "quickshell:notificationPopup",
+                    "pid": 1335
+                }
+        ]
+    }
+}
+}
+

@@ -1,0 +1,366 @@
+[[
+{
+    "name": "specialWorkspaceOut",
+    "overridden": true,
+    "bezier": "emphasizedAccel",
+    "enabled": true,
+    "speed": 1.20,
+    "style": "slidevert"
+},
+{
+    "name": "workspacesIn",
+    "overridden": false,
+    "bezier": "",
+    "enabled": true,
+    "speed": 0.00,
+    "style": ""
+},
+{
+    "name": "layersIn",
+    "overridden": true,
+    "bezier": "islandOvershoot",
+    "enabled": true,
+    "speed": 2.70,
+    "style": "popin 93%"
+},
+{
+    "name": "fadeDpms",
+    "overridden": false,
+    "bezier": "",
+    "enabled": true,
+    "speed": 0.00,
+    "style": ""
+},
+{
+    "name": "windowsMove",
+    "overridden": true,
+    "bezier": "emphasizedDecel",
+    "enabled": true,
+    "speed": 3.40,
+    "style": "slide"
+},
+{
+    "name": "fadeGlow",
+    "overridden": false,
+    "bezier": "",
+    "enabled": true,
+    "speed": 0.00,
+    "style": ""
+},
+{
+    "name": "zoomFactor",
+    "overridden": true,
+    "bezier": "standardDecel",
+    "enabled": true,
+    "speed": 3.00,
+    "style": ""
+},
+{
+    "name": "shadowangle",
+    "overridden": true,
+    "bezier": "default",
+    "enabled": false,
+    "speed": 1.00,
+    "style": ""
+},
+{
+    "name": "specialWorkspace",
+    "overridden": false,
+    "bezier": "",
+    "enabled": true,
+    "speed": 0.00,
+    "style": ""
+},
+{
+    "name": "glowangle",
+    "overridden": true,
+    "bezier": "default",
+    "enabled": false,
+    "speed": 1.00,
+    "style": ""
+},
+{
+    "name": "fadeSwitch",
+    "overridden": false,
+    "bezier": "",
+    "enabled": true,
+    "speed": 0.00,
+    "style": ""
+},
+{
+    "name": "borderangle",
+    "overridden": true,
+    "bezier": "default",
+    "enabled": false,
+    "speed": 1.00,
+    "style": ""
+},
+{
+    "name": "fadeOut",
+    "overridden": true,
+    "bezier": "emphasizedDecel",
+    "enabled": true,
+    "speed": 2.00,
+    "style": ""
+},
+{
+    "name": "fade",
+    "overridden": false,
+    "bezier": "",
+    "enabled": true,
+    "speed": 0.00,
+    "style": ""
+},
+{
+    "name": "border",
+    "overridden": true,
+    "bezier": "emphasizedDecel",
+    "enabled": true,
+    "speed": 10.00,
+    "style": ""
+},
+{
+    "name": "specialWorkspaceIn",
+    "overridden": true,
+    "bezier": "emphasizedDecel",
+    "enabled": true,
+    "speed": 2.80,
+    "style": "slidevert"
+},
+{
+    "name": "workspaces",
+    "overridden": true,
+    "bezier": "menu_decel",
+    "enabled": true,
+    "speed": 6.00,
+    "style": "slide"
+},
+{
+    "name": "global",
+    "overridden": true,
+    "bezier": "default",
+    "enabled": true,
+    "speed": 8.00,
+    "style": ""
+},
+{
+    "name": "__internal_fadeCTM",
+    "overridden": true,
+    "bezier": "linear",
+    "enabled": true,
+    "speed": 5.00,
+    "style": ""
+},
+{
+    "name": "workspacesOut",
+    "overridden": false,
+    "bezier": "",
+    "enabled": true,
+    "speed": 0.00,
+    "style": ""
+},
+{
+    "name": "layersOut",
+    "overridden": true,
+    "bezier": "menu_accel",
+    "enabled": true,
+    "speed": 2.40,
+    "style": "popin 94%"
+},
+{
+    "name": "windowsIn",
+    "overridden": true,
+    "bezier": "emphasizedDecel",
+    "enabled": true,
+    "speed": 3.00,
+    "style": "popin 80%"
+},
+{
+    "name": "windowsOut",
+    "overridden": true,
+    "bezier": "emphasizedDecel",
+    "enabled": true,
+    "speed": 2.00,
+    "style": "popin 90%"
+},
+{
+    "name": "layers",
+    "overridden": false,
+    "bezier": "",
+    "enabled": true,
+    "speed": 0.00,
+    "style": ""
+},
+{
+    "name": "fadeIn",
+    "overridden": true,
+    "bezier": "emphasizedDecel",
+    "enabled": true,
+    "speed": 3.00,
+    "style": ""
+},
+{
+    "name": "fadePopups",
+    "overridden": false,
+    "bezier": "",
+    "enabled": true,
+    "speed": 0.00,
+    "style": ""
+},
+{
+    "name": "fadeShadow",
+    "overridden": false,
+    "bezier": "",
+    "enabled": true,
+    "speed": 0.00,
+    "style": ""
+},
+{
+    "name": "fadeLayers",
+    "overridden": false,
+    "bezier": "",
+    "enabled": true,
+    "speed": 0.00,
+    "style": ""
+},
+{
+    "name": "windows",
+    "overridden": false,
+    "bezier": "",
+    "enabled": true,
+    "speed": 0.00,
+    "style": ""
+},
+{
+    "name": "fadeLayersIn",
+    "overridden": true,
+    "bezier": "menu_decel",
+    "enabled": true,
+    "speed": 0.50,
+    "style": ""
+},
+{
+    "name": "fadeLayersOut",
+    "overridden": true,
+    "bezier": "stall",
+    "enabled": true,
+    "speed": 2.70,
+    "style": ""
+},
+{
+    "name": "fadeDim",
+    "overridden": false,
+    "bezier": "",
+    "enabled": true,
+    "speed": 0.00,
+    "style": ""
+},
+{
+    "name": "fadePopupsIn",
+    "overridden": false,
+    "bezier": "",
+    "enabled": true,
+    "speed": 0.00,
+    "style": ""
+},
+{
+    "name": "monitorAdded",
+    "overridden": true,
+    "bezier": "default",
+    "enabled": false,
+    "speed": 1.00,
+    "style": ""
+},
+{
+    "name": "fadePopupsOut",
+    "overridden": false,
+    "bezier": "",
+    "enabled": true,
+    "speed": 0.00,
+    "style": ""
+}],
+[
+{
+    "name": "islandOvershoot",
+    "X0": 0.38,
+    "Y0": 1.21,
+    "X1": 0.22,
+    "Y1": 1.00
+},
+{
+    "name": "stall",
+    "X0": 1.00,
+    "Y0": -0.10,
+    "X1": 0.70,
+    "Y1": 0.85
+},
+{
+    "name": "menu_accel",
+    "X0": 0.52,
+    "Y0": 0.03,
+    "X1": 0.72,
+    "Y1": 0.08
+},
+{
+    "name": "menu_decel",
+    "X0": 0.10,
+    "Y0": 1.00,
+    "X1": 0.00,
+    "Y1": 1.00
+},
+{
+    "name": "emphasizedAccel",
+    "X0": 0.30,
+    "Y0": 0.00,
+    "X1": 0.80,
+    "Y1": 0.15
+},
+{
+    "name": "standardDecel",
+    "X0": 0.00,
+    "Y0": 0.00,
+    "X1": 0.00,
+    "Y1": 1.00
+},
+{
+    "name": "expressiveSlowSpatial",
+    "X0": 0.39,
+    "Y0": 1.29,
+    "X1": 0.35,
+    "Y1": 0.98
+},
+{
+    "name": "emphasizedDecel",
+    "X0": 0.05,
+    "Y0": 0.70,
+    "X1": 0.10,
+    "Y1": 1.00
+},
+{
+    "name": "expressiveDefaultSpatial",
+    "X0": 0.38,
+    "Y0": 1.21,
+    "X1": 0.22,
+    "Y1": 1.00
+},
+{
+    "name": "expressiveFastSpatial",
+    "X0": 0.42,
+    "Y0": 1.67,
+    "X1": 0.21,
+    "Y1": 0.90
+},
+{
+    "name": "linear",
+    "X0": 0.00,
+    "Y0": 0.00,
+    "X1": 1.00,
+    "Y1": 1.00
+},
+{
+    "name": "default",
+    "X0": 0.00,
+    "Y0": 0.75,
+    "X1": 0.15,
+    "Y1": 1.00
+}]]
