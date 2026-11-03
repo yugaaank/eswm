@@ -1,0 +1,7 @@
+[build]
+# libdisplay-info 0.2.0 is built into /tmp/opencode/ldi (system only has 0.3.x,
+# which libdisplay-info-sys 0.2 does not accept). rpath keeps the binary runnable.
+rustflags = ["-C", "link-args=-Wl,-rpath,/tmp/opencode/ldi/lib"]
+
+[env]
+PKG_CONFIG_PATH = "/tmp/opencode/ldi/lib/pkgconfig"

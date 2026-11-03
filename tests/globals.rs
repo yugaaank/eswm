@@ -25,6 +25,7 @@ fn compositor_advertises_shell_globals() {
     let socket = "eswm-test";
     let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_eswm"))
         .env("TACIT_COMP_SOCKET", socket)
+        .env("TACIT_COMP_BACKEND", "winit")
         // The winit backend is nested here: this test needs a graphical session
         // (the dev's desktop). CI would need headless; not until that exists.
         .spawn()

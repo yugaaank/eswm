@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-smithay = "0.7"
+smithay = { version = "0.7", features = ["backend_egl", "use_system_lib"] }
 winit = { version = "0.30", features = ["x11"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -15,6 +15,9 @@ serde_json = "1"
 libc = "0.2"
 flume = "0.11"
 mlua = { version = "0.12", features = ["lua54"] }
+smithay-drm-extras = "0.1.0"
+xcursor = "0.3"
+xkbcommon = "0.8"
 
 [dev-dependencies]
 wayland-client = "0.31.15"

@@ -31,6 +31,7 @@ fn hyprctl_speaks_to_our_ipc() {
         .env("XDG_RUNTIME_DIR", &xdg)
         .env("TACIT_COMP_SIG", SIGNATURE)
         .env("TACIT_COMP_SOCKET", format!("wayland-m2-{}", std::process::id()))
+        .env("TACIT_COMP_BACKEND", "winit")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()

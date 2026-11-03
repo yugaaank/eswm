@@ -33,3 +33,26 @@ Simple compositor on Smithay 0.7 for moving Tacit off Hyprland. Plan:
 - Proof: `cargo test` passes; manual nested `foot` and `kitty` connect and render; real `hyprctl -j monitors`, `-j cursorpos`, `reload`, and unknown-command probe work.
 
 ## Next up: M3 Lua configuration API
+
+## Real DRM backend (M4 Option A, 2026-11-03)
+- User chose: replace nested-only winit with a real DRM/libinput (udev) backend.
+- Smithay 0.7 default features already compile backend_drm/udev/gbm/libinput/session_libseat/renderer_gl — `smithay = "0.7"` needs no feature edits.
+- Reference impl: anvil's `src/udev.rs` (1668 lines, fetched to /tmp/opencode/smithay-src/anvil/src/udev.rs). Structure to port:
+  - `LibSeatSession` (session + notifier), primary GPU via udev enumerate / `ANVIL_DRM_DEVICE`-style env, `GpuManager<GbmGlesBackend<GlesRenderer, DrmDeviceFd>>`, `UdevBackend::new(seat)`, libinput via `LibinputSessionInterface`.
+  - Event sources: libinput handler, session notifier (Pause→pause cuda/libinput, Activate→render + libinput resume), device scan (connected → new output + `DrmOutput` per connector via `DrmScanner` from smithay-drm-extras).
+  - Render: `render_elements_from_surface_tree` toplevels + layer surfaces, `drm_output.render_frame(elements, clear_color, FrameFlags)`, frame scheduling on `DrmEvent::VBlank` + calloop timer throttle, presentation feedback, `SwapBuffersError` matching DeviceInactive/PermissionDenied/TestFailed → reset state.
+  - Extras: `smithay-drm-extras` crate, xcursor for pointer image (MemoryRenderBuffer), dmabuf/egl init (`bind_wl_display`, `DmabufState`, feedback global).
+- eswm State for udev: keep compositor/xdg/layer/shm/seat/output/data-device states + ipc + lua; add Backend enum {Winit|Udev} or cfg-switch; session-based input replaces winit InputEvent path.
+- eswm main.rs is 408 lines (M1 skeleton + in-loop IPC/Lua already merged); ipc.rs 647, lua_state.rs 113.
+
+## M4 build state (2026-11-03)
+- `cargo check` green, `cargo test` 2/2 green (globals + IPC tests explicitly use Winit; standalone DRM is now the default runtime).
+- smithay features extended with `backend_egl` + `use_system_lib` (ImportEgl/bind_wl_display needs both; default set lacks backend_egl).
+- System-side trick: libdisplay-info 0.2.0 built into /tmp/opencode/ldi (system has 0.3.0, libdisplay-info-sys 0.2 requires <0.3). Handled project-wide by `.cargo/config.toml` (PKG_CONFIG_PATH + rpath) — re-run the meson build if /tmp is wiped.
+- udev.rs structure: UdevData{session, primary_gpu, gpus, backends, dmabuf_state, cursor_images/buffer, pointer_location, start, quit}; render()/render_surface() take u32 ms; frame finish throttling + 0.6 repaint-delay timer; cursor via MemoryRenderBufferRenderElement::from_buffer (no PointerElement in smithay 0.7).
+- Known ceiling (shortcut): windows still render full-window stacked at (0,0) (no hit-testing, no space), pointer focus = None (clients get no enter events), keyboard focus = first toplevel on press. Layout/windows = M5.
+
+## Standalone Tacit direction (2026-11-03)
+- Tacit remains the first consumer, but Hyprland compatibility is no longer a product requirement.
+- The DRM backend must not initialize the historical Hyprland IPC or Tacit Lua compatibility path.
+- Next implementation work is the native Tacit state/action contract, then real window/workspace state and layout.

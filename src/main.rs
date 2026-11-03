@@ -1,10 +1,12 @@
 // M1 skeleton: nested (winit) compositor session with the shell protocol floor.
 // Based on Smithay 0.7's examples/minimal.rs; everything not needed at M1 is left out.
+// M4: adds the real DRM/libinput backend (src/udev.rs), the default runtime.
 use std::{os::unix::io::OwnedFd, sync::Arc};
 
 use ::winit::platform::pump_events::PumpStatus;
 mod ipc;
 mod lua_state;
+mod udev;
 use ipc::{CompCmd, Ipc};
 use lua_state::{init, register_api, _do_file, _do_chunk};
 use mlua::Lua;
@@ -27,7 +29,10 @@ use smithay::{
     delegate_compositor, delegate_data_device, delegate_layer_shell, delegate_output, delegate_seat,
     delegate_shm, delegate_xdg_shell,
     input::{keyboard::FilterResult, Seat, SeatHandler, SeatState},
-    reexports::wayland_server::{protocol::wl_seat, Display},
+        reexports::{
+        calloop::LoopHandle,
+        wayland_server::{protocol::wl_seat, Display, DisplayHandle, ListeningSocket},
+    },
     utils::{Rectangle, Serial, Transform},
     wayland::{
         output::{OutputHandler, OutputManagerState},
@@ -53,7 +58,7 @@ use wayland_server::{
         wl_output::WlOutput,
         wl_surface::{self, WlSurface},
     },
-    Client, ListeningSocket,
+    Client,
 };
 
 impl OutputHandler for State {}
@@ -156,10 +161,15 @@ struct State {
 
     seat: Seat<Self>,
     output: Output,
+    pub dh: DisplayHandle,
     // M2: IPC-backed state; snapshot is rebuilt from the shell state each loop iteration
     ipc: Option<Ipc>,
     // M3: Lua state with Hyprland config API (es.bind, es.define_submap, es.dsp.*, es.config{}, etc.)
     lua: Option<mlua::Lua>,
+    // M4: real DRM backend data; None in nested (winit) mode
+    udev: Option<udev::UdevData>,
+    // M4: calloop scheduling handle (timers, idle); None in nested mode
+    handle: Option<LoopHandle<'static, State>>,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -169,26 +179,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing_subscriber::fmt().init();
     }
 
-    run_winit()
+    // The standalone DRM/libinput backend is the product runtime. Winit is kept
+    // behind an explicit setting for nested development and protocol tests.
+    match std::env::var("TACIT_COMP_BACKEND").as_deref() {
+        Ok("winit") => run_winit(),
+        _ => crate::udev::run_udev(),
+    }
 }
 
 fn socket_name() -> String {
     std::env::var("TACIT_COMP_SOCKET").unwrap_or_else(|_| "eswm-test".into())
 }
 
-pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
-    let mut display: Display<State> = Display::new()?;
-    let dh = display.handle();
-
-    let compositor_state = CompositorState::new::<State>(&dh);
-    let shm_state = ShmState::new::<State>(&dh, vec![]);
-    let layer_shell_state = WlrLayerShellState::new::<State>(&dh);
+// Shared State/protocol construction for both backends.
+fn new_state(
+    seat_name: &str,
+    dh: &DisplayHandle,
+    want_virtual_output: bool,
+) -> State {
+    let compositor_state = CompositorState::new::<State>(dh);
+    let shm_state = ShmState::new::<State>(dh, vec![]);
+    let layer_shell_state = WlrLayerShellState::new::<State>(dh);
     let mut seat_state = SeatState::new();
-    let seat = seat_state.new_wl_seat(&dh, "winit");
+    let seat = seat_state.new_wl_seat(dh, seat_name);
 
-    let mut state = {
-        // The nested winit window masquerades as one virtual output; clients
-        // (and later IPC) enumerate it like a real monitor.
+    // In nested mode the winit window masquerades as one virtual output; the DRM
+    // backend attaches real outputs per connector instead.
+    let output = if want_virtual_output {
         let output = Output::new(
             "winit".into(),
             PhysicalProperties {
@@ -201,39 +218,49 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
         let mode = Mode { size: (1280, 800).into(), refresh: 60_000 };
         output.change_current_state(Some(mode), None, None, Some((0, 0).into()));
         output.set_preferred(mode);
-        let _output_global = output.create_global::<State>(&dh);
-
-        State {
-            compositor_state,
-            xdg_shell_state: XdgShellState::new::<State>(&dh),
-            layer_shell_state,
-            shm_state,
-            seat_state,
-            output_state: OutputManagerState::new(),
-            data_device_state: DataDeviceState::new::<State>(&dh),
-            seat,
-            output,
-            ipc: None,
-            // M3: Lua state placeholder; initialized after IPC setup below
-            lua: None,
-        }
+        output.create_global::<State>(dh);
+        output
+    } else {
+        // placeholder; real outputs get created per DRM connector in src/udev.rs
+        Output::new(
+            "drm".into(),
+            PhysicalProperties {
+                size: (0, 0).into(),
+                subpixel: Subpixel::Unknown,
+                make: "eswm".into(),
+                model: "drm".into(),
+            },
+        )
     };
 
-    let socket = socket_name();
-    let listener = ListeningSocket::bind(&socket).unwrap();
-    println!("listening on {socket}");
+    State {
+        compositor_state,
+        xdg_shell_state: XdgShellState::new::<State>(dh),
+        layer_shell_state,
+        shm_state,
+        seat_state,
+        output_state: OutputManagerState::new(),
+        data_device_state: DataDeviceState::new::<State>(dh),
+        seat,
+        output,
+        dh: dh.clone(),
+        ipc: None,
+        lua: None,
+        udev: None,
+        handle: None,
+    }
+}
 
+// Development compatibility path for the explicit Winit backend. The standalone
+// DRM backend does not initialize this Hyprland/Tacit integration.
+fn init_ipc_and_lua(state: &mut State) {
     // M2: hyprctl IPC. Signature env controls the hyprdir path; a distinct
     // value keeps us away from a real Hyprland session's sockets.
     let sig = std::env::var("TACIT_COMP_SIG").unwrap_or_else(|_| "eswm".into());
     state.ipc = Some(Ipc::new(sig));
 
     // M3: initialize Lua embed with Hyprland config API
-    let lua = init().unwrap_or_else(|_| {
-        // Fallback: create a bare Lua state without API registration
-        let lua = Lua::new();
-        lua
-    });
+    let lua = init().unwrap_or_else(|_| Lua::new());
     let snapshot = state.ipc.as_ref().unwrap().snapshot.clone();
     let cmd_tx = state.ipc.as_ref().unwrap().cmd_tx.clone();
     // Register the Hyprland config API (es.bind, es.define_submap, es.dsp.*, es.config{}, is_file_exists, safe_require)
@@ -242,6 +269,34 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
     }
     // Store lua in state for _do_file/_do_chunk access; kept alive for the session
     state.lua = Some(lua);
+}
+
+// Development compatibility path; called only by the explicit Winit backend.
+fn drain_ipc_and_refresh(state: &State, size: (i32, i32)) {
+    if let Some(ipc) = &state.ipc {
+        while let Ok(cmd) = ipc.cmd_rx.try_recv() {
+            match cmd {
+                CompCmd::Reload => ipc.sinks.emit("configreloaded", ""),
+                CompCmd::GotoWorkspace(_) => {}    // real dispatch arrives with M5 tiling
+                CompCmd::CloseWindow(_) => {}      // ditto
+                CompCmd::Unsupported(_) => {}
+            }
+        }
+    }
+    ipc::refresh_snapshot(state, size);
+}
+
+pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
+    let mut display: Display<State> = Display::new()?;
+    let dh = display.handle();
+
+    let mut state = new_state("winit", &dh, true);
+
+    let socket = socket_name();
+    let listener = ListeningSocket::bind(&socket).unwrap();
+    println!("listening on {socket}");
+
+    init_ipc_and_lua(&mut state);
 
     let mut clients = Vec::new();
 
@@ -250,6 +305,10 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
     let start_time = std::time::Instant::now();
 
     let keyboard = state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
+    state.seat.add_pointer();
+
+    let mut size = backend.window_size();
+    let mut toplevel_surface = None;
 
     loop {
         let status = winit.dispatch_new_events(|event| match event {
@@ -266,10 +325,15 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
                     );
                 }
                 InputEvent::PointerMotionAbsolute { .. } => {
-                    if let Some(surface) = state.xdg_shell_state.toplevel_surfaces().iter().next().cloned() {
-                        let surface = surface.wl_surface().clone();
-                        keyboard.set_focus(&mut state, Some(surface), 0.into());
-                    };
+                    // M1 focus trick: keep one toplevel focused
+                    if toplevel_surface.is_none() {
+                        if let Some(surface) = state.xdg_shell_state.toplevel_surfaces().iter().next().cloned() {
+                            toplevel_surface = Some(surface.wl_surface().clone());
+                        };
+                        if let Some(surface) = toplevel_surface.as_ref() {
+                            keyboard.set_focus(&mut state, Some(surface.clone()), 0.into());
+                        }
+                    }
                 }
                 _ => {}
             },
@@ -281,22 +345,10 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
             PumpStatus::Exit(_) => return Ok(()),
         };
 
-        let size = backend.window_size();
+        size = backend.window_size();
         let damage = Rectangle::from_size(size);
 
-        // M2: drain IPC commands (reload -> configreloaded event checked below)
-        if let Some(ipc) = &state.ipc {
-            while let Ok(cmd) = ipc.cmd_rx.try_recv() {
-                match cmd {
-                    CompCmd::Reload => ipc.sinks.emit("configreloaded", ""),
-                    CompCmd::GotoWorkspace(_) => {}    // real dispatch arrives with M5 tiling
-                    CompCmd::CloseWindow(_) => {}      // ditto
-                    CompCmd::Unsupported(_) => {}
-                }
-            }
-        }
-
-        ipc::refresh_snapshot(&state, size.into());
+        drain_ipc_and_refresh(&state, size.into());
 
         {
             let (renderer, mut framebuffer) = backend.bind().unwrap();
