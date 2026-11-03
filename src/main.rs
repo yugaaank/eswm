@@ -7,6 +7,7 @@ use ::winit::platform::pump_events::PumpStatus;
 mod ipc;
 mod lua_state;
 mod udev;
+mod wm;
 use ipc::{CompCmd, Ipc};
 use lua_state::{init, register_api, _do_file, _do_chunk};
 use mlua::Lua;
@@ -161,6 +162,7 @@ struct State {
 
     seat: Seat<Self>,
     output: Output,
+    pub wm: wm::WindowManager,
     pub dh: DisplayHandle,
     // M2: IPC-backed state; snapshot is rebuilt from the shell state each loop iteration
     ipc: Option<Ipc>,
@@ -202,6 +204,7 @@ fn new_state(
     let layer_shell_state = WlrLayerShellState::new::<State>(dh);
     let mut seat_state = SeatState::new();
     let seat = seat_state.new_wl_seat(dh, seat_name);
+    let mut wm = wm::WindowManager::new();
 
     // In nested mode the winit window masquerades as one virtual output; the DRM
     // backend attaches real outputs per connector instead.
@@ -216,6 +219,15 @@ fn new_state(
             },
         );
         let mode = Mode { size: (1280, 800).into(), refresh: 60_000 };
+        wm.add_output(
+            "winit",
+            wm::Rect {
+                x: 0,
+                y: 0,
+                width: 1280,
+                height: 800,
+            },
+        );
         output.change_current_state(Some(mode), None, None, Some((0, 0).into()));
         output.set_preferred(mode);
         output.create_global::<State>(dh);
@@ -243,6 +255,7 @@ fn new_state(
         data_device_state: DataDeviceState::new::<State>(dh),
         seat,
         output,
+        wm,
         dh: dh.clone(),
         ipc: None,
         lua: None,
