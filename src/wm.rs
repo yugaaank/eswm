@@ -98,6 +98,43 @@ impl WindowManager {
         self.windows.get(&id)
     }
 
+    pub fn primary_output_id(&self) -> Option<OutputId> {
+        self.outputs.keys().next().copied()
+    }
+
+    pub fn window_ids(&self) -> Vec<WindowId> {
+        self.windows.keys().copied().collect()
+    }
+
+    pub fn focused_id(&self) -> Option<WindowId> {
+        self.windows.values().find(|w| w.focused).map(|w| w.id)
+    }
+
+    pub fn set_rect(&mut self, id: WindowId, rect: Rect) -> bool {
+        if let Some(window) = self.windows.get_mut(&id) {
+            window.rect = rect;
+            return true;
+        }
+        false
+    }
+
+    pub fn set_window_meta(&mut self, id: WindowId, app_id: String, title: String) -> bool {
+        if let Some(window) = self.windows.get_mut(&id) {
+            window.app_id = app_id;
+            window.title = title;
+            return true;
+        }
+        false
+    }
+
+    // Create the workspace if missing (binding Super+N), return true if usable on `output`.
+    pub fn ensure_workspace(&mut self, output: OutputId, workspace: WorkspaceId) -> bool {
+        if self.workspaces.contains_key(&workspace) {
+            return self.workspace(workspace).map(|w| w.output == output).unwrap_or(false);
+        }
+        self.add_workspace(output, workspace, workspace.to_string())
+    }
+
     pub fn add_workspace(
         &mut self,
         output: OutputId,
@@ -302,6 +339,18 @@ impl WindowManager {
                 ..output_state.geometry
             },
         );
+        // shortcut: floating windows just cover the full output for now
+        let floating: Vec<_> = workspace
+            .windows
+            .iter()
+            .filter_map(|id| self.windows.get(id))
+            .filter(|window| window.mapped && window.mode == WindowMode::Floating)
+            .map(|window| window.id)
+            .collect();
+        for id in floating {
+            self.set_target_rect(id, output_state.geometry);
+        }
+
         let stack = &tiled[1..];
         for (index, id) in stack.iter().enumerate() {
             let top =

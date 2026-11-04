@@ -39,14 +39,14 @@ use smithay::{
         output::{OutputHandler, OutputManagerState},
         buffer::BufferHandler,
         compositor::{
-            with_surface_tree_downward, CompositorClientState, CompositorHandler, CompositorState,
+            with_surface_tree_downward, with_states, CompositorClientState, CompositorHandler, CompositorState,
             SurfaceAttributes, TraversalAction,
         },
         selection::{
             data_device::{ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler},
             SelectionHandler,
         },
-        shell::xdg::{PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState},
+        shell::xdg::{PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState, XdgToplevelSurfaceData},
         shell::wlr_layer::{Layer, LayerSurface, WlrLayerShellHandler, WlrLayerShellState},
         shm::{ShmHandler, ShmState},
     },
@@ -74,15 +74,73 @@ impl XdgShellHandler for State {
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
+        // M5: every toplevel becomes a tiling-managed window on the primary output.
+        let Some(output_id) = self.wm.primary_output_id() else {
+            tracing::warn!("toplevel before any output exists; not registering");
+            return;
+        };
+        if let Some(id) = self.wm.add_window(output_id, "", "") {
+            let ws = surface.wl_surface().clone();
+            with_states(&ws, |states| {
+                states.data_map.insert_if_missing(|| id);
+            });
+            tracing::info!("toplevel registered id={id:?}");
+            crate::apply_layout(self);
+        }
         surface.with_pending_state(|state| {
             state.states.set(xdg_toplevel::State::Activated);
         });
         surface.send_configure();
     }
 
+    fn app_id_changed(&mut self, surface: ToplevelSurface) {
+        sync_window_meta(self, &surface);
+    }
+
+    fn title_changed(&mut self, surface: ToplevelSurface) {
+        sync_window_meta(self, &surface);
+    }
+
+    fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
+        if let Some(id) = window_id_of(surface.wl_surface()) {
+            self.wm.remove_window(id);
+            crate::apply_layout(self);
+        }
+    }
+
     fn new_popup(&mut self, _surface: PopupSurface, _positioner: PositionerState) {}
     fn grab(&mut self, _surface: PopupSurface, _seat: wl_seat::WlSeat, _serial: Serial) {}
     fn reposition_request(&mut self, _surface: PopupSurface, _positioner: PositionerState, _token: u32) {}
+}
+
+pub fn window_id_of(surface: &WlSurface) -> Option<wm::WindowId> {
+    with_states(surface, |states| {
+        states.data_map.get::<wm::WindowId>().copied()
+    })
+}
+
+fn toplevel_for_window(state: &State, id: wm::WindowId) -> Option<ToplevelSurface> {
+    state
+        .xdg_shell_state
+        .toplevel_surfaces()
+        .iter()
+        .find(|t| window_id_of(t.wl_surface()) == Some(id))
+        .cloned()
+}
+
+// Mirror client-provided app_id/title into the wm window record (snapshot/Lua).
+fn sync_window_meta(state: &mut State, surface: &ToplevelSurface) {
+    let Some(id) = window_id_of(surface.wl_surface()) else {
+        return;
+    };
+    let mut app_id = String::new();
+    let mut title = String::new();
+    with_states(surface.wl_surface(), |states| {
+        let data = states.data_map.get::<XdgToplevelSurfaceData>().unwrap().lock().unwrap();
+        app_id = data.app_id.clone().unwrap_or_default();
+        title = data.title.clone().unwrap_or_default();
+    });
+    state.wm.set_window_meta(id, app_id, title);
 }
 
 impl WlrLayerShellHandler for State {
@@ -174,12 +232,33 @@ struct State {
     handle: Option<LoopHandle<'static, State>>,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    if let Ok(env_filter) = tracing_subscriber::EnvFilter::try_from_default_env() {
-        tracing_subscriber::fmt().with_env_filter(env_filter).init();
-    } else {
-        tracing_subscriber::fmt().init();
+fn install_diag_logging() {
+    // unconditional file logging + panic capture so TTY runs leave evidence
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open("/tmp/eswm.log");
+    if let Ok(file) = log {
+        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_writer(std::sync::Mutex::new(file))
+            .try_init();
     }
+    std::panic::set_hook(Box::new(|info| {
+        let bt = std::backtrace::Backtrace::force_capture();
+        let _ = std::fs::write(
+            "/tmp/eswm-panic.log",
+            format!("{info}\n\n{bt:?}"),
+        );
+        eprintln!("{info}");
+    }));
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    install_diag_logging();
 
     // The standalone DRM/libinput backend is the product runtime. Winit is kept
     // behind an explicit setting for nested development and protocol tests.
@@ -282,6 +361,69 @@ fn init_ipc_and_lua(state: &mut State) {
     }
     // Store lua in state for _do_file/_do_chunk access; kept alive for the session
     state.lua = Some(lua);
+}
+
+// M5: push target rects to clients as xdg_toplevel size configures, then mark applied.
+pub fn apply_layout(state: &mut State) {
+    let windows = state
+        .wm
+        .window_ids()
+        .into_iter()
+        .filter_map(|id| state.wm.window(id).cloned().map(|w| (id, w)))
+        .collect::<Vec<_>>();
+    tracing::info!("apply_layout: {} window(s)", windows.len());
+    for (id, window) in windows {
+        let target = window.target_rect;
+        if target.width == 0 || target.height == 0 || window.rect == target {
+            continue;
+        }
+        if let Some(toplevel) = toplevel_for_window(state, id) {
+            tracing::info!("configuring window id={id:?} -> {}x{} at {},{}", target.width, target.height, target.x, target.y);
+            toplevel.with_pending_state(|st| {
+                st.size = Some((target.width.max(1) as i32, target.height.max(1) as i32).into());
+                if window.focused {
+                    st.states.set(xdg_toplevel::State::Activated);
+                } else {
+                    st.states.unset(xdg_toplevel::State::Activated);
+                }
+            });
+            toplevel.send_configure();
+        }
+        state.wm.set_rect(id, target);
+    }
+}
+
+// Compositor keybind helper: spawn a terminal client on our own socket.
+pub fn spawn_terminal() {
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+    //WAYLAND_DISPLAY takes either absolute path or bare name relative to XDG_RUNTIME_DIR
+    match unsafe {
+        Command::new("kitty")
+        .env("WAYLAND_DISPLAY", socket_name())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::from(std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/kitty-spawn.log")
+            .expect("kitty log")))
+        .pre_exec(|| unsafe {
+            // detach from the compositor process group so VT signals don't hit it
+            libc::setsid();
+            Ok(())
+        })
+        .spawn()
+    } {
+        Ok(mut child) => {
+            tracing::info!("spawned kitty pid {}", child.id());
+            std::thread::spawn(move || match child.wait() {
+                Ok(status) => tracing::warn!("kitty exited with {status}"),
+                Err(err) => tracing::warn!("kitty wait failed: {err}"),
+            });
+        }
+        Err(err) => tracing::warn!("failed to spawn kitty: {err}"),
+    }
 }
 
 // Development compatibility path; called only by the explicit Winit backend.

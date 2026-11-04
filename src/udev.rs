@@ -50,7 +50,7 @@ use smithay::{
     },
     delegate_dmabuf,
     input::{
-        keyboard::{FilterResult, Keysym},
+        keyboard::{FilterResult, KeysymHandle, ModifiersState},
         pointer::{AxisFrame, ButtonEvent, MotionEvent},
     },
     output::{Mode as WlMode, Output, PhysicalProperties},
@@ -65,7 +65,7 @@ use smithay::{
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
         wayland_server::{backend::GlobalId, protocol::wl_surface, Display, DisplayHandle, ListeningSocket},
     },
-    utils::{DeviceFd, Logical, Point, Scale, Time, Transform, SERIAL_COUNTER as SCOUNTER},
+    utils::{DeviceFd, Logical, Physical, Point, Scale, Time, Transform, SERIAL_COUNTER as SCOUNTER},
     wayland::{
         dmabuf::{DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
         presentation::Refresh,
@@ -75,7 +75,7 @@ use tracing::{debug, error, info, warn};
 
 use smithay_drm_extras::drm_scanner::{DrmScanEvent, DrmScanner};
 
-use crate::{send_frames_surface_tree, State};
+use crate::{send_frames_surface_tree, State, wm};
 
 type UdevRenderer<'a> = MultiRenderer<
     'a,
@@ -369,6 +369,21 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
             Ok(()) => {
                 display.dispatch_clients(&mut state)?;
                 display_handle.flush_clients()?;
+                // Render every iteration like the winit path: smithay only reports
+                // non-empty damage when elements exist, so commit-triggered redraws
+                // need this prime mover until proper damage-driven scheduling exists.
+                let nodes: Vec<DrmNode> = state
+                    .udev
+                    .as_ref()
+                    .unwrap()
+                    .backends
+                    .keys()
+                    .copied()
+                    .collect();
+                let t = now(&state);
+                for node in nodes {
+                    state.render(node, None, t);
+                }
             }
             Err(_) => break,
         }
@@ -378,6 +393,64 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
 
 fn now(state: &State) -> u32 {
     state.udev.as_ref().unwrap().start.elapsed().as_millis() as u32
+}
+
+// Keybinds (M5 step 4): Super+Return terminal, Super+Q close, Super+1..9 workspaces,
+// Ctrl+Alt+Backspace quit, Ctrl+Alt+F1-12 VT switch. Everything else forwards to clients.
+fn process_shortcut(state: &mut State, mods: &ModifiersState, keysym: KeysymHandle) -> FilterResult<()> {
+    use xkbcommon::xkb::keysyms;
+    let raw = u32::from(keysym.modified_sym());
+
+    if mods.logo {
+        if raw == keysyms::KEY_Return {
+            crate::spawn_terminal();
+            return FilterResult::Intercept(());
+        }
+        if raw == keysyms::KEY_q {
+            if let Some(id) = state.wm.focused_id() {
+                if let Some(toplevel) = crate::toplevel_for_window(state, id) {
+                    toplevel.send_close();
+                }
+            }
+            return FilterResult::Intercept(());
+        }
+        if (keysyms::KEY_1..=keysyms::KEY_9).contains(&raw) {
+            switch_workspace(state, (raw - keysyms::KEY_1 + 1) as i32);
+            return FilterResult::Intercept(());
+        }
+    }
+
+    if mods.ctrl && mods.alt {
+        if raw == keysyms::KEY_BackSpace {
+            info!("quit requested via keybind");
+            state
+                .udev
+                .as_ref()
+                .unwrap()
+                .quit
+                .store(true, Ordering::SeqCst);
+            return FilterResult::Intercept(());
+        }
+        if (keysyms::KEY_XF86Switch_VT_1..=keysyms::KEY_XF86Switch_VT_12).contains(&raw) {
+            let vt = (raw - keysyms::KEY_XF86Switch_VT_1 + 1) as i32;
+            if let Err(err) = state.udev.as_mut().unwrap().session.change_vt(vt) {
+                warn!("failed to switch to vt {vt}: {err:?}");
+            }
+            return FilterResult::Intercept(());
+        }
+    }
+
+    FilterResult::Forward
+}
+
+fn switch_workspace(state: &mut State, ws: i32) {
+    let Some(output) = state.wm.primary_output_id() else {
+        return;
+    };
+    state.wm.ensure_workspace(output, ws);
+    if state.wm.focus_workspace(output, ws) {
+        crate::apply_layout(state);
+    }
 }
 
 impl State {
@@ -391,7 +464,7 @@ impl State {
                     event.state(),
                     SCOUNTER.next_serial(),
                     event.time_msec(),
-                    |_, _, _| FilterResult::Forward,
+                    |state, mods, keysym| process_shortcut(state, mods, keysym),
                 );
             }
             InputEvent::PointerMotion { event, .. } => {
@@ -681,7 +754,7 @@ impl State {
 
         let (phys_w, phys_h) = connector.size().unwrap_or((0, 0));
         let output = Output::new(
-            output_name,
+            output_name.clone(),
             PhysicalProperties {
                 size: (phys_w as i32, phys_h as i32).into(),
                 subpixel: connector.subpixel().into(),
@@ -693,6 +766,22 @@ impl State {
 
         output.set_preferred(wl_mode);
         output.change_current_state(Some(wl_mode), None, None, Some((0, 0).into()));
+
+        // register real output geometry + workspaces 1..=9 into the window manager
+        let mode_size = wl_mode.size;
+        let wm_output = self.wm.add_output(
+            output_name.as_str(),
+            wm::Rect {
+                x: 0,
+                y: 0,
+                width: mode_size.w as u32,
+                height: mode_size.h as u32,
+            },
+        );
+        for i in 1..=9 {
+            self.wm.add_workspace(wm_output, i, i.to_string());
+        }
+        self.wm.focus_workspace(wm_output, 1);
 
         output.user_data().insert_if_missing(|| UdevOutputId {
             crtc,
@@ -989,6 +1078,34 @@ impl State {
     }
 
     fn render_surface(&mut self, node: DrmNode, crtc: crtc::Handle) {
+        // Real tiling (M5): push pending layouts, then render each mapped window of
+        // the output's active workspace at its wm rect.
+        crate::apply_layout(self);
+        let placed: Vec<(wl_surface::WlSurface, i32, i32)> = {
+            let surfaces: Vec<_> = self
+                .xdg_shell_state
+                .toplevel_surfaces()
+                .iter()
+                .cloned()
+                .collect();
+            surfaces
+                .iter()
+                .filter_map(|surface| {
+                    let id = crate::window_id_of(surface.wl_surface())?;
+                    let window = self.wm.window(id)?;
+                    let active = self
+                        .wm
+                        .output(window.output)
+                        .map(|o| o.active_workspace == window.workspace)
+                        .unwrap_or(false);
+                    if !active || !window.mapped || window.rect.width == 0 {
+                        return None;
+                    }
+                    Some((surface.wl_surface().clone(), window.rect.x, window.rect.y))
+                })
+                .collect()
+        };
+
         let primary_gpu = self.udev.as_ref().unwrap().primary_gpu;
 
         let (output, render_node, format_needed, mode_size) = {
@@ -1019,25 +1136,19 @@ impl State {
         }
         .unwrap();
 
-        // Build the frame: stacked client surfaces + cursor.
+        // Build the frame: placed client surfaces + cursor.
         let mut elements: Vec<EswmRenderElements<UdevRenderer<'_>>> = Vec::new();
 
-        let surfaces: Vec<_> = self
-            .xdg_shell_state
-            .toplevel_surfaces()
-            .iter()
-            .cloned()
-            .collect();
         let layer_surfaces: Vec<_> = self
             .layer_shell_state
             .layer_surfaces()
             .collect();
-        for surface in &surfaces {
+        for (ws, x, y) in &placed {
             elements.extend(
                 render_elements_from_surface_tree(
                     &mut renderer,
-                    surface.wl_surface(),
-                    (0, 0),
+                    ws,
+                    (*x, *y),
                     1.0,
                     1.0,
                     Kind::Unspecified,
@@ -1093,6 +1204,25 @@ impl State {
             udev.cursor_buffer = Some((buf.clone(), (img.xhot as f64, img.yhot as f64)));
         }
 
+        // shortcut: with no clients AND no cursor the damage tracker marks the
+        // frame empty and it never scans out; prime it with a 1x1 element
+        // (upgrade: proper cursor always present)
+        if elements.is_empty() {
+            let blank = MemoryRenderBuffer::from_slice(
+                &[1, 0, 0, 255],
+                Fourcc::Argb8888,
+                (1, 1),
+                1,
+                Transform::Normal,
+                None,
+            );
+            if let Ok(primed) = MemoryRenderBufferRenderElement::from_buffer(
+                &mut renderer, Point::from((0f64, 0f64)), &blank, None, None, None, Kind::Unspecified,
+            ) {
+                elements.push(EswmRenderElements::Cursor(primed));
+            }
+        }
+
         let device_backend = match udev.backends.get_mut(&node) {
             Some(b) => b,
             None => return,
@@ -1121,10 +1251,18 @@ impl State {
                 _ => unreachable!(),
             });
 
+        let mut sent_callbacks = false;
         let reschedule = match result {
-            Ok((_, _states)) => {
-                // send frame callbacks to clients so they redraw
-                self.frame_callbacks(time_ms);
+            Ok((is_empty, _states)) => {
+                sent_callbacks = true;
+                // render_frame only prepares the buffer; queue_frame actually
+                // page-flips it to the scanout. Without it the screen stays black.
+                if !is_empty {
+                    if let Err(err) = surface.drm_output.queue_frame(None::<OutputPresentationFeedback>) {
+                        warn!("failed to queue frame: {err:?}");
+                    }
+                    tracing::info!("render: {} elements, damaged -> queued", elements.len());
+                }
                 false
             }
             Err(err) => {
@@ -1158,6 +1296,12 @@ impl State {
                 }
             }
         };
+
+        // frame callbacks were previously sent inline; the udev mutable borrow
+        // (needed for queue_frame) is live here, so send after the match instead.
+        if sent_callbacks {
+            self.frame_callbacks(time_ms);
+        }
 
         if reschedule {
             let output_refresh = output.current_mode().map(|m| m.refresh).unwrap_or(60_000);
