@@ -56,3 +56,10 @@ Simple compositor on Smithay 0.7 for moving Tacit off Hyprland. Plan:
 - Tacit remains the first consumer, but Hyprland compatibility is no longer a product requirement.
 - The DRM backend must not initialize the historical Hyprland IPC or Tacit Lua compatibility path.
 - Next implementation work is the native Tacit state/action contract, then real window/workspace state and layout.
+
+## M5 wiring landed (2026-11-04, commit 7a745a6)
+- Windows were drawing never because smithay's `DrmCompositor::queue_frame()` was never called (render_frame only prepares; the page flip is what scans out). Also zero-element frames report `is_empty` so the panel stayed black forever. Both fixed: queue_frame after render, 1x1 primed element when empty, render every 16 ms loop iteration.
+- kitty keybind worked but kitties died silently: stderr was /dev/null. Now detached via setsid, bare WAYLAND_DISPLAY, stderr to /tmp/kitty-spawn.log; exit status logged. Verified on TTY: windows register, tile, draw.
+- Diagnostic scaffolding (keep until M6 cleanup): unconditional /tmp/eswm.log, panic hook -> /tmp/eswm-panic.log, probe logs for toplevel register / configure / queued frame.
+- RenderD128 (NVIDIA RTX 2050, GL 615.78) is primary_gpu; EGL_WL_bind_wayland_display is NOT supported there -> hardware-accel path skipped (EsEnNotSupported). Intel eDP-1 drives the panel. Possible need: TACIT_DRM_DEVICE=/dev/dri/renderD129 to force Intel render node.
+- wm wiring complete for steps 1+2+4; pointer hit-test (step 3) and IPC/Lua workspace commands (step 5) still open.
