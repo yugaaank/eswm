@@ -448,7 +448,8 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
     let mut state = new_state("winit", &dh, true);
 
     let socket = socket_name();
-    let listener = ListeningSocket::bind(&socket).unwrap();
+    let listener = ListeningSocket::bind(&socket)
+        .map_err(|err| format!("socket '{socket}' already in use - kill stale eswm (is one running?)\n  {err}"))?;
     println!("listening on {socket}");
 
     init_ipc_and_lua(&mut state);

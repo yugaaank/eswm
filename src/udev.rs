@@ -119,6 +119,7 @@ pub struct UdevData {
     pub pointer_location: Point<f64, Logical>,
     start: Instant,
     pub quit: AtomicBool,
+    pub paused: bool,
 }
 
 impl DmabufHandler for State {
@@ -198,6 +199,7 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         pointer_location: (0.0, 0.0).into(),
         start: Instant::now(),
         quit: AtomicBool::new(false),
+        paused: false,
     };
 
     // Shared protocol/global/socket setup from main.rs.
@@ -242,12 +244,14 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
             SessionEvent::PauseSession => {
                 libinput_context.suspend();
                 info!("pausing session");
+                data.udev.as_mut().unwrap().paused = true;
                 for backend in data.udev.as_mut().unwrap().backends.values_mut() {
                     backend.drm_output_manager.pause();
                 }
             }
             SessionEvent::ActivateSession => {
                 info!("resuming session");
+                data.udev.as_mut().unwrap().paused = false;
                 if let Err(err) = libinput_context.resume() {
                     error!("failed to resume libinput context: {err:?}");
                 }
@@ -1017,7 +1021,7 @@ impl State {
                 true
             }
             Some(Err(err)) => {
-                warn!("error during rendering: {err:?}");
+                debug!("frame_finish render: {err:?}");
                 match err {
                     SwapBuffersError::AlreadySwapped => true,
                     SwapBuffersError::TemporaryFailure(err)
@@ -1060,6 +1064,11 @@ impl State {
     }
 
     fn render(&mut self, node: DrmNode, crtc: Option<crtc::Handle>, _frame_target_ms: u32) {
+        // DRM is suspended when the user VT-switched away; rendering here only
+        // yields DeviceInactive warnings and CPU burn
+        if self.udev.as_ref().map(|u| u.paused).unwrap_or(true) {
+            return;
+        }
         if let Some(crtc) = crtc {
             self.render_surface(node, crtc);
         } else {
@@ -1259,14 +1268,14 @@ impl State {
                 // page-flips it to the scanout. Without it the screen stays black.
                 if !is_empty {
                     if let Err(err) = surface.drm_output.queue_frame(None::<OutputPresentationFeedback>) {
-                        warn!("failed to queue frame: {err:?}");
+                        debug!("queue_frame: {err:?}");
                     }
-                    tracing::info!("render: {} elements, damaged -> queued", elements.len());
+                    tracing::debug!("render: {} elements, damaged -> queued", elements.len());
                 }
                 false
             }
             Err(err) => {
-                warn!("error during rendering: {err:#?}");
+                debug!("error during rendering: {err:#?}");
                 match err {
                     SwapBuffersError::AlreadySwapped => false,
                     SwapBuffersError::TemporaryFailure(err) => match err.downcast_ref::<DrmError>() {
