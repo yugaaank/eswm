@@ -476,8 +476,111 @@ impl WindowManager {
             window_state.focused = false;
         }
         self.clear_focus_on_output(window.output);
+        // Keep keyboard focus alive: the moved window may have been the focused one.
+        if let Some(focused) = self
+            .workspaces
+            .get(&window.workspace)
+            .and_then(|workspace| workspace.focused)
+        {
+            self.focus_window(focused);
+        }
         self.arrange_output(window.output);
         true
+    }
+
+    /// Leaving fullscreen always returns the window to Tiled; no mode history.
+    pub fn toggle_fullscreen(&mut self, id: WindowId) -> bool {
+        let Some(window) = self.windows.get(&id) else {
+            return false;
+        };
+        let mode = match window.mode {
+            WindowMode::Fullscreen => WindowMode::Tiled,
+            _ => WindowMode::Fullscreen,
+        };
+        self.set_mode(id, mode)
+    }
+
+    pub fn toggle_maximized(&mut self, id: WindowId) -> bool {
+        let Some(window) = self.windows.get(&id) else {
+            return false;
+        };
+        let mode = match window.mode {
+            WindowMode::Maximized => WindowMode::Tiled,
+            _ => WindowMode::Maximized,
+        };
+        self.set_mode(id, mode)
+    }
+
+    /// Swap two windows' slots in the same workspace.
+    pub fn swap_windows(&mut self, a: WindowId, b: WindowId) -> bool {
+        let (Some(first), Some(second)) = (self.windows.get(&a), self.windows.get(&b)) else {
+            return false;
+        };
+        if a == b || first.workspace != second.workspace {
+            return false;
+        }
+        let workspace = first.workspace;
+        let output = first.output;
+        let Some(state) = self.workspaces.get_mut(&workspace) else {
+            return false;
+        };
+        let (Some(i), Some(j)) = (
+            state.windows.iter().position(|id| *id == a),
+            state.windows.iter().position(|id| *id == b),
+        ) else {
+            return false;
+        };
+        state.windows.swap(i, j);
+        self.arrange_output(output);
+        true
+    }
+
+    /// Swap the focused window with its neighbour in the tiling order and keep
+    /// focus on the same window.
+    pub fn swap_focused(&mut self, delta: i32) -> bool {
+        let Some(output) = self.primary_output_id() else {
+            return false;
+        };
+        let Some(active) = self.outputs.get(&output).map(|o| o.active_workspace) else {
+            return false;
+        };
+        let Some(workspace) = self.workspaces.get_mut(&active) else {
+            return false;
+        };
+        let Some(index) = workspace
+            .windows
+            .iter()
+            .position(|id| self.windows.get(id).map(|w| w.focused).unwrap_or(false))
+        else {
+            return false;
+        };
+        let len = workspace.windows.len() as i32;
+        let other = (index as i32 + delta).rem_euclid(len) as usize;
+        if other == index {
+            return false;
+        }
+        workspace.windows.swap(index, other);
+        self.arrange_output(output);
+        true
+    }
+
+    /// Switch the primary output to the next/previous workspace it owns.
+    pub fn focus_workspace_relative(&mut self, delta: i32) -> Option<WorkspaceId> {
+        let output = self.primary_output_id()?;
+        let ids: Vec<WorkspaceId> = self
+            .workspaces
+            .values()
+            .filter(|workspace| workspace.output == output)
+            .map(|workspace| workspace.id)
+            .collect();
+        if ids.is_empty() {
+            return None;
+        }
+        let active = self.outputs.get(&output)?.active_workspace;
+        let index = ids.iter().position(|id| *id == active).unwrap_or(0);
+        let next = (index as i32 + delta).rem_euclid(ids.len() as i32) as usize;
+        let target = ids[next];
+        self.focus_workspace(output, target).then_some(target)
     }
 
     pub fn set_mode(&mut self, id: WindowId, mode: WindowMode) -> bool {
@@ -700,5 +803,58 @@ mod tests {
         assert_eq!(manager.focused_id(), Some(first));
         assert!(manager.cycle_focus(-1));
         assert_eq!(manager.focused_id(), Some(second));
+    }
+
+    #[test]
+    fn swap_keeps_focus_and_exchanges_slots() {
+        let (mut manager, output) = manager();
+        let first = manager.add_window(output, "kitty", "one").unwrap();
+        let second = manager.add_window(output, "kitty", "two").unwrap();
+        let master_before = manager.window(first).unwrap().target_rect;
+
+        assert!(manager.swap_focused(-1));
+        assert_eq!(manager.focused_id(), Some(second));
+        assert_eq!(manager.workspace(1).unwrap().windows, vec![second, first]);
+        assert_ne!(manager.window(first).unwrap().target_rect, master_before);
+    }
+
+    #[test]
+    fn moving_the_focused_window_refocuses_the_rest() {
+        let (mut manager, output) = manager();
+        let first = manager.add_window(output, "kitty", "one").unwrap();
+        let second = manager.add_window(output, "kitty", "two").unwrap();
+        assert!(manager.add_workspace(output, 2, "2"));
+        assert_eq!(manager.focused_id(), Some(second));
+
+        assert!(manager.move_window_to_workspace(second, 2));
+        assert_eq!(manager.focused_id(), Some(first));
+        assert!(manager.window(second).unwrap().focused == false);
+    }
+
+    #[test]
+    fn fullscreen_fills_the_output_and_returns_to_tiled() {
+        let (mut manager, output) = manager();
+        let first = manager.add_window(output, "kitty", "one").unwrap();
+        let second = manager.add_window(output, "kitty", "two").unwrap();
+        assert_eq!(manager.window(second).unwrap().target_rect.width, 768);
+
+        assert!(manager.toggle_fullscreen(second));
+        assert_eq!(manager.window(second).unwrap().mode, WindowMode::Fullscreen);
+        assert_eq!(manager.window(second).unwrap().target_rect.width, 1920);
+
+        assert!(manager.toggle_fullscreen(second));
+        assert_eq!(manager.window(second).unwrap().mode, WindowMode::Tiled);
+        assert_eq!(manager.window(first).unwrap().target_rect.width, 1152);
+    }
+
+    #[test]
+    fn workspace_relative_wraps_within_one_output() {
+        let (mut manager, output) = manager();
+        let _ = manager.add_window(output, "kitty", "one").unwrap();
+        assert!(manager.add_workspace(output, 2, "2"));
+
+        assert_eq!(manager.focus_workspace_relative(1), Some(2));
+        assert_eq!(manager.focus_workspace_relative(1), Some(1));
+        assert_eq!(manager.focus_workspace_relative(-1), Some(2));
     }
 }

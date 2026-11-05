@@ -202,6 +202,15 @@ fn dispatch(state: &mut State, cmd: &str, args: &Value) -> Result<Value, String>
             crate::apply_layout(state);
             Ok(json!({"resized": id, "rect": rect_json(rect)}))
         }
+        "window.swap" => {
+            let a = args.get("a").and_then(Value::as_u64).ok_or("args.a is required")?;
+            let b = args.get("b").and_then(Value::as_u64).ok_or("args.b is required")?;
+            if !state.wm.swap_windows(a, b) {
+                return Err(format!("cannot swap windows {a} and {b}"));
+            }
+            crate::apply_layout(state);
+            Ok(json!({"swapped": [a, b]}))
+        }
         "window.set_mode" => {
             let id = window_id(args)?;
             let mode = args
@@ -219,14 +228,10 @@ fn dispatch(state: &mut State, cmd: &str, args: &Value) -> Result<Value, String>
             let output = state.wm.primary_output_id().ok_or("no output")?;
             let workspace = match (args.get("id").and_then(Value::as_i64), args.get("delta").and_then(Value::as_i64)) {
                 (Some(id), _) => id as i32,
-                (None, Some(delta)) => {
-                    let active = state
-                        .wm
-                        .output(output)
-                        .map(|output| output.active_workspace)
-                        .ok_or("no output")?;
-                    active + delta as i32
-                }
+                (None, Some(delta)) => state
+                    .wm
+                    .focus_workspace_relative(delta as i32)
+                    .ok_or("no output")?,
                 (None, None) => return Err("args.id or args.delta is required".into()),
             };
             if !state.wm.focus_workspace(output, workspace) {

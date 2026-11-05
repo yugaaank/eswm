@@ -441,6 +441,55 @@ fn process_shortcut(state: &mut State, mods: &ModifiersState, keysym: KeysymHand
     let raw = u32::from(keysym.modified_sym());
 
     if mods.logo {
+        let plain = !mods.ctrl && !mods.alt && !mods.shift;
+        if mods.ctrl {
+            let delta = match raw {
+                keysyms::KEY_Left => Some(-1),
+                keysyms::KEY_Right => Some(1),
+                _ => None,
+            };
+            if let Some(delta) = delta {
+                if state.wm.swap_focused(delta) {
+                    crate::apply_layout(state);
+                }
+                return FilterResult::Intercept(());
+            }
+        }
+        if mods.alt {
+            let delta = match raw {
+                keysyms::KEY_Left => Some(-1),
+                keysyms::KEY_Right => Some(1),
+                _ => None,
+            };
+            if let Some(delta) = delta {
+                if state.wm.focus_workspace_relative(delta).is_some() {
+                    crate::apply_layout(state);
+                }
+                return FilterResult::Intercept(());
+            }
+        }
+        if mods.shift && (keysyms::KEY_1..=keysyms::KEY_9).contains(&raw) {
+            let workspace = (raw - keysyms::KEY_1 + 1) as i32;
+            if let Some(id) = state.wm.focused_id() {
+                state.wm.move_window_to_workspace(id, workspace);
+                crate::apply_layout(state);
+            }
+            return FilterResult::Intercept(());
+        }
+        if plain && raw == keysyms::KEY_f {
+            if let Some(id) = state.wm.focused_id() {
+                state.wm.toggle_fullscreen(id);
+                crate::apply_layout(state);
+            }
+            return FilterResult::Intercept(());
+        }
+        if plain && raw == keysyms::KEY_m {
+            if let Some(id) = state.wm.focused_id() {
+                state.wm.toggle_maximized(id);
+                crate::apply_layout(state);
+            }
+            return FilterResult::Intercept(());
+        }
         if raw == keysyms::KEY_Return {
             crate::spawn_terminal();
             return FilterResult::Intercept(());

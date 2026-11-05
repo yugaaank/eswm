@@ -284,3 +284,24 @@ Audit of the session/DRM path (pause/resume already landed in b8c00a5):
   (state, unknown command, bad window). `cargo test` 15/15. Also hand-tested
   against a live nested session with `weston-simple-shm`: floating resize/move,
   tiled rejection, focus and close all behaved.
+
+## WM core round (2026-11-05)
+
+Making eswm usable as a WM before wiring Tacit to the control socket.
+
+- wm: `toggle_fullscreen`, `toggle_maximized`, `swap_focused(delta)`,
+  `swap_windows(a, b)`, `focus_workspace_relative(delta)` (wraps within the
+  primary output's workspaces). Leaving fullscreen/maximized returns to Tiled.
+- Fixed focus loss in `move_window_to_workspace`: the move cleared all focus on
+  the output and never refocused, so keyboard input went nowhere after
+  Super+Shift+<n>. It now refocuses the source workspace's last window.
+- Keybinds: Super+F fullscreen, Super+M maximize, Super+Shift+1..9 move focused
+  window to workspace N, Super+Ctrl+Left/Right swap with neighbour in the stack,
+  Super+Alt+Left/Right previous/next workspace.
+- control: `window.swap {a,b}` live; `workspace.focus {delta}` now wraps instead
+  of computing active+delta (which could name a workspace that does not exist).
+- Tests: 16 unit (4 new) + 3 integration, all green.
+
+Still missing for "proper WM": visible focus (borders/gaps), window rules
+(class -> workspace/float), tiled resize by mouse, multi-output workspaces,
+click-to-focus (deferred).
