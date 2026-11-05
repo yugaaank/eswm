@@ -1440,7 +1440,8 @@ impl State {
             .layer_shell_state
             .layer_surfaces()
             .collect();
-        for (ws, x, y, _id, focused, rect) in &placed {
+        for (ws, x, y, id, focused, rect) in &placed {
+            tracing::debug!("render window id={id:?} rect={rect:?} focused={focused}");
             // draw_render_elements reverses insertion order (inserts at 0),
             // so surfaces must be pushed before the border so they render on top.
             elements.extend(
