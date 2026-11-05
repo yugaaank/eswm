@@ -86,11 +86,12 @@ impl XdgShellHandler for State {
             });
             tracing::info!("toplevel registered id={id:?}");
             crate::apply_layout(self);
+        } else {
+            surface.with_pending_state(|state| {
+                state.states.set(xdg_toplevel::State::Activated);
+            });
+            surface.send_configure();
         }
-        surface.with_pending_state(|state| {
-            state.states.set(xdg_toplevel::State::Activated);
-        });
-        surface.send_configure();
     }
 
     fn app_id_changed(&mut self, surface: ToplevelSurface) {
@@ -124,7 +125,7 @@ fn toplevel_for_window(state: &State, id: wm::WindowId) -> Option<ToplevelSurfac
         .xdg_shell_state
         .toplevel_surfaces()
         .iter()
-        .find(|t| window_id_of(t.wl_surface()) == Some(id))
+        .find(|t| t.alive() && window_id_of(t.wl_surface()) == Some(id))
         .cloned()
 }
 
@@ -363,24 +364,47 @@ fn init_ipc_and_lua(state: &mut State) {
     state.lua = Some(lua);
 }
 
+/// Reap WM entries whose toplevel disappeared without a compositor callback (for
+/// example after a client lost its display socket). Stale entries otherwise hold
+/// master/stack slots forever.
+pub fn prune_dead_windows(state: &mut State) -> usize {
+    let dead: Vec<wm::WindowId> = state
+        .wm
+        .window_ids()
+        .into_iter()
+        .filter(|id| toplevel_for_window(state, *id).is_none())
+        .collect();
+    let count = dead.len();
+    for id in dead {
+        tracing::info!("dropping stale toplevel registration id={id}");
+        state.wm.remove_window(id);
+    }
+    count
+}
+
 // M5: push target rects to clients as xdg_toplevel size configures, then mark applied.
 pub fn apply_layout(state: &mut State) {
+    prune_dead_windows(state);
     let windows = state
         .wm
         .window_ids()
         .into_iter()
         .filter_map(|id| state.wm.window(id).cloned().map(|w| (id, w)))
         .collect::<Vec<_>>();
-    tracing::info!("apply_layout: {} window(s)", windows.len());
+    tracing::debug!("apply_layout: {} window(s)", windows.len());
     for (id, window) in windows {
         let target = window.target_rect;
-        if target.width == 0 || target.height == 0 || window.rect == target {
+        let needs_size = window.rect != target && target.width > 0 && target.height > 0;
+        let needs_activation = window.activated_sent != Some(window.focused);
+        if !needs_size && !needs_activation {
             continue;
         }
         if let Some(toplevel) = toplevel_for_window(state, id) {
-            tracing::info!("configuring window id={id:?} -> {}x{} at {},{}", target.width, target.height, target.x, target.y);
+            tracing::debug!("configuring window id={id:?} -> {}x{} at {},{}", target.width, target.height, target.x, target.y);
             toplevel.with_pending_state(|st| {
-                st.size = Some((target.width.max(1) as i32, target.height.max(1) as i32).into());
+                if needs_size {
+                    st.size = Some((target.width.max(1) as i32, target.height.max(1) as i32).into());
+                }
                 if window.focused {
                     st.states.set(xdg_toplevel::State::Activated);
                 } else {
@@ -388,9 +412,16 @@ pub fn apply_layout(state: &mut State) {
                 }
             });
             toplevel.send_configure();
+            if needs_size {
+                state.wm.set_rect(id, target);
+            }
+            state.wm.set_activated_sent(id, window.focused);
         }
-        state.wm.set_rect(id, target);
     }
+    // Keep wl_keyboard focus in sync with wm focus (window closed, pruned, etc.).
+    // set_focus is a no-op when unchanged.
+    let focused = state.wm.focused_id();
+    crate::udev::keyboard_focus_set(state, focused);
 }
 
 // Compositor keybind helper: spawn a terminal client on our own socket.

@@ -21,6 +21,16 @@ pub enum WindowMode {
     Fullscreen,
 }
 
+/// Global spawn/layout policy: Hyprland (tiled) or Windows (floating).
+/// Switching it only affects newly spawned windows; Super+Space still moves
+/// individual windows between tiling and floating.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum LayoutMode {
+    #[default]
+    Hyprland,
+    Windows,
+}
+
 #[derive(Clone, Debug)]
 pub struct Window {
     pub id: WindowId,
@@ -33,6 +43,8 @@ pub struct Window {
     pub focused: bool,
     pub rect: Rect,
     pub target_rect: Rect,
+    /// Focus state last sent to the client as xdg Activated; None = never sent.
+    pub activated_sent: Option<bool>,
 }
 
 #[derive(Clone, Debug)]
@@ -59,6 +71,8 @@ pub struct WindowManager {
     outputs: BTreeMap<OutputId, Output>,
     workspaces: BTreeMap<WorkspaceId, Workspace>,
     windows: BTreeMap<WindowId, Window>,
+    layout_mode: LayoutMode,
+    cascade_count: u32,
 }
 
 impl WindowManager {
@@ -116,6 +130,12 @@ impl WindowManager {
             return true;
         }
         false
+    }
+
+    pub fn set_activated_sent(&mut self, id: WindowId, sent: bool) {
+        if let Some(window) = self.windows.get_mut(&id) {
+            window.activated_sent = Some(sent);
+        }
     }
 
     pub fn set_window_meta(&mut self, id: WindowId, app_id: String, title: String) -> bool {
@@ -179,6 +199,87 @@ impl WindowManager {
         true
     }
 
+    pub fn layout_mode(&self) -> LayoutMode {
+        self.layout_mode
+    }
+
+    pub fn toggle_layout_mode(&mut self) -> LayoutMode {
+        self.layout_mode = match self.layout_mode {
+            LayoutMode::Hyprland => LayoutMode::Windows,
+            LayoutMode::Windows => LayoutMode::Hyprland,
+        };
+        self.layout_mode
+    }
+
+    /// Toggle a single window between tiling and floating, regardless of global mode.
+    pub fn toggle_window_mode(&mut self, id: WindowId) -> bool {
+        let Some(window) = self.windows.get(&id) else {
+            return false;
+        };
+        let mode = match window.mode {
+            WindowMode::Tiled => WindowMode::Floating,
+            WindowMode::Floating | WindowMode::Maximized | WindowMode::Fullscreen => WindowMode::Tiled,
+        };
+        self.set_mode(id, mode)
+    }
+
+    /// Windows-like spawn placement: centered, cascaded.
+    fn floating_target(&mut self, geometry: Rect) -> Rect {
+        let width = (geometry.width as u64 * 62 / 100).max(640) as u32;
+        let height = (geometry.height as u64 * 68 / 100).max(480) as u32;
+        let offset = ((self.cascade_count % 6) * 28) as i32;
+        self.cascade_count = self.cascade_count.wrapping_add(1);
+        let x = geometry.x + ((geometry.width - width) / 2) as i32 + offset;
+        let y = geometry.y + ((geometry.height - height) / 2) as i32 + offset;
+        Rect { x, y, width, height }
+    }
+
+    /// Highest-most mapped window of the active workspace at pos (newest first).
+    pub fn window_at(&self, pos: (f64, f64)) -> Option<WindowId> {
+        let primary = self.primary_output_id()?;
+        let output_state = self.outputs.get(&primary)?;
+        let workspace = self.workspaces.get(&output_state.active_workspace)?;
+        for id in workspace.windows.iter().rev() {
+            let Some(window) = self.windows.get(id) else { continue };
+            if !window.mapped {
+                continue;
+            }
+            let r = window.target_rect;
+            if r.width == 0 || r.height == 0 {
+                continue;
+            }
+            let inside = pos.0 >= r.x as f64
+                && pos.1 >= r.y as f64
+                && pos.0 < (r.x + r.width as i32) as f64
+                && pos.1 < (r.y + r.height as i32) as f64;
+
+            if inside {
+                return Some(*id);
+            }
+        }
+        None
+    }
+
+    /// Move/resize a window directly (drag in floating mode). `rect` replaces
+    /// target_rect; size changes flow through the next configure.
+    pub fn set_window_rect(&mut self, id: WindowId, rect: Rect) -> bool {
+        let Some(window) = self.windows.get_mut(&id) else {
+            return false;
+        };
+        window.target_rect = rect;
+        if window.mode == WindowMode::Tiled {
+            // tiled geometry is owned by the arrangement; ignore direct moves
+            return false;
+        }
+        if window.rect.width != rect.width || window.rect.height != rect.height {
+            // force a size configure next apply_layout (width 0 sentinel)
+            window.rect = Rect { width: 0, height: 0, ..window.rect };
+        } else {
+            window.rect = rect;
+        }
+        true
+    }
+
     pub fn add_window(
         &mut self,
         output: OutputId,
@@ -186,8 +287,17 @@ impl WindowManager {
         title: impl Into<String>,
     ) -> Option<WindowId> {
         let workspace = self.outputs.get(&output)?.active_workspace;
+        let mode = match self.layout_mode {
+            LayoutMode::Hyprland => WindowMode::Tiled,
+            LayoutMode::Windows => WindowMode::Floating,
+        };
         let id = self.next_window;
         self.next_window += 1;
+        let geometry = self.outputs.get(&output)?.geometry;
+        let floating_rect = match mode {
+            WindowMode::Floating => Some(self.floating_target(geometry)),
+            _ => None,
+        };
         self.windows.insert(
             id,
             Window {
@@ -196,11 +306,12 @@ impl WindowManager {
                 title: title.into(),
                 output,
                 workspace,
-                mode: WindowMode::Tiled,
+                mode,
                 mapped: true,
                 focused: false,
                 rect: Rect::default(),
-                target_rect: Rect::default(),
+                target_rect: floating_rect.unwrap_or_default(),
+                activated_sent: None,
             },
         );
         if let Some(target) = self.workspaces.get_mut(&workspace) {
@@ -339,17 +450,7 @@ impl WindowManager {
                 ..output_state.geometry
             },
         );
-        // shortcut: floating windows just cover the full output for now
-        let floating: Vec<_> = workspace
-            .windows
-            .iter()
-            .filter_map(|id| self.windows.get(id))
-            .filter(|window| window.mapped && window.mode == WindowMode::Floating)
-            .map(|window| window.id)
-            .collect();
-        for id in floating {
-            self.set_target_rect(id, output_state.geometry);
-        }
+        // floating windows keep their own geometry; the tiler ignores them
 
         let stack = &tiled[1..];
         for (index, id) in stack.iter().enumerate() {
@@ -367,6 +468,32 @@ impl WindowManager {
                 },
             );
         }
+    }
+
+    /// Move focus to the next/previous window of the active workspace.
+    pub fn cycle_focus(&mut self, delta: i32) -> bool {
+        let Some(output) = self.primary_output_id() else {
+            return false;
+        };
+        let Some(active) = self.outputs.get(&output).map(|o| o.active_workspace) else {
+            return false;
+        };
+        let Some(workspace) = self.workspaces.get(&active) else {
+            return false;
+        };
+        let windows = &workspace.windows;
+        if windows.is_empty() {
+            return false;
+        }
+        let current = windows
+            .iter()
+            .position(|id| self.windows.get(id).map(|w| w.focused).unwrap_or(false));
+        let next = match current {
+            Some(index) => (index as i32 + delta).rem_euclid(windows.len() as i32) as usize,
+            None => 0,
+        };
+        let id = windows[next];
+        self.focus_window(id)
     }
 
     fn first_workspace_for_new_output(&mut self, output: OutputId) -> WorkspaceId {
@@ -390,9 +517,7 @@ impl WindowManager {
     fn set_target_rect(&mut self, id: WindowId, target: Rect) {
         if let Some(window) = self.windows.get_mut(&id) {
             window.target_rect = target;
-            if window.rect == Rect::default() {
-                window.rect = target;
-            }
+            // rect stays zero until apply_layout confirms; the client drives buffer size
         }
     }
 
@@ -459,5 +584,18 @@ mod tests {
 
         assert_eq!(manager.window(tiled).unwrap().target_rect.width, 1920);
         assert_eq!(manager.window(floating).unwrap().mode, WindowMode::Floating);
+    }
+
+    #[test]
+    fn cycle_focus_wraps_around() {
+        let (mut manager, output) = manager();
+        let first = manager.add_window(output, "kitty", "one").unwrap();
+        let second = manager.add_window(output, "kitty", "two").unwrap();
+        assert_eq!(manager.focused_id(), Some(second));
+
+        assert!(manager.cycle_focus(1));
+        assert_eq!(manager.focused_id(), Some(first));
+        assert!(manager.cycle_focus(-1));
+        assert_eq!(manager.focused_id(), Some(second));
     }
 }

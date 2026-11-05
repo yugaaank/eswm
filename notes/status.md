@@ -1,5 +1,85 @@
 # tacit-comp working notes
 
+## HANDOFF — read this first (2026-11-05)
+
+**Repo:** `~/Projects/eswm`, branch `feature/standalone-tacit`, HEAD `b8c00a5`
+(pushed, remote == local). Working tree has **uncommitted** M5 pointer/mode/cleanup
+work (see `git diff --stat`: main.rs ~+51, udev.rs ~+220, wm.rs ~+170, this file).
+Do not commit or push without asking the user.
+
+**Build / run:**
+- `cargo build`; tests: `cargo test` (13/13 green: 11 unit incl. wm tests, 2 integration).
+- Native DRM is the default backend: run `~/Projects/eswm/target/debug/eswm` from a
+  TTY (grabs the VT; Ctrl+Alt+F1/F3 to leave/return).
+- Nested test under Hyprland: `TACIT_COMP_BACKEND=winit WAYLAND_DISPLAY=eswm-dev
+  ./target/debug/eswm` then `WAYLAND_DISPLAY=eswm-dev kitty`. Host may steal Super,
+  so the nested path is not the keybind authority.
+- Wayland socket: `TACIT_COMP_SOCKET` (default `eswm-test`).
+- Logs: `/tmp/eswm.log` (info+; per-frame noise is debug), `/tmp/eswm-panic.log`,
+  `/tmp/kitty-spawn.log` (kitty stderr + exit status in main log).
+- `.cargo/config.toml` points at a locally built libdisplay-info 0.2 under
+  `/tmp/opencode/ldi`; if /tmp is wiped, rebuild it (instructions in the M4 section
+  below) or `cargo` will fail to link.
+
+**Keybinds (udev backend):** Super+Return kitty · Super+Q close focused ·
+Super+1..9 workspace switch · Super+Left/Up prev window · Super+Right/Down next
+window · Super+Space toggle focused window Tiled/Floating · Super+Shift+Space toggle
+global spawn mode (Hyprland tiled ↔ Windows floating cascade) · Super+LMB move /
+Super+RMB resize floating windows · Ctrl+Alt+Backspace quit · Ctrl+Alt+F1..12 VT.
+
+**Code map:**
+- `src/main.rs` — `State`, backend dispatch (`TACIT_COMP_BACKEND=winit` else DRM),
+  xdg/layer/seat/compositor handlers, `new_toplevel`, `apply_layout`, `prune_dead_windows`,
+  `spawn_terminal`, winit run loop.
+- `src/udev.rs` — DRM/KMS + libinput backend (port of anvil 0.7 `udev.rs`), session
+  pause/resume, per-connector outputs, render_surface (target_rect placement,
+  queue_frame, software cursor), input, keybinds, pointer focus/drag helpers.
+- `src/wm.rs` — WindowManager: outputs/workspaces/windows, master-stack tiler,
+  LayoutMode, floating cascade, window_at hit test, cycle_focus, unit tests.
+- `src/ipc.rs` — hyprctl-compatible socket + `.socket2.sock` event stream (M2).
+- `src/lua_state.rs` — Lua API stub (M3).
+- `notes/tacit-integration.md` — Tacit/QML compat contract; `notes/roadmap.md` — plan.
+
+**Feature state:** M1 nested compositor, M2 IPC, M3 Lua stub, M4 real DRM backend and
+M5 tiling/keybinds/pointer all landed. Fixed presentation saga: missing
+`queue_frame()`, empty-frame `is_empty` black panel (1x1 prime element), VT-pause
+DeviceInactive storm (`paused` flag), stale dead toplevels holding layout slots
+(`prune_dead_windows` + `alive()` check), xdg `Activated` only being sent on resize
+(now tracked in `Window.activated_sent`), keyboard focus sync centralized in
+`apply_layout`.
+
+**OPEN BUG (top priority): click-to-focus still fails on the live DRM path.**
+- Focus DOES move on window close and workspace switch (so `keyboard_focus_set` and
+  the wm focus bookkeeping work). Typing works once a window has focus.
+- Super+arrow focus cycle was just added; not yet retested.
+- Diagnostics already in the build (info level): `click at (x,y) -> window <id> rect
+  <rect>` and `keyboard focus -> <id>` (logged only on change); `pointer at (x,y)` is
+  debug/1 Hz. Next step: ask user to click several windows, then read
+  `grep -E "click at|keyboard focus" /tmp/eswm.log | tail -20`.
+  - coordinates outside the window rects ⇒ pointer_location / hit-test space bug.
+  - correct window id but focus unchanged ⇒ focus handoff/override bug.
+  - no `click at` lines at all ⇒ button events never reach the compositor.
+- Also unknown: whether the software cursor is visible on screen (user was asked).
+  Cursor is `MemoryRenderBufferRenderElement` from xcursor theme `default` (exists on
+  this machine); an invisible cursor would make every click land blind and look
+  exactly like this bug.
+- Pointer hardening already applied: location clamped to output size, pointer focus
+  refreshed (motion+frame) before every button press, empty-background clicks keep
+  keyboard focus.
+
+**Known shortcuts / limits:** windows are stacked without decorations or pointer
+hit-testing above layer surfaces; no direct scanout; 16 ms unconditional redraw
+(damage tracker still gates page flips); no Super+drag for tiled windows; IPC
+`CompCmd::GotoWorkspace`/`CloseWindow` are still no-ops in the winit path and are not
+drained in the DRM path (M5 step 5 not done); multi-GPU "prefer Intel" default not
+implemented (`TACIT_DRM_DEVICE` override works); Hyprland IPC dispatch surface is
+mostly snapshot/plumbing only.
+
+**Next steps if the click bug is confirmed fixed:** retest Super+arrows, drag/resize,
+mode toggles; then ask user to commit + push the whole uncommitted M5 work; then
+M5 step 5 (wire IPC/workspace commands into the wm) and the Intel-primary GPU pick.
+
+
 ## What this is
 Simple compositor on Smithay 0.7 for moving Tacit off Hyprland. Plan:
 `~/.opencode/plan/tacit-compositor-plan.md`. Compat bar: tacit's existing QML (Quickshell), Lua session files and scripts must work unchanged.
@@ -63,3 +143,103 @@ Simple compositor on Smithay 0.7 for moving Tacit off Hyprland. Plan:
 - Diagnostic scaffolding (keep until M6 cleanup): unconditional /tmp/eswm.log, panic hook -> /tmp/eswm-panic.log, probe logs for toplevel register / configure / queued frame.
 - RenderD128 (NVIDIA RTX 2050, GL 615.78) is primary_gpu; EGL_WL_bind_wayland_display is NOT supported there -> hardware-accel path skipped (EsEnNotSupported). Intel eDP-1 drives the panel. Possible need: TACIT_DRM_DEVICE=/dev/dri/renderD129 to force Intel render node.
 - wm wiring complete for steps 1+2+4; pointer hit-test (step 3) and IPC/Lua workspace commands (step 5) still open.
+- **Pointer phase landed (uncommitted 2026-11-04, tests 12/12, cargo check green):**
+  - UdevData gains last_mods (ModifiersState, Copy/Clone, kept fresh inside the
+    keyboard.input closure for every key), pointer_focus: Option<WindowId>,
+    drag: Option<DragState> (Move | Resize, start pos, orig rect, button = BTN_LEFT/RIGHT).
+  - pointer_focus() hit-tests via wm.window_at and returns surface + surface-local
+    coords for smithay pointer.motion; no-focus enter/leave events now flow to clients.
+  - Click-to-focus: PointerButton Pressed → window_at → focus_window +
+    keyboard.set_focus (sends leave/enter). Super+LMB / Super+RMB drag to move /
+    SUPER+RMB resize (min 200x150) writes corner geometry only for Floating windows.
+  - Super+Space toggles focused window Tiled/Floating; Super+Shift+Space toggles
+    global spawn mode (Hyprland tiled ↔ Windows floating cascaded spawn 62%x68%).
+  - Workspace switch re-enters keyboard focus on the newly active workspace.
+  - Bug A fix: wm::set_target_rect no longer pre-fills window.rect (rect stays
+    zero until apply_layout confirms) so new windows now ALWAYS get a size
+    configure; render placement uses target_rect.
+  - NOT retest / NOT committed: TTY & nested winit smoke (WAYLAND_DISPLAY=eswm-dev
+    + TACIT_COMP_BACKEND=winit cargo run) still required to confirm click-focus,
+    spawn-cascade, and drag-resize behavior; commit pending user approval.
+  - TTY evidence exposed stale ghost registrations (dead clients remained master slots).
+    `apply_layout` now calls `prune_dead_windows`: WM entries with no matching
+    live toplevel are removed and layout recomputed; `toplevel_for_window` treats
+    `!alive()` resources as missing so dead clients cannot hold master/stack slots;
+    per-frame layout logs are debug-only;
+    `window_at()` ignores zero-sized targets. cargo check/test green. Live retest
+    still required.
+
+## Focus round (2026-11-05, uncommitted)
+
+Retest feedback: "sometimes i can write in windows but i can't change focus under
+mouse and sometimes i can't even type, also workspace change is working."
+
+Fixes:
+- xdg Activated was only sent together with a size configure, so focus changes on
+  same-size windows never reached clients (toolkits keep the window "inactive" and
+  may ignore keys). `wm::Window.activated_sent: Option<bool>` tracks the last sent
+  state; `apply_layout` now sends a size-less configure on activation change.
+- `apply_layout` keeps wl_keyboard focus in sync with wm focus (`set_focus` is
+  idempotent): covers spawn, close/prune and workspace switch from one place.
+  Removed the duplicated explicit focus calls.
+- PointerButton press now refreshes pointer focus (motion + frame) before the
+  button event, so a click lands on the surface currently under the cursor even
+  when the pointer has not moved since layout/workspace changed.
+- Pointer location is clamped to the output size (relative libinput deltas could
+  walk off-screen and hit-test nothing).
+- Debug log: `click at (x,y) -> window id` (RUST_LOG=eswm=debug).
+
+cargo test 12/12 green. Still uncommitted; live TTY retest pending.
+
+## Click-to-focus round 2 (2026-11-05)
+
+Feedback: focus transfers on close now, but click-to-focus still fails; asking for
+Super+arrow focus switching.
+
+- New wm::WindowManager::cycle_focus(delta) (active workspace, wraps) + unit test.
+  Keybinds: Super+Left/Up = previous, Super+Right/Down = next; apply_layout after.
+- Empty background clicks no longer clear keyboard focus (only a window hit
+  changes focus); avoids "can't type after clicking background".
+- Diagnostic logs (info): `click at (x,y) -> window <id> rect <rect>` and
+  `keyboard focus -> <id>` (only when it changes). `pointer at (x,y)` is debug/1 Hz.
+- Suspect for the click failure: pointer_location drift / hit-test mismatch; the
+  click log shows the exact coordinate + hit rect, so one retest log decides it.
+
+cargo test 13/13 (11 unit incl. cycle test + 2 integration). Uncommitted.
+
+## Double-fire round (2026-11-05)
+
+Feedback: Super+arrow skipped a window (focus moved two steps).
+
+- Cause: smithay 0.7 `KeyboardHandle::input` runs the filter closure for BOTH
+  `KeyState::Pressed` and `KeyState::Released`, so `process_shortcut` fired twice
+  (e.g. `cycle_focus(±1)` ran on press and again on release).
+- Fix (one place): `src/udev.rs` `process_input_event` captures
+  `pressed = event.state() == input::KeyState::Pressed` before `keyboard.input`
+  and only calls `process_shortcut` on press; release returns
+  `FilterResult::Forward` (key-up still reaches the focused client).
+  `udev.last_mods` is still updated on press AND release (Super+button drags
+  depend on it). All keyboard binds (Super+*, Ctrl+Alt+Backspace, Ctrl+Alt+F1-12
+  VT) live in `process_shortcut`, so this one gate covers every shortcut.
+- Pointer path was already press-only (`PointerButton` checks
+  `ButtonState::Pressed`).
+- cargo build + cargo test green (13/13). Live TTY retest still pending:
+  Super+Left/Right must move exactly one window per press.
+
+## Click-to-focus deferred (2026-11-05)
+
+- Status: unresolved; parked as future work by user decision. Do not spend more
+  rounds on it before other milestones.
+- Keyboard focus works (spawn, close, workspace switch, Super+arrows).
+  Click-to-focus on the live DRM/libinput path is the open defect.
+- Evidence gap: the last TTY run produced ZERO `click at (x,y) -> window ...`
+  info lines, so we cannot tell "button events never reach
+  process_input_event" from "the user did not click in that run". The next
+  attempt must add one discriminating info log at the libinput event boundary
+  (log every PointerButton arrival) before theorising further.
+- Unproven suspects: hit-test mismatch (`target_rect` vs rendered geometry),
+  `keyboard_focus_set` early-return when the cached id matches, and the click
+  path not calling `apply_layout` so xdg `Activated` may not be re-sent.
+- Software cursor drawing exists (`src/udev.rs` ~1380-1426, xcursor theme +
+  `cursor_buffer`), so an invisible pointer is not the explanation unless the
+  theme fails to load (warns "no xcursor theme found, cursor will be invisible").

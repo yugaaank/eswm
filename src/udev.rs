@@ -108,6 +108,21 @@ struct UdevOutputId {
     crtc: crtc::Handle,
 }
 
+#[derive(Clone, Copy)]
+enum DragMode {
+    Move,
+    Resize,
+}
+
+#[derive(Clone, Copy)]
+struct DragState {
+    window: wm::WindowId,
+    mode: DragMode,
+    start: Point<f64, Logical>,
+    orig_rect: wm::Rect,
+    button: u32,
+}
+
 pub struct UdevData {
     pub session: LibSeatSession,
     pub primary_gpu: DrmNode,
@@ -117,6 +132,14 @@ pub struct UdevData {
     cursor_images: Vec<xcursor::parser::Image>,
     cursor_buffer: Option<(MemoryRenderBuffer, (f64, f64))>, // (buffer, hotspot)
     pub pointer_location: Point<f64, Logical>,
+    /// Modifiers seen on the last key event (used to detect Super for drags)
+    last_mods: ModifiersState,
+    /// Window currently under the pointer (active workspace, hit-tested)
+    pointer_focus: Option<wm::WindowId>,
+    /// Window currently holding wl_keyboard focus
+    keyboard_focus: Option<wm::WindowId>,
+    /// In-flight move/resize gesture started with Super+button
+    drag: Option<DragState>,
     start: Instant,
     pub quit: AtomicBool,
     pub paused: bool,
@@ -197,6 +220,10 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         cursor_images,
         cursor_buffer: None,
         pointer_location: (0.0, 0.0).into(),
+        last_mods: ModifiersState::default(),
+        pointer_focus: None,
+        keyboard_focus: None,
+        drag: None,
         start: Instant::now(),
         quit: AtomicBool::new(false),
         paused: false,
@@ -403,6 +430,7 @@ fn now(state: &State) -> u32 {
 // Ctrl+Alt+Backspace quit, Ctrl+Alt+F1-12 VT switch. Everything else forwards to clients.
 fn process_shortcut(state: &mut State, mods: &ModifiersState, keysym: KeysymHandle) -> FilterResult<()> {
     use xkbcommon::xkb::keysyms;
+    crate::prune_dead_windows(state);
     let raw = u32::from(keysym.modified_sym());
 
     if mods.logo {
@@ -420,6 +448,28 @@ fn process_shortcut(state: &mut State, mods: &ModifiersState, keysym: KeysymHand
         }
         if (keysyms::KEY_1..=keysyms::KEY_9).contains(&raw) {
             switch_workspace(state, (raw - keysyms::KEY_1 + 1) as i32);
+            return FilterResult::Intercept(());
+        }
+        let cycle = match raw {
+            keysyms::KEY_Left | keysyms::KEY_Up => Some(-1),
+            keysyms::KEY_Right | keysyms::KEY_Down => Some(1),
+            _ => None,
+        };
+        if let Some(delta) = cycle {
+            if state.wm.cycle_focus(delta) {
+                crate::apply_layout(state);
+            }
+            return FilterResult::Intercept(());
+        }
+        if raw == keysyms::KEY_space {
+            if mods.shift {
+                // Super+Shift+Space: toggle global spawn mode (Hyprland/Windows)
+                state.wm.toggle_layout_mode();
+            } else if let Some(id) = state.wm.focused_id() {
+                // Super+Space: toggle the focused window between tiling and floating
+                state.wm.toggle_window_mode(id);
+            }
+            crate::apply_layout(state);
             return FilterResult::Intercept(());
         }
     }
@@ -447,6 +497,67 @@ fn process_shortcut(state: &mut State, mods: &ModifiersState, keysym: KeysymHand
     FilterResult::Forward
 }
 
+// Linux input event codes for mouse buttons
+const BTN_LEFT: u32 = 0x110;
+const BTN_RIGHT: u32 = 0x111;
+
+/// Recompute pointer (hover/drag) focus from `pos` and return the surface-local
+/// hit for `Pointer.motion`, or None when over empty space.
+fn pointer_focus(state: &mut State, pos: Point<f64, Logical>) -> Option<(wl_surface::WlSurface, Point<f64, Logical>)> {
+    crate::prune_dead_windows(state);
+    let dragging = state.udev.as_ref().unwrap().drag;
+    let id = dragging.map(|drag| drag.window).or_else(|| state.wm.window_at((pos.x, pos.y)));
+    if let Some(udev) = state.udev.as_mut() {
+        udev.pointer_focus = id;
+    }
+    let id = id?;
+    let toplevel = crate::toplevel_for_window(state, id)?;
+    let rect = state.wm.window(id)?.target_rect;
+    Some((
+        toplevel.wl_surface().clone(),
+        Point::from((pos.x - rect.x as f64, pos.y - rect.y as f64)),
+    ))
+}
+
+/// Send wl_keyboard leave/enter for `id`; None => just leave.
+pub fn keyboard_focus_set(state: &mut State, id: Option<wm::WindowId>) {
+    let changed = state
+        .udev
+        .as_ref()
+        .map(|udev| udev.keyboard_focus != id)
+        .unwrap_or(true);
+    let surface = id
+        .and_then(|id| crate::toplevel_for_window(state, id))
+        .map(|toplevel| toplevel.wl_surface().clone());
+    let keyboard = state.seat.get_keyboard().unwrap();
+    keyboard.set_focus(state, surface, SCOUNTER.next_serial());
+    if let Some(udev) = state.udev.as_mut() {
+        udev.keyboard_focus = id;
+    }
+    if changed {
+        tracing::info!("keyboard focus -> {id:?}");
+    }
+}
+
+/// Advance an in-flight move/resize and return the dragged window id.
+fn drag_update(state: &mut State, pos: Point<f64, Logical>) -> Option<wm::WindowId> {
+    let drag = state.udev.as_ref().unwrap().drag?;
+    let dx = pos.x - drag.start.x;
+    let dy = pos.y - drag.start.y;
+    let rect = match drag.mode {
+        DragMode::Move => wm::Rect { x: drag.orig_rect.x + dx as i32, y: drag.orig_rect.y + dy as i32, ..drag.orig_rect },
+        DragMode::Resize => wm::Rect {
+            width: (drag.orig_rect.width as f64 + dx).max(200.0) as u32,
+            height: (drag.orig_rect.height as f64 + dy).max(150.0) as u32,
+            ..drag.orig_rect
+        },
+    };
+    if state.wm.set_window_rect(drag.window, rect) {
+        crate::apply_layout(state);
+    }
+    Some(drag.window)
+}
+
 fn switch_workspace(state: &mut State, ws: i32) {
     let Some(output) = state.wm.primary_output_id() else {
         return;
@@ -462,25 +573,52 @@ impl State {
         match event {
             InputEvent::Keyboard { event, .. } => {
                 let keyboard = self.seat.get_keyboard().unwrap();
+                // libinput/smithay call the filter for press *and* release;
+                // shortcuts must only fire on press.
+                let pressed = event.state() == input::KeyState::Pressed;
                 keyboard.input::<(), _>(
                     self,
                     event.key_code(),
                     event.state(),
                     SCOUNTER.next_serial(),
                     event.time_msec(),
-                    |state, mods, keysym| process_shortcut(state, mods, keysym),
+                    |state, mods, keysym| {
+                        if let Some(udev) = state.udev.as_mut() {
+                            udev.last_mods = *mods;
+                        }
+                        if pressed {
+                            process_shortcut(state, mods, keysym)
+                        } else {
+                            FilterResult::Forward
+                        }
+                    },
                 );
             }
             InputEvent::PointerMotion { event, .. } => {
                 let serial = SCOUNTER.next_serial();
-                let udev = self.udev.as_mut().unwrap();
-                // shortcut: no pointer constraints / surface hit-testing yet
-                let pointer_location = udev.pointer_location + event.delta();
-                udev.pointer_location = pointer_location;
+                let (max_x, max_y) = self.max_screen_size();
+                let moved = self.udev.as_ref().unwrap().pointer_location + event.delta();
+                let pointer_location = Point::<f64, Logical>::from((
+                    moved.x.clamp(0.0, (max_x.max(1) - 1) as f64),
+                    moved.y.clamp(0.0, (max_y.max(1) - 1) as f64),
+                ));
+                self.udev.as_mut().unwrap().pointer_location = pointer_location;
+                drag_update(self, pointer_location);
+                // Diagnostics: ~1 Hz pointer position in the log (helps spot a
+                // stuck/invisible cursor); drop when focus is stable.
+                if event.time_msec() % 1000 < 16 {
+                    tracing::debug!(
+                        "pointer at ({:.0},{:.0}) focus {:?}",
+                        pointer_location.x,
+                        pointer_location.y,
+                        self.udev.as_ref().unwrap().pointer_focus
+                    );
+                }
+                let focus = pointer_focus(self, pointer_location);
                 let pointer = self.seat.get_pointer().unwrap();
                 pointer.motion(
                     self,
-                    None::<(wl_surface::WlSurface, Point<f64, Logical>)>,
+                    focus,
                     &MotionEvent {
                         location: pointer_location,
                         serial,
@@ -495,12 +633,13 @@ impl State {
                 let location =
                     Point::<f64, Logical>::from((event.x_transformed(max_x as i32), event.y_transformed(max_y as i32)));
                 let serial = SCOUNTER.next_serial();
-                let udev = self.udev.as_mut().unwrap();
-                udev.pointer_location = location;
+                self.udev.as_mut().unwrap().pointer_location = location;
+                drag_update(self, location);
+                let focus = pointer_focus(self, location);
                 let pointer = self.seat.get_pointer().unwrap();
                 pointer.motion(
                     self,
-                    None::<(wl_surface::WlSurface, Point<f64, Logical>)>,
+                    focus,
                     &MotionEvent {
                         location,
                         serial,
@@ -513,14 +652,66 @@ impl State {
                 let button = event.button_code();
                 let button_state =
                     smithay::reexports::wayland_server::protocol::wl_pointer::ButtonState::from(event.state());
+                crate::prune_dead_windows(self);
                 if button_state
                     == smithay::reexports::wayland_server::protocol::wl_pointer::ButtonState::Pressed
                 {
-                    // M1 trick (kept): focus the first toplevel on any press
-                    if let Some(surface) = self.xdg_shell_state.toplevel_surfaces().iter().next().cloned() {
-                        let surface = surface.wl_surface().clone();
-                        let keyboard = self.seat.get_keyboard().unwrap();
-                        keyboard.set_focus(self, Some(surface), SCOUNTER.next_serial());
+                    let location = self.udev.as_ref().unwrap().pointer_location;
+                    // Refresh pointer focus first: the pointer may have been sitting
+                    // still since the layout/workspace under it changed.
+                    let serial = SCOUNTER.next_serial();
+                    let focus = pointer_focus(self, location);
+                    let pointer = self.seat.get_pointer().unwrap();
+                    pointer.motion(
+                        self,
+                        focus,
+                        &MotionEvent {
+                            location,
+                            serial,
+                            time: event.time_msec(),
+                        },
+                    );
+                    pointer.frame(self);
+
+                    let mods = self.udev.as_ref().unwrap().last_mods;
+                    // Super+button starts a move/resize drag on a floating window
+                    if mods.logo && (button == BTN_LEFT || button == BTN_RIGHT) {
+                        if let Some(id) = self.wm.window_at((location.x, location.y)) {
+                            if self.wm.window(id).map(|w| w.mode) == Some(wm::WindowMode::Floating) {
+                                let rect = self.wm.window(id).unwrap().target_rect;
+                                self.udev.as_mut().unwrap().drag = Some(DragState {
+                                    window: id,
+                                    mode: if button == BTN_LEFT {
+                                        DragMode::Move
+                                    } else {
+                                        DragMode::Resize
+                                    },
+                                    start: location,
+                                    orig_rect: rect,
+                                    button,
+                                });
+                            }
+                        }
+                    }
+                    // click to focus + wl_keyboard enter (empty clicks keep focus)
+                    let id = self.wm.window_at((location.x, location.y));
+                    if let Some(id) = id {
+                        self.wm.focus_window(id);
+                    }
+                    let hit_rect = id.and_then(|id| self.wm.window(id)).map(|w| w.target_rect);
+                    tracing::info!(
+                        "click at ({:.0},{:.0}) -> window {id:?} rect {hit_rect:?}",
+                        location.x,
+                        location.y
+                    );
+                    if let Some(id) = id {
+                        keyboard_focus_set(self, Some(id));
+                    }
+                } else {
+                    // release: end drag if it matches this button
+                    let active = self.udev.as_ref().unwrap().drag.map(|drag| drag.button);
+                    if active == Some(button) {
+                        self.udev.as_mut().unwrap().drag = None;
                     }
                 }
                 let pointer = self.seat.get_pointer().unwrap();
@@ -1107,10 +1298,14 @@ impl State {
                         .output(window.output)
                         .map(|o| o.active_workspace == window.workspace)
                         .unwrap_or(false);
-                    if !active || !window.mapped || window.rect.width == 0 {
+                    if !active || !window.mapped || window.target_rect.width == 0 {
                         return None;
                     }
-                    Some((surface.wl_surface().clone(), window.rect.x, window.rect.y))
+                    Some((
+                        surface.wl_surface().clone(),
+                        window.target_rect.x,
+                        window.target_rect.y,
+                    ))
                 })
                 .collect()
         };
