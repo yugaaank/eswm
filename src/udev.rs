@@ -1446,9 +1446,7 @@ impl State {
             .layer_shell_state
             .layer_surfaces()
             .collect();
-        for (ws, x, y, _id, focused, rect) in &placed {
-            // draw_render_elements reverses insertion order (inserts at 0),
-            // so surfaces must be pushed before the border so they render on top.
+        for (ws, x, y, _id, _focused, _rect) in &placed {
             elements.extend(
                 render_elements_from_surface_tree(
                     &mut renderer,
@@ -1461,51 +1459,6 @@ impl State {
                 .into_iter()
                 .map(EswmRenderElements::Surface),
             );
-            // A 2 px frame behind each window is the only focus cue this
-            // compositor has; without it, which window owns the keyboard is invisible.
-            let cache = if *focused {
-                &mut udev.border_focused
-            } else {
-                &mut udev.border_unfocused
-            };
-            if cache.is_none() {
-                // Argb8888 memory order is B, G, R, A - not R, G, B.
-                let color: &[u8; 4] = if *focused {
-                    &[0xf7, 0x7f, 0x5c, 0xff] // accent blue
-                } else {
-                    &[0x22, 0x22, 0x22, 0xff] // dark gray
-                };
-                *cache = Some(MemoryRenderBuffer::from_slice(
-                    color,
-                    Fourcc::Argb8888,
-                    (1, 1),
-                    1,
-                    Transform::Normal,
-                    None,
-                ));
-            }
-            if let Some(buffer) = cache.as_ref() {
-                let bordered = wm::Rect {
-                    x: rect.x - BORDER_PX,
-                    y: rect.y - BORDER_PX,
-                    width: rect.width + 2 * BORDER_PX as u32,
-                    height: rect.height + 2 * BORDER_PX as u32,
-                };
-                if let Ok(border) = MemoryRenderBufferRenderElement::from_buffer(
-                    &mut renderer,
-                    Point::<f64, Physical>::from((bordered.x as f64, bordered.y as f64)),
-                    buffer,
-                    None,
-                    None,
-                    Some(Size::<i32, Logical>::from((
-                        bordered.width as i32,
-                        bordered.height as i32,
-                    ))),
-                    Kind::Unspecified,
-                ) {
-                    elements.push(EswmRenderElements::Cursor(border));
-                }
-            }
         }
 
         for surface in &layer_surfaces {
