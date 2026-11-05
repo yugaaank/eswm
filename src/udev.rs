@@ -1389,8 +1389,14 @@ impl State {
                         .map(|o| o.active_workspace == window.workspace)
                         .unwrap_or(false);
                     if !active || !window.mapped || window.target_rect.width == 0 {
+                        tracing::debug!(
+                            "skip render surface id={id:?} active={active} mapped={} width={}",
+                            window.mapped,
+                            window.target_rect.width
+                        );
                         return None;
                     }
+                    tracing::debug!("render window id={id:?} rect={:?} focused={}", window.target_rect, window.focused);
                     Some((
                         surface.wl_surface().clone(),
                         window.target_rect.x,
@@ -1440,8 +1446,7 @@ impl State {
             .layer_shell_state
             .layer_surfaces()
             .collect();
-        for (ws, x, y, id, focused, rect) in &placed {
-            tracing::debug!("render window id={id:?} rect={rect:?} focused={focused}");
+        for (ws, x, y, _id, focused, rect) in &placed {
             // draw_render_elements reverses insertion order (inserts at 0),
             // so surfaces must be pushed before the border so they render on top.
             elements.extend(
