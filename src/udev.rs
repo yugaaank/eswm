@@ -1448,17 +1448,19 @@ impl State {
             .layer_surfaces()
             .collect();
         for (ws, x, y, _id, _focused, _rect) in &placed {
+            let tree_elements = render_elements_from_surface_tree(
+                &mut renderer,
+                ws,
+                (*x, *y),
+                1.0,
+                1.0,
+                Kind::Unspecified,
+            );
+            tracing::info!("surface tree elements for window at ({x},{y}): {} elements", tree_elements.len());
             elements.extend(
-                render_elements_from_surface_tree(
-                    &mut renderer,
-                    ws,
-                    (*x, *y),
-                    1.0,
-                    1.0,
-                    Kind::Unspecified,
-                )
-                .into_iter()
-                .map(EswmRenderElements::Surface),
+                tree_elements
+                    .into_iter()
+                    .map(EswmRenderElements::Surface),
             );
         }
 
