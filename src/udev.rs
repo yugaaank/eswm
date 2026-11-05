@@ -1441,6 +1441,20 @@ impl State {
             .layer_surfaces()
             .collect();
         for (ws, x, y, _id, focused, rect) in &placed {
+            // draw_render_elements reverses insertion order (inserts at 0),
+            // so surfaces must be pushed before the border so they render on top.
+            elements.extend(
+                render_elements_from_surface_tree(
+                    &mut renderer,
+                    ws,
+                    (*x, *y),
+                    1.0,
+                    1.0,
+                    Kind::Unspecified,
+                )
+                .into_iter()
+                .map(EswmRenderElements::Surface),
+            );
             // A 2 px frame behind each window is the only focus cue this
             // compositor has; without it, which window owns the keyboard is invisible.
             let cache = if *focused {
@@ -1486,18 +1500,6 @@ impl State {
                     elements.push(EswmRenderElements::Cursor(border));
                 }
             }
-            elements.extend(
-                render_elements_from_surface_tree(
-                    &mut renderer,
-                    ws,
-                    (*x, *y),
-                    1.0,
-                    1.0,
-                    Kind::Unspecified,
-                )
-                .into_iter()
-                .map(EswmRenderElements::Surface),
-            );
         }
 
         for surface in &layer_surfaces {
