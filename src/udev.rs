@@ -1389,14 +1389,14 @@ impl State {
                         .map(|o| o.active_workspace == window.workspace)
                         .unwrap_or(false);
                     if !active || !window.mapped || window.target_rect.width == 0 {
-                        tracing::debug!(
+                        tracing::info!(
                             "skip render surface id={id:?} active={active} mapped={} width={}",
                             window.mapped,
                             window.target_rect.width
                         );
                         return None;
                     }
-                    tracing::debug!("render window id={id:?} rect={:?} focused={}", window.target_rect, window.focused);
+                    tracing::info!("render window id={id:?} rect={:?} focused={}", window.target_rect, window.focused);
                     Some((
                         surface.wl_surface().clone(),
                         window.target_rect.x,
@@ -1408,6 +1408,7 @@ impl State {
                 })
                 .collect()
         };
+        tracing::info!("render frame: {} window(s) placed", placed.len());
 
         let primary_gpu = self.udev.as_ref().unwrap().primary_gpu;
 
