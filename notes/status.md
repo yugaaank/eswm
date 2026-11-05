@@ -243,3 +243,28 @@ Feedback: Super+arrow skipped a window (focus moved two steps).
 - Software cursor drawing exists (`src/udev.rs` ~1380-1426, xcursor theme +
   `cursor_buffer`), so an invisible pointer is not the explanation unless the
   theme fails to load (warns "no xcursor theme found, cursor will be invisible").
+
+## Hotplug + drag-clamp round (2026-11-05)
+
+Audit of the session/DRM path (pause/resume already landed in b8c00a5):
+
+- VT pause/resume is complete enough as written: libinput suspend/resume,
+  `udev.paused` gates `State::render`, every backend paused and re-activated,
+  idle render re-queued per backend after resume. Not yet exercised on hardware.
+- Real gap found: `connector_disconnected` removed the DRM surface but left the
+  WM output, workspace and windows behind, so windows on an unplugged output
+  became unreachable (no hit-test, no focus, never rendered).
+  Fix: `wm::WindowManager::remove_output(id)` moves that output's workspaces and
+  windows onto the first surviving output, promotes a non-empty workspace if the
+  survivor's active one is empty, refocuses and re-arranges; with no outputs left
+  the workspaces/windows are dropped (clients stay mapped but unmanaged).
+  `connector_disconnected` now resolves the WM output by connector name
+  (`output_id_by_name`) and runs `apply_layout`. Unit test
+  `remove_output_moves_windows_to_survivor`.
+- Drag move/resize now clamps to the window's output geometry, and
+  `window_at` compares bounds in f64, so an unbounded drag can no longer overflow
+  the i32 hit-test.
+- Known multi-output limitation, NOT fixed: `connector_connected` creates
+  workspaces 1..=9 unconditionally, and workspace ids are global, so a second
+  output gets no workspaces of its own. Fix when multi-head is actually needed.
+- `cargo build` clean (23 pre-existing warnings), `cargo test` 14/14.

@@ -104,6 +104,79 @@ impl WindowManager {
         self.outputs.get(&id)
     }
 
+    pub fn output_id_by_name(&self, name: &str) -> Option<OutputId> {
+        self.outputs
+            .values()
+            .find(|output| output.name == name)
+            .map(|output| output.id)
+    }
+
+    /// Drop an output (unplug / device removal). Its workspaces and windows move
+    /// to the first surviving output; with no outputs left they are dropped.
+    pub fn remove_output(&mut self, id: OutputId) -> bool {
+        if self.outputs.remove(&id).is_none() {
+            return false;
+        }
+        let survivor = self.outputs.keys().next().copied();
+        let orphaned: Vec<WorkspaceId> = self
+            .workspaces
+            .values()
+            .filter(|workspace| workspace.output == id)
+            .map(|workspace| workspace.id)
+            .collect();
+        for workspace_id in orphaned {
+            let windows = self
+                .workspaces
+                .get(&workspace_id)
+                .map(|workspace| workspace.windows.clone())
+                .unwrap_or_default();
+            match survivor {
+                Some(survivor) => {
+                    if let Some(workspace) = self.workspaces.get_mut(&workspace_id) {
+                        workspace.output = survivor;
+                    }
+                    for window in windows {
+                        if let Some(window) = self.windows.get_mut(&window) {
+                            window.output = survivor;
+                        }
+                    }
+                }
+                None => {
+                    self.workspaces.remove(&workspace_id);
+                    for window in windows {
+                        self.windows.remove(&window);
+                    }
+                }
+            }
+        }
+        let Some(survivor) = survivor else {
+            return true;
+        };
+        let active_is_empty = self
+            .outputs
+            .get(&survivor)
+            .and_then(|output| self.workspaces.get(&output.active_workspace))
+            .map(|workspace| workspace.windows.is_empty())
+            .unwrap_or(true);
+        if active_is_empty {
+            if let Some(workspace) = self
+                .workspaces
+                .values()
+                .find(|workspace| workspace.output == survivor && !workspace.windows.is_empty())
+                .map(|workspace| workspace.id)
+            {
+                if let Some(output) = self.outputs.get_mut(&survivor) {
+                    output.active_workspace = workspace;
+                }
+            }
+        }
+        if let Some(active) = self.outputs.get(&survivor).map(|o| o.active_workspace) {
+            self.focus_workspace(survivor, active);
+        }
+        self.arrange_output(survivor);
+        true
+    }
+
     pub fn workspace(&self, id: WorkspaceId) -> Option<&Workspace> {
         self.workspaces.get(&id)
     }
@@ -250,8 +323,8 @@ impl WindowManager {
             }
             let inside = pos.0 >= r.x as f64
                 && pos.1 >= r.y as f64
-                && pos.0 < (r.x + r.width as i32) as f64
-                && pos.1 < (r.y + r.height as i32) as f64;
+                && pos.0 < r.x as f64 + r.width as f64
+                && pos.1 < r.y as f64 + r.height as f64;
 
             if inside {
                 return Some(*id);
@@ -584,6 +657,28 @@ mod tests {
 
         assert_eq!(manager.window(tiled).unwrap().target_rect.width, 1920);
         assert_eq!(manager.window(floating).unwrap().mode, WindowMode::Floating);
+    }
+
+    #[test]
+    fn remove_output_moves_windows_to_survivor() {
+        let (mut manager, first) = manager();
+        let second = manager.add_output(
+            "second",
+            Rect {
+                x: 1920,
+                y: 0,
+                width: 1280,
+                height: 720,
+            },
+        );
+        let window = manager.add_window(second, "kitty", "hotplug").unwrap();
+
+        assert!(manager.remove_output(second));
+        let window = manager.window(window).unwrap();
+        assert_eq!(window.output, first);
+        assert_eq!(window.target_rect.width, 1920);
+        assert!(manager.output(second).is_none());
+        assert!(!manager.remove_output(second));
     }
 
     #[test]

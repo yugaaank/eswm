@@ -544,7 +544,7 @@ fn drag_update(state: &mut State, pos: Point<f64, Logical>) -> Option<wm::Window
     let drag = state.udev.as_ref().unwrap().drag?;
     let dx = pos.x - drag.start.x;
     let dy = pos.y - drag.start.y;
-    let rect = match drag.mode {
+    let mut rect = match drag.mode {
         DragMode::Move => wm::Rect { x: drag.orig_rect.x + dx as i32, y: drag.orig_rect.y + dy as i32, ..drag.orig_rect },
         DragMode::Resize => wm::Rect {
             width: (drag.orig_rect.width as f64 + dx).max(200.0) as u32,
@@ -552,6 +552,23 @@ fn drag_update(state: &mut State, pos: Point<f64, Logical>) -> Option<wm::Window
             ..drag.orig_rect
         },
     };
+    // Keep the window on its output: an unbounded drag could wrap the i32
+    // geometry used by hit-testing and leave the window unclickable.
+    if let Some(geometry) = state
+        .wm
+        .window(drag.window)
+        .and_then(|window| state.wm.output(window.output))
+        .map(|output| output.geometry)
+    {
+        rect.x = rect
+            .x
+            .clamp(geometry.x, (geometry.x + geometry.width as i32 - 200).max(geometry.x));
+        rect.y = rect
+            .y
+            .clamp(geometry.y, (geometry.y + geometry.height as i32 - 150).max(geometry.y));
+        rect.width = rect.width.clamp(200, geometry.width.max(200));
+        rect.height = rect.height.clamp(150, geometry.height.max(150));
+    }
     if state.wm.set_window_rect(drag.window, rect) {
         crate::apply_layout(state);
     }
@@ -1022,9 +1039,16 @@ impl State {
         });
     }
 
-    fn connector_disconnected(&mut self, node: DrmNode, _connector: connector::Info, crtc: crtc::Handle) {
+    fn connector_disconnected(&mut self, node: DrmNode, connector: connector::Info, crtc: crtc::Handle) {
         if let Some(device) = self.udev.as_mut().unwrap().backends.get_mut(&node) {
             device.surfaces.remove(&crtc);
+        }
+        // Drop the WM output too, otherwise its windows stay on a dead output and
+        // become unreachable (no hit-test, no focus, never rendered).
+        let output_name = format!("{}-{}", connector.interface().as_str(), connector.interface_id());
+        if let Some(output) = self.wm.output_id_by_name(&output_name) {
+            self.wm.remove_output(output);
+            crate::apply_layout(self);
         }
     }
 
