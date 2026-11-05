@@ -268,3 +268,19 @@ Audit of the session/DRM path (pause/resume already landed in b8c00a5):
   workspaces 1..=9 unconditionally, and workspace ids are global, so a second
   output gets no workspaces of its own. Fix when multi-head is actually needed.
 - `cargo build` clean (23 pre-existing warnings), `cargo test` 14/14.
+
+## Control channel v0 (2026-11-05, uncommitted at time of writing)
+
+- `src/control.rs`: `$XDG_RUNTIME_DIR/eswm-<wayland-display>.sock`, newline
+  JSON. Socket threads only parse/route; each request is applied on the
+  compositor tick so it sees live WM state, then replied on a flume channel.
+  Wired into both backends (`udev.rs` loop and `run_winit`).
+- Commands: `state`, `window.list`, `workspace.list`, `output.list`,
+  `window.focus|close|move|move_to|resize|set_mode`, `workspace.focus{id|delta}`.
+- `wm`: added `outputs()` / `workspaces()` iterators for the snapshots.
+- Not done: event stream (poll `state` for now), `output.focus`, `config.reload`,
+  `window.swap`, multi-output `workspace.focus`.
+- Proof: `tests/control.rs` spawns the nested compositor and drives the socket
+  (state, unknown command, bad window). `cargo test` 15/15. Also hand-tested
+  against a live nested session with `weston-simple-shm`: floating resize/move,
+  tiled rejection, focus and close all behaved.

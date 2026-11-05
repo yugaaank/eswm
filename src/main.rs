@@ -4,6 +4,7 @@
 use std::{os::unix::io::OwnedFd, sync::Arc};
 
 use ::winit::platform::pump_events::PumpStatus;
+mod control;
 mod ipc;
 mod lua_state;
 mod udev;
@@ -231,6 +232,8 @@ struct State {
     udev: Option<udev::UdevData>,
     // M4: calloop scheduling handle (timers, idle); None in nested mode
     handle: Option<LoopHandle<'static, State>>,
+    // Native control channel (notes/tacit-integration.md); None if bind failed
+    control: Option<control::Control>,
 }
 
 fn install_diag_logging() {
@@ -341,6 +344,7 @@ fn new_state(
         lua: None,
         udev: None,
         handle: None,
+        control: None,
     }
 }
 
@@ -485,6 +489,11 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
 
     init_ipc_and_lua(&mut state);
 
+    match control::Control::start(&socket_name()) {
+        Ok(control) => state.control = Some(control),
+        Err(err) => tracing::warn!("control socket disabled: {err}"),
+    }
+
     let mut clients = Vec::new();
 
     let (mut backend, mut winit) = winit::init::<GlesRenderer>()?;
@@ -536,6 +545,7 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
         let damage = Rectangle::from_size(size);
 
         drain_ipc_and_refresh(&state, size.into());
+        control::drain(&mut state);
 
         {
             let (renderer, mut framebuffer) = backend.bind().unwrap();

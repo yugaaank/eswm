@@ -386,6 +386,11 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
     let listener = ListeningSocket::bind(&crate::socket_name())?;
     println!("listening on {:#?}", listener.socket_name());
 
+    match crate::control::Control::start(&crate::socket_name()) {
+        Ok(control) => state.control = Some(control),
+        Err(err) => tracing::warn!("control socket disabled: {err}"),
+    }
+
     let mut clients = Vec::new();
 
     while !state.udev.as_ref().unwrap().quit.load(Ordering::SeqCst) {
@@ -395,6 +400,8 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
                 .insert_client(stream, Arc::new(crate::ClientState::default()))?;
             clients.push(client);
         }
+
+        crate::control::drain(&mut state);
 
         match event_loop.dispatch(Some(Duration::from_millis(16)), &mut state) {
             Ok(()) => {

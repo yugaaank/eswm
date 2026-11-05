@@ -189,6 +189,14 @@ impl WindowManager {
         self.outputs.keys().next().copied()
     }
 
+    pub fn outputs(&self) -> impl Iterator<Item = &Output> {
+        self.outputs.values()
+    }
+
+    pub fn workspaces(&self) -> impl Iterator<Item = &Workspace> {
+        self.workspaces.values()
+    }
+
     pub fn window_ids(&self) -> Vec<WindowId> {
         self.windows.keys().copied().collect()
     }

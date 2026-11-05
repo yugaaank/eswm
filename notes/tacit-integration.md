@@ -157,7 +157,18 @@ One socket, `$XDG_RUNTIME_DIR/eswm-<wayland-display>.sock`, newline-delimited
 JSON, no process spawns. Tacit sends requests and receives events on it.
 Request: `{"id": 7, "cmd": "window.focus", "args": {"id": 3}}`.
 Reply: `{"id": 7, "ok": {}}` or `{"id": 7, "error": "unknown window"}`.
-Event: `{"event": "window.focused", "window": 3}`.
+Event (not sent yet): `{"event": "window.focused", "window": 3}`.
+
+Implemented in `src/control.rs` (2026-11-05): socket thread + per-connection
+reader, requests applied on the compositor tick so they see live WM state, reply
+per request, `tests/control.rs` drives a nested compositor end to end.
+
+Live: `state`, `window.list`, `workspace.list`, `output.list`, `window.focus`,
+`window.close`, `window.move {workspace}`, `window.move_to`, `window.resize`,
+`window.set_mode`, `workspace.focus {id|delta}`.
+Not live yet: the event stream (clients poll `state`), `output.focus`,
+`config.reload`, `window.swap`, and multi-output `workspace.focus` (primary
+output only). Windows are identified by a numeric `id`, not a Hyprland address.
 
 Queries:
 
