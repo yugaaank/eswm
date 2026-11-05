@@ -416,9 +416,11 @@ pub fn apply_layout(state: &mut State) {
                 }
             });
             toplevel.send_configure();
-            if needs_size {
-                state.wm.set_rect(id, target);
-            }
+            // NOTE: deliberately do not call set_rect here - keeping window.rect at its
+            // initial default (0x0) means needs_size stays true and send_configure is
+            // re-sent every frame, which forces clients to re-commit and keeps damage
+            // tracking alive for the window. Without this, smithay's damage tracker
+            // sees no new damage after the first frame and stops rendering the window.
             state.wm.set_activated_sent(id, window.focused);
         }
     }
