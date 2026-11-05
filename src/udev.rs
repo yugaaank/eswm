@@ -65,7 +65,10 @@ use smithay::{
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
         wayland_server::{backend::GlobalId, protocol::wl_surface, Display, DisplayHandle, ListeningSocket},
     },
-    utils::{DeviceFd, Logical, Physical, Point, Scale, Time, Transform, SERIAL_COUNTER as SCOUNTER},
+    utils::{
+        DeviceFd, Logical, Physical, Point, Rectangle, Scale, Size, Time, Transform,
+        SERIAL_COUNTER as SCOUNTER,
+    },
     wayland::{
         dmabuf::{DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
         presentation::Refresh,
@@ -131,6 +134,8 @@ pub struct UdevData {
     pub dmabuf_state: Option<(DmabufState, DmabufGlobal)>,
     cursor_images: Vec<xcursor::parser::Image>,
     cursor_buffer: Option<(MemoryRenderBuffer, (f64, f64))>, // (buffer, hotspot)
+    border_focused: Option<MemoryRenderBuffer>,
+    border_unfocused: Option<MemoryRenderBuffer>,
     pub pointer_location: Point<f64, Logical>,
     /// Modifiers seen on the last key event (used to detect Super for drags)
     last_mods: ModifiersState,
@@ -219,6 +224,8 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         dmabuf_state: None,
         cursor_images,
         cursor_buffer: None,
+        border_focused: None,
+        border_unfocused: None,
         pointer_location: (0.0, 0.0).into(),
         last_mods: ModifiersState::default(),
         pointer_focus: None,
@@ -556,6 +563,8 @@ fn process_shortcut(state: &mut State, mods: &ModifiersState, keysym: KeysymHand
 // Linux input event codes for mouse buttons
 const BTN_LEFT: u32 = 0x110;
 const BTN_RIGHT: u32 = 0x111;
+/// Focus frame width drawn behind every placed window.
+const BORDER_PX: i32 = 2;
 
 /// Recompute pointer (hover/drag) focus from `pos` and return the surface-local
 /// hit for `Pointer.motion`, or None when over empty space.
@@ -1361,7 +1370,7 @@ impl State {
         // Real tiling (M5): push pending layouts, then render each mapped window of
         // the output's active workspace at its wm rect.
         crate::apply_layout(self);
-        let placed: Vec<(wl_surface::WlSurface, i32, i32)> = {
+        let placed: Vec<(wl_surface::WlSurface, i32, i32, wm::WindowId, bool, wm::Rect)> = {
             let surfaces: Vec<_> = self
                 .xdg_shell_state
                 .toplevel_surfaces()
@@ -1383,8 +1392,11 @@ impl State {
                     }
                     Some((
                         surface.wl_surface().clone(),
-                        window.target_rect.x,
-                        window.target_rect.y,
+                        window.target_rect.width as i32,
+                        window.target_rect.height as i32,
+                        id,
+                        window.focused,
+                        window.target_rect,
                     ))
                 })
                 .collect()
@@ -1427,7 +1439,51 @@ impl State {
             .layer_shell_state
             .layer_surfaces()
             .collect();
-        for (ws, x, y) in &placed {
+        for (ws, x, y, _id, focused, rect) in &placed {
+            // A 2 px frame behind each window is the only focus cue this
+            // compositor has; without it, which window owns the keyboard is invisible.
+            let cache = if *focused {
+                &mut udev.border_focused
+            } else {
+                &mut udev.border_unfocused
+            };
+            if cache.is_none() {
+                let color: &[u8; 4] = if *focused {
+                    &[0x5c, 0x7f, 0xf7, 0xff] // accent blue
+                } else {
+                    &[0x22, 0x22, 0x22, 0xff] // dark gray
+                };
+                *cache = Some(MemoryRenderBuffer::from_slice(
+                    color,
+                    Fourcc::Argb8888,
+                    (1, 1),
+                    1,
+                    Transform::Normal,
+                    None,
+                ));
+            }
+            if let Some(buffer) = cache.as_ref() {
+                let bordered = wm::Rect {
+                    x: rect.x - BORDER_PX,
+                    y: rect.y - BORDER_PX,
+                    width: rect.width + 2 * BORDER_PX as u32,
+                    height: rect.height + 2 * BORDER_PX as u32,
+                };
+                if let Ok(border) = MemoryRenderBufferRenderElement::from_buffer(
+                    &mut renderer,
+                    Point::<f64, Physical>::from((bordered.x as f64, bordered.y as f64)),
+                    buffer,
+                    None,
+                    None,
+                    Some(Size::<i32, Logical>::from((
+                        bordered.width as i32,
+                        bordered.height as i32,
+                    ))),
+                    Kind::Unspecified,
+                ) {
+                    elements.push(EswmRenderElements::Cursor(border));
+                }
+            }
             elements.extend(
                 render_elements_from_surface_tree(
                     &mut renderer,

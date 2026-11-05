@@ -305,3 +305,13 @@ Making eswm usable as a WM before wiring Tacit to the control socket.
 Still missing for "proper WM": visible focus (borders/gaps), window rules
 (class -> workspace/float), tiled resize by mouse, multi-output workspaces,
 click-to-focus (deferred).
+
+## Focus border (2026-11-05)
+
+- DRM render path draws a 2 px solid frame behind every placed window: accent
+  blue when focused, dark gray otherwise. It reuses the cached 1x1
+  MemoryRenderBuffer machinery the software cursor already uses and the
+  `Cursor` render-element variant (no new variant needed).
+- With this, which window owns the keyboard is visible; before it was not.
+- shortcut: the winit development backend has no borders yet (dev only); the
+  DRM path is the product.
