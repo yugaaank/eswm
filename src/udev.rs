@@ -1370,6 +1370,7 @@ impl State {
         // Real tiling (M5): push pending layouts, then render each mapped window of
         // the output's active workspace at its wm rect.
         crate::apply_layout(self);
+        // (surface, x, y, id, focused, rect)
         let placed: Vec<(wl_surface::WlSurface, i32, i32, wm::WindowId, bool, wm::Rect)> = {
             let surfaces: Vec<_> = self
                 .xdg_shell_state
@@ -1392,8 +1393,8 @@ impl State {
                     }
                     Some((
                         surface.wl_surface().clone(),
-                        window.target_rect.width as i32,
-                        window.target_rect.height as i32,
+                        window.target_rect.x,
+                        window.target_rect.y,
                         id,
                         window.focused,
                         window.target_rect,
@@ -1448,8 +1449,9 @@ impl State {
                 &mut udev.border_unfocused
             };
             if cache.is_none() {
+                // Argb8888 memory order is B, G, R, A - not R, G, B.
                 let color: &[u8; 4] = if *focused {
-                    &[0x5c, 0x7f, 0xf7, 0xff] // accent blue
+                    &[0xf7, 0x7f, 0x5c, 0xff] // accent blue
                 } else {
                     &[0x22, 0x22, 0x22, 0xff] // dark gray
                 };
