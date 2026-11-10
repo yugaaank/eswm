@@ -234,6 +234,8 @@ fn dispatch(state: &mut State, cmd: &str, args: &Value) -> Result<Value, String>
                     .ok_or("no output")?,
                 (None, None) => return Err("args.id or args.delta is required".into()),
             };
+            // parity with the Super+N keybind: spawn the workspace if missing
+            state.wm.ensure_workspace(output, workspace);
             if !state.wm.focus_workspace(output, workspace) {
                 return Err(format!("no workspace {workspace} on the primary output"));
             }

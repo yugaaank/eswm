@@ -121,6 +121,44 @@ pub fn window_id_of(surface: &WlSurface) -> Option<wm::WindowId> {
     })
 }
 
+// M5 placement, shared by the udev and winit render loops: active-workspace,
+// mapped windows at their wm target_rect.
+// (surface, x, y, id, focused, rect)
+pub fn placed_windows(state: &mut State) -> Vec<(WlSurface, i32, i32, wm::WindowId, bool, wm::Rect)> {
+    crate::apply_layout(state);
+    state
+        .xdg_shell_state
+        .toplevel_surfaces()
+        .iter()
+        .filter_map(|surface| {
+            let id = window_id_of(surface.wl_surface())?;
+            let window = state.wm.window(id)?;
+            let active = state
+                .wm
+                .output(window.output)
+                .map(|o| o.active_workspace == window.workspace)
+                .unwrap_or(false);
+            if !active || !window.mapped || window.target_rect.width == 0 {
+                tracing::info!(
+                    "skip render surface id={id:?} active={active} mapped={} width={}",
+                    window.mapped,
+                    window.target_rect.width
+                );
+                return None;
+            }
+            tracing::info!("render window id={id:?} rect={:?} focused={}", window.target_rect, window.focused);
+            Some((
+                surface.wl_surface().clone(),
+                window.target_rect.x,
+                window.target_rect.y,
+                id,
+                window.focused,
+                window.target_rect,
+            ))
+        })
+        .collect()
+}
+
 fn toplevel_for_window(state: &State, id: wm::WindowId) -> Option<ToplevelSurface> {
     state
         .xdg_shell_state
@@ -549,21 +587,22 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
 
         {
             let (renderer, mut framebuffer) = backend.bind().unwrap();
-            let toplevel_elements = state
-                .xdg_shell_state
-                .toplevel_surfaces()
+            // M5 placement shared with the udev path: active-workspace windows at target_rect
+            let placed = crate::placed_windows(&mut state);
+            let toplevel_elements = placed
                 .iter()
-                .flat_map(|surface| {
+                .flat_map(|(surface, x, y, ..)| {
                     render_elements_from_surface_tree(
                         renderer,
-                        surface.wl_surface(),
-                        (0, 0),
+                        surface,
+                        (*x, *y),
                         1.0,
                         1.0,
                         Kind::Unspecified,
                     )
                 })
                 .collect::<Vec<WaylandSurfaceRenderElement<GlesRenderer>>>();
+            tracing::debug!("winit frame: {} placed, {} toplevel elements", placed.len(), toplevel_elements.len());
             let layer_elements = state
                 .layer_shell_state
                 .layer_surfaces()

@@ -129,6 +129,8 @@ struct DragState {
 pub struct UdevData {
     pub session: LibSeatSession,
     pub primary_gpu: DrmNode,
+    pub dmabuf_primary_gpu: DrmNode, // first GPU with hw accel; clients allocate here
+    pub gpu_nodes: Vec<DrmNode>,
     pub gpus: GpuManager<GbmGlesBackend<GlesRenderer, DrmDeviceFd>>,
     pub backends: HashMap<DrmNode, BackendData>,
     pub dmabuf_state: Option<(DmabufState, DmabufGlobal)>,
@@ -159,11 +161,11 @@ impl DmabufHandler for State {
         let udev = self.udev.as_mut().unwrap();
         if udev
             .gpus
-            .single_renderer(&udev.primary_gpu)
+            .single_renderer(&udev.dmabuf_primary_gpu)
             .and_then(|mut renderer| renderer.import_dmabuf(&dmabuf, None))
             .is_ok()
         {
-            dmabuf.set_node(udev.primary_gpu);
+            dmabuf.set_node(udev.dmabuf_primary_gpu);
             let _ = notifier.successful::<State>();
         } else {
             notifier.failed();
@@ -213,12 +215,33 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
                     .expect("no usable GPU found")
             })
     };
-    info!("Using {primary_gpu} as primary gpu.");
+    // Collect all GPU nodes for fallback hardware acceleration
+    let gpu_nodes = if let Ok(var) = std::env::var("TACIT_DRM_DEVICE") {
+        vec![primary_gpu]
+    } else {
+        let mut nodes = all_gpus(&seat_name)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|x| DrmNode::from_path(&x).ok())
+            .collect::<Vec<_>>();
+        // Also add the render node of the primary GPU if different
+        if let Some(render) = primary_gpu.node_with_type(NodeType::Render) {
+            if let Ok(r) = render {
+                if !nodes.iter().any(|n| n.dev_id() == r.dev_id() && n.ty() == r.ty()) {
+                    nodes.push(r);
+                }
+            }
+        }
+        nodes
+    };
+    info!("Using {primary_gpu} as primary gpu; all GPUs: {gpu_nodes:?}");
 
     let cursor_images = load_cursor_images();
     let state_u = UdevData {
         session,
         primary_gpu,
+        dmabuf_primary_gpu: primary_gpu, // will be updated after hw accel detection
+        gpu_nodes,
         gpus: GpuManager::new(GbmGlesBackend::with_context_priority(ContextPriority::High))?,
         backends: HashMap::new(),
         dmabuf_state: None,
@@ -344,20 +367,63 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // Now all devices are added and their render nodes are registered in gpus.
+    // Try hardware acceleration on each GPU that has an output (backend).
     let udev = state.udev.as_mut().unwrap();
-    let mut renderer = udev.gpus.single_renderer(&primary_gpu).unwrap();
-
-    {
-        info!(?primary_gpu, "trying to initialize egl hardware acceleration");
-        match renderer.bind_wl_display(&display_handle) {            Ok(_) => info!("egl hardware-acceleration enabled"),
-            Err(err) => info!(?err, "failed to initialize egl hardware-acceleration"),
+    
+    // Collect unique GPUs from backends (both render and primary nodes for multi-GPU import)
+    let mut candidate_nodes: Vec<DrmNode> = udev
+        .backends
+        .values()
+        .flat_map(|b| {
+            let mut nodes = Vec::new();
+            if let Some(rn) = b.render_node {
+                nodes.push(rn);
+            }
+            // Also try primary node (for NVIDIA which doesn't expose extension on render node)
+            if let Ok(primary) = DrmNode::from_dev_id(b.drm_output_manager.device().device_id()) {
+                nodes.push(primary);
+            }
+            nodes
+        })
+        .collect();
+    // Also add primary_gpu in case no backend has nodes yet
+    candidate_nodes.push(primary_gpu);
+    candidate_nodes.sort_by_key(|n| (n.dev_id(), n.ty() as u32));
+    candidate_nodes.dedup_by(|a, b| a.dev_id() == b.dev_id() && a.ty() == b.ty());
+    
+    info!("trying hardware acceleration on GPUs: {:?}", candidate_nodes);
+    
+    // Enable hw acceleration on ALL GPUs for multi-GPU dmabuf import
+    let mut hw_accel_gpus = Vec::new();
+    for node in &candidate_nodes {
+        info!("trying GPU {} for hardware acceleration", node);
+        let r_opt = udev.gpus.single_renderer(node).ok();
+        if let Some(mut r) = r_opt {
+            let result = r.bind_wl_display(&display_handle);
+            drop(r);
+            match result {
+                Ok(_) => {
+                    info!("egl hardware-acceleration enabled on {}", node);
+                    hw_accel_gpus.push(*node);
+                }
+                Err(e) => info!(?e, "GPU {} failed", node),
+            }
         }
     }
+    
+    // Use the first GPU with hw acceleration as primary for dmabuf feedback
+    let primary_for_dmabuf = hw_accel_gpus.first().copied().unwrap_or(primary_gpu);
+    // Store for later use in render_surface and dmabuf_imported
+    udev.dmabuf_primary_gpu = primary_for_dmabuf;
+    
+    // Create renderer for the primary GPU (used for dmabuf formats)
+    let renderer = udev.gpus.single_renderer(&primary_for_dmabuf).unwrap();
 
-    // init dmabuf support with format list from our primary gpu
+    // init dmabuf support with format list from the first GPU with hw acceleration
     let dmabuf_formats = renderer.dmabuf_formats();
     let default_feedback =
-        DmabufFeedbackBuilder::new(primary_gpu.dev_id(), dmabuf_formats).build()?;
+        DmabufFeedbackBuilder::new(primary_for_dmabuf.dev_id(), dmabuf_formats).build()?;
     let mut dmabuf_state = DmabufState::new();
     let global = dmabuf_state.create_global_with_default_feedback::<State>(&display_handle, &default_feedback);
     state.udev.as_mut().unwrap().dmabuf_state = Some((dmabuf_state, global));
@@ -901,6 +967,17 @@ impl State {
                 .add_node(render_node, gbm.clone())
                 .map_err(DeviceAddError::AddNode)?;
 
+            // Also add the primary node for GPUs like NVIDIA that need EGL_WL_bind_wayland_display on primary
+            if render_node != node {
+                self.udev
+                    .as_mut()
+                    .unwrap()
+                    .gpus
+                    .as_mut()
+                    .add_node(node, gbm.clone())
+                    .map_err(DeviceAddError::AddNode)?;
+            }
+
             Ok::<DrmNode, DeviceAddError>(render_node)
         };
 
@@ -1367,50 +1444,22 @@ impl State {
     }
 
     fn render_surface(&mut self, node: DrmNode, crtc: crtc::Handle) {
-        // Real tiling (M5): push pending layouts, then render each mapped window of
-        // the output's active workspace at its wm rect.
-        crate::apply_layout(self);
-        // (surface, x, y, id, focused, rect)
-        let placed: Vec<(wl_surface::WlSurface, i32, i32, wm::WindowId, bool, wm::Rect)> = {
-            let surfaces: Vec<_> = self
-                .xdg_shell_state
-                .toplevel_surfaces()
-                .iter()
-                .cloned()
-                .collect();
-            surfaces
-                .iter()
-                .filter_map(|surface| {
-                    let id = crate::window_id_of(surface.wl_surface())?;
-                    let window = self.wm.window(id)?;
-                    let active = self
-                        .wm
-                        .output(window.output)
-                        .map(|o| o.active_workspace == window.workspace)
-                        .unwrap_or(false);
-                    if !active || !window.mapped || window.target_rect.width == 0 {
-                        tracing::info!(
-                            "skip render surface id={id:?} active={active} mapped={} width={}",
-                            window.mapped,
-                            window.target_rect.width
-                        );
-                        return None;
-                    }
-                    tracing::info!("render window id={id:?} rect={:?} focused={}", window.target_rect, window.focused);
-                    Some((
-                        surface.wl_surface().clone(),
-                        window.target_rect.x,
-                        window.target_rect.y,
-                        id,
-                        window.focused,
-                        window.target_rect,
-                    ))
-                })
-                .collect()
-        };
+        // Real tiling (M5): placement logic is shared with the winit loop (placed_windows).
+        let placed = crate::placed_windows(self);
         tracing::info!("render frame: {} window(s) placed", placed.len());
+        tracing::info!("render debug MARKER: debug block compiled in, placed.len()={}", placed.len());
+        if let Some(udev) = self.udev.as_ref() {
+            tracing::info!("render debug: pointer=({:.0},{:.0}) cursor_buffer={} placed_windows={}",
+                udev.pointer_location.x, udev.pointer_location.y,
+                udev.cursor_buffer.is_some(),
+                placed.len());
+            for (_ws, x, y, id, focused, rect) in &placed {
+                tracing::info!("render debug: window id={id:?} focused={focused} rect=({},{}) {}x{}", x, y, rect.width, rect.height);
+            }
+        }
 
-        let primary_gpu = self.udev.as_ref().unwrap().primary_gpu;
+        // Use dmabuf_primary_gpu (first hw-accel GPU) for importing client buffers
+        let primary_gpu = self.udev.as_ref().unwrap().dmabuf_primary_gpu;
 
         let (output, render_node, format_needed, mode_size) = {
             let udev = self.udev.as_ref().unwrap();
@@ -1439,15 +1488,66 @@ impl State {
             udev.gpus.renderer(&primary_gpu, &render_node, format_needed)
         }
         .unwrap();
+        tracing::info!("render debug2: output_mode={:?} scale={:?} mode_size={:?} pointer=({:.0},{:.0}) cursor_buffer={}",
+            mode_size.map(|s| (s.w, s.h)),
+            output.current_scale(),
+            mode_size,
+            udev.pointer_location.x, udev.pointer_location.y,
+            udev.cursor_buffer.is_some());
 
-        // Build the frame: placed client surfaces + cursor.
+// Build the frame: placed client surfaces + cursor.
         let mut elements: Vec<EswmRenderElements<UdevRenderer<'_>>> = Vec::new();
+
+        // Cursor first so it renders on top (smithay renders elements top-to-bottom).
+        let pointer_location = udev.pointer_location;
+        if let Some((buffer, hotspot)) = udev.cursor_buffer.clone() {
+            let pos = (pointer_location - Point::from(hotspot))
+                .to_physical(Scale::from(1.0))
+                .to_i32_round();
+            // shortcut: cursor buffer import failure just drops the cursor for a frame
+            if let Ok(cursor) = MemoryRenderBufferRenderElement::from_buffer(
+                &mut renderer,
+                pos,
+                &buffer,
+                None,
+                None,
+                None,
+                Kind::Cursor,
+            ) {
+                elements.push(EswmRenderElements::Cursor(cursor));
+            }
+        } else if !udev.cursor_images.is_empty() {
+            let img = udev.cursor_images[0].clone();
+            let buf = MemoryRenderBuffer::from_slice(
+                &img.pixels_rgba,
+                Fourcc::Argb8888,
+                (img.width as i32, img.height as i32),
+                1,
+                Transform::Normal,
+                None,
+            );
+            udev.cursor_buffer = Some((buf.clone(), (img.xhot as f64, img.yhot as f64)));
+            let pos = (pointer_location - Point::from((img.xhot as f64, img.yhot as f64)))
+                .to_physical(Scale::from(1.0))
+                .to_i32_round();
+            if let Ok(cursor) = MemoryRenderBufferRenderElement::from_buffer(
+                &mut renderer,
+                pos,
+                &buf,
+                None,
+                None,
+                None,
+                Kind::Cursor,
+            ) {
+                elements.push(EswmRenderElements::Cursor(cursor));
+            }
+        }
 
         let layer_surfaces: Vec<_> = self
             .layer_shell_state
             .layer_surfaces()
             .collect();
-        for (ws, x, y, _id, _focused, _rect) in &placed {
+        for (ws, x, y, id, _focused, _rect) in &placed {
             let tree_elements = render_elements_from_surface_tree(
                 &mut renderer,
                 ws,
@@ -1456,7 +1556,6 @@ impl State {
                 1.0,
                 Kind::Unspecified,
             );
-            tracing::info!("surface tree elements for window at ({x},{y}): {} elements", tree_elements.len());
             elements.extend(
                 tree_elements
                     .into_iter()
@@ -1479,35 +1578,15 @@ impl State {
             );
         }
 
-        // software cursor drawn at pointer position (single output, origin (0,0))
-        let pointer_location = udev.pointer_location;
-        if let Some((buffer, hotspot)) = udev.cursor_buffer.clone() {
-            let pos = (pointer_location - Point::from(hotspot))
-                .to_physical(Scale::from(1.0))
-                .to_i32_round();
-            // shortcut: cursor buffer import failure just drops the cursor for a frame
-            if let Ok(cursor) = MemoryRenderBufferRenderElement::from_buffer(
-                &mut renderer,
-                pos,
-                &buffer,
-                None,
-                None,
-                None,
-                Kind::Unspecified,
-            ) {
-                elements.push(EswmRenderElements::Cursor(cursor));
-            }
-        } else if !udev.cursor_images.is_empty() {
-            let img = udev.cursor_images[0].clone();
-            let buf = MemoryRenderBuffer::from_slice(
-                &img.pixels_rgba,
-                Fourcc::Argb8888,
-                (img.width as i32, img.height as i32),
-                1,
-                Transform::Normal,
-                None,
-            );
-            udev.cursor_buffer = Some((buf.clone(), (img.xhot as f64, img.yhot as f64)));
+        // Debug: log output geometry, scale, pointer, and each placed window rect
+        let output_scale = format!("{:?}", output.current_scale());
+        tracing::info!("render debug: output_mode={:?} scale={} pointer=({:.0},{:.0}) cursor_buffer={} placed_windows={}",
+            mode_size.map(|s| (s.w, s.h)), output_scale,
+            udev.pointer_location.x, udev.pointer_location.y,
+            udev.cursor_buffer.is_some(),
+            placed.len());
+        for (_ws, x, y, id, focused, rect) in &placed {
+            tracing::info!("render debug: window id={id:?} focused={focused} rect=({},{}) {}x{}", x, y, rect.width, rect.height);
         }
 
         // shortcut: with no clients AND no cursor the damage tracker marks the
@@ -1545,8 +1624,8 @@ impl State {
             .render_frame(
                 &mut renderer,
                 &elements,
-                smithay::backend::renderer::Color32F::new(0.1, 0.0, 0.0, 1.0),
-                FrameFlags::DEFAULT,
+                smithay::backend::renderer::Color32F::new(0.6, 0.6, 0.6, 1.0),
+                FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT_ANY | FrameFlags::ALLOW_CURSOR_PLANE_SCANOUT,
             )
             .map(|r| (!r.is_empty, r.states))
             .map_err(|err| match err {
@@ -1563,11 +1642,13 @@ impl State {
                 sent_callbacks = true;
                 // render_frame only prepares the buffer; queue_frame actually
                 // page-flips it to the scanout. Without it the screen stays black.
-                if !is_empty {
+                // Also queue when there are placed windows but damage tracker sees no damage
+                // (e.g. first window before client commits first buffer).
+                if !is_empty || !placed.is_empty() {
                     if let Err(err) = surface.drm_output.queue_frame(None::<OutputPresentationFeedback>) {
                         debug!("queue_frame: {err:?}");
                     }
-                    tracing::debug!("render: {} elements, damaged -> queued", elements.len());
+                    tracing::debug!("render: {} elements, damaged -> queued (placed={})", elements.len(), placed.len());
                 }
                 false
             }

@@ -315,3 +315,15 @@ click-to-focus (deferred).
 - With this, which window owns the keyboard is visible; before it was not.
 - shortcut: the winit development backend has no borders yet (dev only); the
   DRM path is the product.
+
+## DRM "no content" — kitty Broken pipe analysis (2026-11-05)
+Repro WITHOUT TTY achieved: `TACIT_COMP_BACKEND=winit TACIT_COMP_SOCKET=eswm-dbg ./target/debug/eswm`
+(background via setsid; pkill -f self-kills the tool shell — use `pkill -f '[.]target/debug/eswm'`).
+Results nested: kitty + weston-simple-shm connect, kitty commits buffers for 15 s (has_buffer probe = 0 misses),
+even 5 concurrent kitties + the exact Super+Return spawn timing. No protocol errors (RUST_LOG=debug, grep InvalidSurface=empty).
+Conclusion: eswm's xdg/compositor/seat protocol flow is correct; kitty's "Wayland: fatal display error: Broken pipe"
+is a late symptom of kitty exiting on its own (exit status 0) after a GL/EGL failure it handles gracefully.
+Only-on-DRM factor for kitty = its GL init (NVIDIA proprietary + Intel iGPU hybrid, TTY session env).
+Next lead: on TTY run kitty manually (`WAYLAND_DISPLAY=eswm-test kitty --debug-rendering` or watch /tmp/kitty-spawn.log)
+to see its GL error — kitty-side mitigation or eswm-side env tweak once the exact error is known.
+Instrumentation probe was added and removed; tree builds clean, 19/19 tests green, nothing committed.
