@@ -1626,7 +1626,7 @@ impl State {
                 &mut renderer,
                 &elements,
                 smithay::backend::renderer::Color32F::new(0.6, 0.6, 0.6, 1.0),
-                FrameFlags::ALLOW_CURSOR_PLANE_SCANOUT,
+                FrameFlags::DEFAULT,
             )
             .map(|r| (!r.is_empty, r.states))
             .map_err(|err| match err {
