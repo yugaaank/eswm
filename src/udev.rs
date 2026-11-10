@@ -1149,7 +1149,7 @@ impl State {
                 drm_mode,
                 &[connector.handle()],
                 &output,
-                None,
+                Some(device.drm_output_manager.device().planes(&crtc).unwrap()),
                 &mut renderer,
                 &DrmOutputRenderElements::default(),
             )
@@ -1628,7 +1628,7 @@ impl State {
                 &mut renderer,
                 &elements,
                 smithay::backend::renderer::Color32F::new(0.6, 0.6, 0.6, 1.0),
-                FrameFlags::DEFAULT,
+                FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT_ANY | FrameFlags::ALLOW_CURSOR_PLANE_SCANOUT,
             )
             .map(|r| (!r.is_empty, r.states))
             .map_err(|err| match err {
