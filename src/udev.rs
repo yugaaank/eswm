@@ -34,7 +34,7 @@ use smithay::{
         },
         libinput::{LibinputInputBackend, LibinputSessionInterface},
         renderer::{
-            damage::Error as OutputDamageTrackerError,
+            damage::{Error as OutputDamageTrackerError, OutputDamageTracker},
             element::{
                 memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement},
                 surface::{render_elements_from_surface_tree, WaylandSurfaceRenderElement},
@@ -1168,6 +1168,7 @@ impl State {
             global: Some(global),
             output: output.clone(),
             drm_output,
+            damage_tracker: OutputDamageTracker::from_output(&output),
             last_presentation_time: None,
             vblank_throttle_timer: None,
         };
@@ -1731,6 +1732,7 @@ struct SurfaceData {
         Option<OutputPresentationFeedback>,
         DrmDeviceFd,
     >,
+    damage_tracker: OutputDamageTracker,
     last_presentation_time: Option<Duration>,
     vblank_throttle_timer: Option<RegistrationToken>,
 }
