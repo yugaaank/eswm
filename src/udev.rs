@@ -682,7 +682,9 @@ fn pointer_focus(state: &mut State, pos: Point<f64, Logical>) -> Option<(wl_surf
     let rect = state.wm.window(id)?.target_rect;
     Some((
         toplevel.wl_surface().clone(),
-        Point::from((pos.x - rect.x as f64, pos.y - rect.y as f64)),
+        // smithay computes surface-local coords as `event.location - loc`,
+        // so this must be the window ORIGIN, not the surface-local point.
+        Point::from((rect.x as f64, rect.y as f64)),
     ))
 }
 
