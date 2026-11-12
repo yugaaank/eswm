@@ -290,6 +290,20 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
                         device.led_update(led_state.into());
                     }
                 }
+                // Touchpad usability: libinput's defaults leave tap-to-click,
+                // tap-drag and disable-while-typing off, and the cursor drifts
+                // at low accel. Configure touchpads here (ref: wm-wayland
+                // applies its config as each device appears, so hotplug works).
+                if device.config_tap_finger_count() > 0 {
+                    use smithay::reexports::input::ScrollMethod;
+                    device.config_tap_set_enabled(true);
+                    device.config_tap_set_drag_enabled(true);
+                    device.config_tap_set_drag_lock_enabled(true);
+                    device.config_dwt_set_enabled(true);
+                    device.config_scroll_set_method(ScrollMethod::TwoFinger);
+                    device.config_accel_set_speed(0.7);
+                    info!("touchpad configured: {} (tap, dwt, two-finger scroll)", device.name());
+                }
             }
             data.process_input_event(&event);
         })
