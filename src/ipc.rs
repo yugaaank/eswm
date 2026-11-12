@@ -25,6 +25,8 @@ use smithay::{
         shell::xdg::XdgToplevelSurfaceData,
     },
 };
+
+use crate::State;
 /// One window/surface we track (toplevel or layer surface).
 #[derive(Clone)]
 pub struct ClientData {
@@ -95,6 +97,27 @@ pub struct Ipc {
     pub sinks: SharedSinks,
     pub cmd_rx: flume::Receiver<CompCmd>,
     pub cmd_tx: flume::Sender<CompCmd>,
+}
+
+/// Apply a `CompCmd` to live WM state. Returns after `apply_layout` so the
+/// change is visible to clients on the next frame.
+pub fn apply_cmd(state: &mut State, ipc: &Ipc, cmd: CompCmd) {
+    match cmd {
+        CompCmd::Reload => ipc.sinks.emit("configreloaded", ""),
+        CompCmd::GotoWorkspace(ws) => {
+            let output = state.wm.primary_output_id();
+            if output.is_some() {
+                state.wm.focus_workspace(output.unwrap(), ws);
+                crate::apply_layout(state);
+            }
+        }
+        CompCmd::CloseWindow(_addr) => {
+            // Hyprland addresses are synthetic (index-based) and the wm does
+            // not store them. Use the native control socket instead:
+            // window.close {id}
+        }
+        CompCmd::Unsupported(_) => {}
+    }
 }
 
 /// Rebuild the IPC snapshot from live compositor state. Cheap; called once

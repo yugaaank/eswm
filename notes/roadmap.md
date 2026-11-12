@@ -33,8 +33,8 @@ not copied into this project.
 - M4 DRM/libseat backend: present and experimental.
 - M5 window management: not implemented; windows currently stack at `(0, 0)`.
 - Pointer hit-testing, correct pointer focus, and real workspace behavior are
-  still missing. Click-to-focus on the DRM/libinput path is a KNOWN OPEN DEFECT,
-  deferred to future work (see `notes/status.md`); keyboard focus works.
+  still missing in places, but click-to-focus on the DRM/libinput path now
+  works (confirmed 2026-11-12; the earlier "deferred" note is obsolete).
 - Animations are not implemented.
 
 ## Current phase: Phase 0 — reset the scope

@@ -500,17 +500,15 @@ pub fn spawn_terminal() {
 }
 
 // Development compatibility path; called only by the explicit Winit backend.
-fn drain_ipc_and_refresh(state: &State, size: (i32, i32)) {
-    if let Some(ipc) = &state.ipc {
-        while let Ok(cmd) = ipc.cmd_rx.try_recv() {
-            match cmd {
-                CompCmd::Reload => ipc.sinks.emit("configreloaded", ""),
-                CompCmd::GotoWorkspace(_) => {}    // real dispatch arrives with M5 tiling
-                CompCmd::CloseWindow(_) => {}      // ditto
-                CompCmd::Unsupported(_) => {}
-            }
+fn drain_ipc_and_refresh(state: &mut State, size: (i32, i32)) {
+    let ipc_cmd_rx = state.ipc.as_ref().map(|ipc| ipc.cmd_rx.clone());
+    let mut ipc_opt = state.ipc.take();
+    if let Some(ref ipc) = ipc_opt {
+        while let Ok(cmd) = ipc_cmd_rx.as_ref().unwrap().try_recv() {
+            ipc::apply_cmd(state, ipc, cmd);
         }
     }
+    state.ipc = ipc_opt;
     ipc::refresh_snapshot(state, size);
 }
 
@@ -582,7 +580,7 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
         size = backend.window_size();
         let damage = Rectangle::from_size(size);
 
-        drain_ipc_and_refresh(&state, size.into());
+        drain_ipc_and_refresh(&mut state, size.into());
         control::drain(&mut state);
 
         {

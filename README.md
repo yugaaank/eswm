@@ -44,8 +44,7 @@ Phase 0: scope cleanup (drop Hyprland as a product requirement), native control
 socket, README + license. Then Phase 1: DRM reliability, core Wayland lifecycle,
 surface hit-test focus. See `notes/roadmap.md` and `notes/status.md`.
 
-Open defect: click-to-focus on the DRM/libinput path is deferred; keyboard focus
-works via spawn, close, workspace switch, and Super+arrows.
+Open defect: none currently tracked.
 
 ## License
 

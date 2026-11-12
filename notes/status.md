@@ -226,7 +226,10 @@ Feedback: Super+arrow skipped a window (focus moved two steps).
 - cargo build + cargo test green (13/13). Live TTY retest still pending:
   Super+Left/Right must move exactly one window per press.
 
-## Click-to-focus deferred (2026-11-05)
+## Click-to-focus deferred (2026-11-05) — RESOLVED
+
+- Update 2026-11-12: click-to-focus on the DRM/libinput path now WORKS
+  (confirmed by user). The deferral below is historical record only.
 
 - Status: unresolved; parked as future work by user decision. Do not spend more
   rounds on it before other milestones.

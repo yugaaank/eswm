@@ -78,7 +78,7 @@ use tracing::{debug, error, info, warn};
 
 use smithay_drm_extras::drm_scanner::{DrmScanEvent, DrmScanner};
 
-use crate::{send_frames_surface_tree, State, wm};
+use crate::{send_frames_surface_tree, State, wm, ipc};
 
 type UdevRenderer<'a> = MultiRenderer<
     'a,
@@ -464,6 +464,11 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         Err(err) => tracing::warn!("control socket disabled: {err}"),
     }
 
+// IPC command channel (hyprctl compat). No Lua here: the DRM path does not
+// initialize the historical Hyprland/Tacit compatibility path.
+let sig = std::env::var("TACIT_COMP_SIG").unwrap_or_else(|_| "eswm".into());
+state.ipc = Some(ipc::Ipc::new(sig));
+
     let mut clients = Vec::new();
 
     while !state.udev.as_ref().unwrap().quit.load(Ordering::SeqCst) {
@@ -475,6 +480,23 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         crate::control::drain(&mut state);
+// Drain IPC commands (hyprctl compat)
+let cmds: Vec<crate::ipc::CompCmd> = if let Some(ipc) = &state.ipc {
+    let mut cmds = Vec::new();
+    while let Ok(cmd) = ipc.cmd_rx.try_recv() {
+        cmds.push(cmd);
+    }
+    cmds
+} else {
+    Vec::new()
+};
+let mut ipc_opt = state.ipc.take();
+if let Some(ref ipc) = ipc_opt {
+    for cmd in cmds {
+        ipc::apply_cmd(&mut state, ipc, cmd);
+    }
+}
+state.ipc = ipc_opt;
 
         match event_loop.dispatch(Some(Duration::from_millis(16)), &mut state) {
             Ok(()) => {
