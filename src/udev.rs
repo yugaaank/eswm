@@ -1679,18 +1679,21 @@ impl State {
 
         let mut sent_callbacks = false;
         let reschedule = match result {
-            Ok((is_empty, _states)) => {
+            Ok((_is_empty, _states)) => {
                 sent_callbacks = true;
                 // render_frame only prepares the buffer; queue_frame actually
                 // page-flips it to the scanout. Without it the screen stays black.
                 // Also queue when there are placed windows but damage tracker sees no damage
                 // (e.g. first window before client commits first buffer).
-                if !is_empty || !placed.is_empty() {
-                    if let Err(err) = surface.drm_output.queue_frame(None::<OutputPresentationFeedback>) {
-                        debug!("queue_frame: {err:?}");
-                    }
-                    tracing::debug!("render: {} elements, damaged -> queued (placed={})", elements.len(), placed.len());
+                // Always queue: render_frame only prepares the buffer;
+                // queue_frame actually page-flips it. Gating on damage (is_empty)
+                // froze the screen when the last window died — cursor-only frames
+                // report is_empty (cursor elements are damage-ignored), so no
+                // flip happened and the scanout kept the killed window's buffer.
+                if let Err(err) = surface.drm_output.queue_frame(None::<OutputPresentationFeedback>) {
+                    debug!("queue_frame: {err:?}");
                 }
+                tracing::debug!("render: {} elements, queued (placed={})", elements.len(), placed.len());
                 false
             }
             Err(err) => {
