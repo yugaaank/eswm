@@ -468,20 +468,32 @@ pub fn apply_layout(state: &mut State) {
 
 // Compositor keybind helper: spawn a terminal client on our own socket.
 pub fn spawn_terminal() {
+    spawn_on_socket("kitty", &[]);
+}
+
+// Spawn a Wayland client against eswm's socket, detached (own process group so
+// VT signals don't hit it). Stdout/stderr go to <name>-spawn.log in /tmp.
+pub fn spawn_on_socket(program: &str, args: &[&str]) {
     use std::os::unix::process::CommandExt;
     use std::process::{Command, Stdio};
     //WAYLAND_DISPLAY takes either absolute path or bare name relative to XDG_RUNTIME_DIR
+    let log_path = format!("/tmp/{}-spawn.log", program.replace('/', "_"));
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path);
+    let prog_name = program.to_owned();
     match unsafe {
-        Command::new("kitty")
-        .env("WAYLAND_DISPLAY", socket_name())
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::from(std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("/tmp/kitty-spawn.log")
-            .expect("kitty log")))
-        .pre_exec(|| unsafe {
+        let mut cmd = Command::new(&prog_name);
+        cmd.args(args)
+            .env("WAYLAND_DISPLAY", socket_name())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null());
+        match log {
+            Ok(file) => cmd.stderr(Stdio::from(file)),
+            Err(_) => cmd.stderr(Stdio::null()),
+        };
+        cmd.pre_exec(|| unsafe {
             // detach from the compositor process group so VT signals don't hit it
             libc::setsid();
             Ok(())
@@ -489,14 +501,50 @@ pub fn spawn_terminal() {
         .spawn()
     } {
         Ok(mut child) => {
-            tracing::info!("spawned kitty pid {}", child.id());
+            tracing::info!("spawned {prog_name} pid {}", child.id());
             std::thread::spawn(move || match child.wait() {
-                Ok(status) => tracing::warn!("kitty exited with {status}"),
-                Err(err) => tracing::warn!("kitty wait failed: {err}"),
+                Ok(status) => tracing::warn!("{prog_name} exited with {status}"),
+                Err(err) => tracing::warn!("{prog_name} wait failed: {err}"),
             });
         }
-        Err(err) => tracing::warn!("failed to spawn kitty: {err}"),
+        Err(err) => tracing::warn!("failed to spawn {prog_name}: {err}"),
     }
+}
+
+// Pick a random wallpaper from ~/Pictures/Wallpapers and show it via awww.
+// Starts awww-daemon first (idempotent: `img` fails harmlessly if it dies again).
+pub fn start_wallpaper() {
+    let dir = match std::env::var("HOME") {
+        Ok(home) => std::path::PathBuf::from(home).join("Pictures/Wallpapers"),
+        Err(_) => return,
+    };
+    // coarse-random pick; not cryptographic, just variety per session
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos() as usize ^ (std::process::id() as usize))
+        .unwrap_or(0);
+    let Some(entry) = std::fs::read_dir(&dir)
+        .ok()
+        .and_then(|rd| {
+            let files: Vec<_> = rd
+                .filter_map(|e| e.ok().map(|e| e.path()))
+                .filter(|p| p.is_file())
+                .collect();
+            if files.is_empty() { None } else { Some(files[seed % files.len()].clone()) }
+        })
+    else {
+        tracing::warn!("no wallpaper found in {}", dir.display());
+        return;
+    };
+    let path = entry;
+    let Some(path_str) = path.to_str().map(|p| p.to_owned()) else { return };
+    tracing::info!("wallpaper: {}", path_str);
+    spawn_on_socket("awww-daemon", &[]);
+    // daemon needs a moment to bind before `img` connects
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(700));
+        spawn_on_socket("awww", &["img", &path_str]);
+    });
 }
 
 // Development compatibility path; called only by the explicit Winit backend.

@@ -477,6 +477,7 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         Ok(control) => state.control = Some(control),
         Err(err) => tracing::warn!("control socket disabled: {err}"),
     }
+    crate::start_wallpaper();
 
 // IPC command channel (hyprctl compat). No Lua here: the DRM path does not
 // initialize the historical Hyprland/Tacit compatibility path.
@@ -601,6 +602,11 @@ fn process_shortcut(state: &mut State, mods: &ModifiersState, keysym: KeysymHand
         }
         if raw == keysyms::KEY_Return {
             crate::spawn_terminal();
+            return FilterResult::Intercept(());
+        }
+        if mods.alt && raw == keysyms::KEY_space {
+            // Super+Alt+Space: fuzzel launcher
+            crate::spawn_on_socket("fuzzel", &[]);
             return FilterResult::Intercept(());
         }
         if raw == keysyms::KEY_q {

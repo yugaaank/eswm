@@ -31,6 +31,7 @@ cargo test        # 19/19 green (nested winit path)
 - `Super+1..9` — switch workspace
 - `Super+Left/Right` — previous/next window
 - `Super+Space` — toggle focused window Tiled/Floating
+- `Super+Alt+Space` — fuzzel launcher
 - `Super+Shift+Space` — toggle global spawn mode
 - `Super+LMB/RMB` — drag floating window move/resize
 - `Super+F` — fullscreen · `Super+M` — maximize
