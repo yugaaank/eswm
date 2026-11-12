@@ -28,6 +28,8 @@ use smithay::{
         input::{InputEvent, KeyboardKeyEvent},
     },
     output::{Mode, Output, PhysicalProperties, Subpixel},
+    desktop::{layer_map_for_output, LayerMap, WindowSurfaceType},
+    utils::IsAlive,
     delegate_compositor, delegate_data_device, delegate_layer_shell, delegate_output, delegate_seat,
     delegate_shm, delegate_xdg_shell,
     input::{keyboard::FilterResult, Seat, SeatHandler, SeatState},
@@ -193,11 +195,48 @@ impl WlrLayerShellHandler for State {
         surface: LayerSurface,
         _output: Option<WlOutput>,
         _layer: Layer,
-        _namespace: String,
+        namespace: String,
     ) {
-        // shortcuts: no layout/anchors/keyboard-interactivity yet — default-mapped
-        // full-window so layer surfaces merely draw; M1 only proves the shell can appear.
-        surface.send_configure();
+        // Create the stable desktop wrapper; on first commit it gets mapped
+        // into the output's LayerMap, which sends the real anchored configure.
+        self.layer_wrappers.push(smithay::desktop::LayerSurface::new(surface, namespace));
+    }
+
+    fn layer_destroyed(&mut self, surface: LayerSurface) {
+        let wrapper = self.layer_wrappers.iter().find(|l| l.layer_surface() == &surface).cloned();
+        self.layer_wrappers.retain(|l| l.layer_surface() != &surface);
+        if let (Some(output), Some(wrapper)) = (self.primary_output.clone(), wrapper) {
+            layer_map_for_output(&output).unmap_layer(&wrapper);
+        }
+        // the layer surface may have held keyboard focus (fuzzel); restore it
+        crate::udev::keyboard_focus_set(self, self.wm.focused_id());
+    }
+}
+
+impl State {
+    /// Map unmapped layer surfaces into the primary output's LayerMap
+    /// (sends proper anchored configures), re-arrange, and hand keyboard focus
+    /// to a layer surface that requests exclusive keyboard interactivity
+    /// (fuzzel, etc.). Called on every surface commit.
+    fn map_layer_surfaces(&mut self) {
+        let Some(output) = self.primary_output.clone() else { return };
+        self.layer_wrappers.retain(|l| l.alive());
+        let mut map = layer_map_for_output(&output);
+        for layer in &self.layer_wrappers {
+            let already =
+                map.layer_for_surface(layer.wl_surface(), WindowSurfaceType::ALL).is_some();
+            if !already {
+                let _ = map.map_layer(layer);
+            }
+        }
+        map.arrange();
+        if let Some(layer) = self.layer_wrappers.iter().find(|l| l.can_receive_keyboard_focus()) {
+            let surf = layer.wl_surface().clone();
+            drop(map);
+            let keyboard = self.seat.get_keyboard().unwrap();
+            keyboard.set_focus(self, Some(surf), crate::udev::SCOUNTER.next_serial());
+            tracing::info!("keyboard focus -> layer surface (exclusive)");
+        }
     }
 }
 
@@ -227,6 +266,7 @@ impl CompositorHandler for State {
 
     fn commit(&mut self, surface: &WlSurface) {
         on_commit_buffer_handler::<Self>(surface);
+        self.map_layer_surfaces();
     }
 }
 
@@ -272,6 +312,12 @@ struct State {
     handle: Option<LoopHandle<'static, State>>,
     // Native control channel (notes/tacit-integration.md); None if bind failed
     control: Option<control::Control>,
+    /// The smithay Output the DRM/winit backend renders on; layer surfaces are
+    /// arranged against it via LayerMap.
+    primary_output: Option<Output>,
+    /// desktop::LayerSurface wrappers, created once per layer surface (LayerMap
+    /// needs the stable desktop wrapper, not the raw shell surface).
+    layer_wrappers: Vec<smithay::desktop::LayerSurface>,
 }
 
 fn install_diag_logging() {
@@ -383,6 +429,8 @@ fn new_state(
         udev: None,
         handle: None,
         control: None,
+        primary_output: None,
+        layer_wrappers: Vec::new(),
     }
 }
 
@@ -565,6 +613,7 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
     let dh = display.handle();
 
     let mut state = new_state("winit", &dh, true);
+    state.primary_output = Some(state.output.clone());
 
     let socket = socket_name();
     let listener = ListeningSocket::bind(&socket)

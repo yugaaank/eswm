@@ -12,6 +12,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+pub use smithay::utils::SERIAL_COUNTER as SCOUNTER;
+use smithay::desktop::{layer_map_for_output, LayerMap};
+use smithay::utils::IsAlive;
+use smithay::wayland::shell::wlr_layer::Layer as WlrLayer;
 use smithay::{
     backend::{
         allocator::{
@@ -67,9 +71,7 @@ use smithay::{
     },
     utils::{
         DeviceFd, Logical, Physical, Point, Rectangle, Scale, Size, Time, Transform,
-        SERIAL_COUNTER as SCOUNTER,
-    },
-    wayland::{
+    },    wayland::{
         dmabuf::{DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
         presentation::Refresh,
     },
@@ -1185,6 +1187,7 @@ impl State {
             crtc,
             device_id: node,
         });
+        self.primary_output = Some(output.clone());
 
         let drm_output = match device
             .drm_output_manager
@@ -1588,10 +1591,32 @@ impl State {
             }
         }
 
-        let layer_surfaces: Vec<_> = self
-            .layer_shell_state
-            .layer_surfaces()
-            .collect();
+        // Layer surfaces (wallpapers, fuzzel): positioned by their LayerMap
+        // geometry. Overlay/top layers render above windows, bottom/background
+        // below (elements list is top-to-bottom, cursor is pushed first).
+        let mut layer_elements_above: Vec<EswmRenderElements<UdevRenderer<'_>>> = Vec::new();
+        let mut layer_elements_below: Vec<EswmRenderElements<UdevRenderer<'_>>> = Vec::new();
+        if let Some(output) = self.primary_output.clone() {
+            let map = layer_map_for_output(&output);
+            for layer in map.layers() {
+                let Some(geom) = map.layer_geometry(layer) else { continue };
+                let tree = render_elements_from_surface_tree(
+                    &mut renderer,
+                    layer.wl_surface(),
+                    geom.loc.to_physical_precise_round(1.0),
+                    1.0,
+                    1.0,
+                    Kind::Unspecified,
+                );
+                let target = match layer.layer() {
+                    WlrLayer::Overlay | WlrLayer::Top => &mut layer_elements_above,
+                    WlrLayer::Bottom | WlrLayer::Background => &mut layer_elements_below,
+                };
+                target.extend(tree.into_iter().map(EswmRenderElements::Surface));
+            }
+        }
+        elements.extend(layer_elements_above);
+
         for (ws, x, y, id, _focused, _rect) in &placed {
             let tree_elements = render_elements_from_surface_tree(
                 &mut renderer,
@@ -1608,20 +1633,7 @@ impl State {
             );
         }
 
-        for surface in &layer_surfaces {
-            elements.extend(
-                render_elements_from_surface_tree(
-                    &mut renderer,
-                    surface.wl_surface(),
-                    (0, 0),
-                    1.0,
-                    1.0,
-                    Kind::Unspecified,
-                )
-                .into_iter()
-                .map(EswmRenderElements::Surface),
-            );
-        }
+        elements.extend(layer_elements_below);
 
         // Debug: log output geometry, scale, pointer, and each placed window rect
         let output_scale = format!("{:?}", output.current_scale());
