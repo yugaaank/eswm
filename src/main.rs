@@ -31,7 +31,7 @@ use smithay::{
     desktop::{layer_map_for_output, LayerMap, WindowSurfaceType},
     utils::IsAlive,
     delegate_compositor, delegate_data_device, delegate_layer_shell, delegate_output, delegate_seat,
-    delegate_shm, delegate_xdg_shell,
+    delegate_shm, delegate_viewporter, delegate_xdg_shell,
     input::{keyboard::FilterResult, Seat, SeatHandler, SeatState},
         reexports::{
         calloop::LoopHandle,
@@ -49,9 +49,10 @@ use smithay::{
             data_device::{ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler},
             SelectionHandler,
         },
-        shell::xdg::{PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState, XdgToplevelSurfaceData},
+        shell::xdg::{PopupSurface, PositionerState, SurfaceCachedState, ToplevelSurface, XdgShellHandler, XdgShellState, XdgToplevelSurfaceData},
         shell::wlr_layer::{Layer, LayerSurface, WlrLayerShellHandler, WlrLayerShellState},
         shm::{ShmHandler, ShmState},
+        viewporter::ViewporterState,
     },
 };
 use wayland_protocols::xdg::shell::server::xdg_toplevel;
@@ -148,11 +149,26 @@ pub fn placed_windows(state: &mut State) -> Vec<(WlSurface, i32, i32, wm::Window
                 );
                 return None;
             }
+            let (mut x, mut y) = (window.target_rect.x, window.target_rect.y);
+            // Clients (kitty, GTK/zen) set xdg window geometry with an offset into
+            // their own buffer (shadows/padding); align the buffer so the logical
+            // window lands on the tiling rect instead of shifted by that offset.
+            if let Some(off) = with_states(surface.wl_surface(), |states| {
+                states
+                    .cached_state
+                    .get::<SurfaceCachedState>()
+                    .current()
+                    .geometry
+                    .map(|geo| geo.loc)
+            }) {
+                x -= off.x;
+                y -= off.y;
+            }
             tracing::info!("render window id={id:?} rect={:?} focused={}", window.target_rect, window.focused);
             Some((
                 surface.wl_surface().clone(),
-                window.target_rect.x,
-                window.target_rect.y,
+                x,
+                y,
                 id,
                 window.focused,
                 window.target_rect,
@@ -230,6 +246,12 @@ impl State {
             }
         }
         map.arrange();
+        // smithay's arrange never sends the initial configure (the spec reserves
+        // it for the compositor, on the surface's first commit) — send any
+        // pending configure or layer clients (fuzzel, awww) wait forever.
+        for layer in &self.layer_wrappers {
+            layer.layer_surface().send_pending_configure();
+        }
         if let Some(layer) = self.layer_wrappers.iter().find(|l| l.can_receive_keyboard_focus()) {
             let surf = layer.wl_surface().clone();
             drop(map);
@@ -294,6 +316,7 @@ struct State {
     xdg_shell_state: XdgShellState,
     layer_shell_state: WlrLayerShellState,
     shm_state: ShmState,
+    viewporter_state: ViewporterState,
     seat_state: SeatState<Self>,
     output_state: OutputManagerState,
     data_device_state: DataDeviceState,
@@ -368,6 +391,7 @@ fn new_state(
 ) -> State {
     let compositor_state = CompositorState::new::<State>(dh);
     let shm_state = ShmState::new::<State>(dh, vec![]);
+    let viewporter_state = ViewporterState::new::<State>(dh);
     let layer_shell_state = WlrLayerShellState::new::<State>(dh);
     let mut seat_state = SeatState::new();
     let seat = seat_state.new_wl_seat(dh, seat_name);
@@ -417,6 +441,7 @@ fn new_state(
         xdg_shell_state: XdgShellState::new::<State>(dh),
         layer_shell_state,
         shm_state,
+        viewporter_state,
         seat_state,
         output_state: OutputManagerState::new(),
         data_device_state: DataDeviceState::new::<State>(dh),
@@ -508,10 +533,20 @@ pub fn apply_layout(state: &mut State) {
             state.wm.set_activated_sent(id, window.focused);
         }
     }
-    // Keep wl_keyboard focus in sync with wm focus (window closed, pruned, etc.).
-    // set_focus is a no-op when unchanged.
+    // Keep wl_keyboard focus in sync with wm focus (window closed, pruned, etc.),
+    // but never steal it from a layer surface with keyboard interactivity
+    // (fuzzel): the per-frame sync would send enter/leave and dismiss it.
+    let layer_has_focus = state
+        .seat
+        .get_keyboard()
+        .and_then(|kbd| kbd.current_focus())
+        .is_some_and(|surf| {
+            state.layer_wrappers.iter().any(|l| l.wl_surface() == &surf)
+        });
     let focused = state.wm.focused_id();
-    crate::udev::keyboard_focus_set(state, focused);
+    if !layer_has_focus {
+        crate::udev::keyboard_focus_set(state, focused);
+    }
 }
 
 // Compositor keybind helper: spawn a terminal client on our own socket.
@@ -535,6 +570,8 @@ pub fn spawn_on_socket(program: &str, args: &[&str]) {
         let mut cmd = Command::new(&prog_name);
         cmd.args(args)
             .env("WAYLAND_DISPLAY", socket_name())
+            // session terminal for launchers (fuzzel wraps Terminal=true apps)
+            .env("TERMINAL", "kitty")
             .stdin(Stdio::null())
             .stdout(Stdio::null());
         match log {
@@ -588,9 +625,17 @@ pub fn start_wallpaper() {
     let Some(path_str) = path.to_str().map(|p| p.to_owned()) else { return };
     tracing::info!("wallpaper: {}", path_str);
     spawn_on_socket("awww-daemon", &[]);
-    // daemon needs a moment to bind before `img` connects
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(700));
+        // wait for the daemon's socket to appear, then set the image
+        let sock = std::env::var("XDG_RUNTIME_DIR").ok().map(|rd| {
+            std::path::PathBuf::from(rd).join(format!("{}-awww-daemon.sock", socket_name()))
+        });
+        for _ in 0..50 {
+            if sock.as_ref().is_some_and(|s| s.exists()) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
         spawn_on_socket("awww", &["img", &path_str]);
     });
 }
@@ -640,6 +685,14 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
     let mut toplevel_surface = None;
 
     loop {
+        // Accept new Wayland clients (awww-daemon, fuzzel, etc.) and insert them
+        // into the display so their protocol requests get dispatched.
+        if let Ok(Some(stream)) = listener.accept() {
+            if let Ok(client) = display.handle().insert_client(stream, Arc::new(crate::ClientState::default())) {
+                clients.push(client);
+            }
+        }
+
         let status = winit.dispatch_new_events(|event| match event {
             WinitEvent::Resized { .. } => {}
             WinitEvent::Input(event) => match event {
@@ -673,6 +726,13 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
             PumpStatus::Continue => (),
             PumpStatus::Exit(_) => return Ok(()),
         };
+
+        // Process incoming Wayland client requests (awww-daemon, fuzzel, etc.)
+        // so clients don't block waiting for responses to their roundtrips.
+        if let Err(err) = display.dispatch_clients(&mut state) {
+            tracing::warn!("wayland client dispatch error: {err}");
+        }
+        display.flush_clients();
 
         size = backend.window_size();
         let damage = Rectangle::from_size(size);
@@ -787,5 +847,6 @@ delegate_layer_shell!(State);
 delegate_output!(State);
 delegate_compositor!(State);
 delegate_shm!(State);
+delegate_viewporter!(State);
 delegate_seat!(State);
 delegate_data_device!(State);

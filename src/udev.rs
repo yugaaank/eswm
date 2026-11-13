@@ -480,6 +480,8 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         Err(err) => tracing::warn!("control socket disabled: {err}"),
     }
     crate::start_wallpaper();
+    // fuzzel as layer surface on session start (also on Super+Alt+Space)
+    crate::spawn_on_socket("fuzzel", &[]);
 
 // IPC command channel (hyprctl compat). No Lua here: the DRM path does not
 // initialize the historical Hyprland/Tacit compatibility path.

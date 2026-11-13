@@ -28,6 +28,7 @@ cargo test        # 19/19 green (nested winit path)
 
 - `Super+Return` — spawn kitty
 - `Super+Q` — close focused window
+- On startup: random wallpaper via awww, fuzzel launcher as a layer surface
 - `Super+1..9` — switch workspace
 - `Super+Left/Right` — previous/next window
 - `Super+Space` — toggle focused window Tiled/Floating
