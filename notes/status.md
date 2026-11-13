@@ -4,13 +4,13 @@
 
 - **Branch:** `main` (only branch; `feature/standalone-tacit` merged and deleted)
 - **Remote:** `origin` = `https://github.com/yugaaank/eswm.git`, `main` pushed and up to date
-- **HEAD:** `7ebbde7` build: drop stale /tmp/opencode/ldi libdisplay-info workaround
+- **HEAD:** `36c0374` docs: update notes to reflect current project state (3 commits ahead of origin/main)
 - **Last feature commit:** `99aa59e` feat: es.bind_cmd() to run arbitrary commands on keypress
 
 ## Build / run
 
 - `cargo build` — green, 36 pre-existing warnings, no new ones
-- `cargo test` — 19/19 pass (16 unit + 3 integration: control, globals, ipc)
+- `cargo test` — 23/23 pass (20 unit + 3 integration: control, globals, ipc)
 - Native DRM is the default backend: `./target/debug/eswm` from a TTY (grabs the VT; Ctrl+Alt+F1/F3 to leave/return)
 - Nested dev backend: `TACIT_COMP_BACKEND=winit ./target/debug/eswm` then `WAYLAND_DISPLAY=eswm-dev kitty`
 - Wayland socket: `$XDG_RUNTIME_DIR/eswm-<wayland-display>.sock` (default `eswm-test`)
@@ -60,8 +60,9 @@ es.bind_cmd("Super+r", "rofi -show drun")
 - M2 Hyprland-compatible IPC: complete (historical prototype)
 - M3 Lua configuration API: complete — `es.bind`, `es.bind_cmd`, `es.dsp.exec_cmd`
 - M4 DRM/libseat backend: complete — primary path, TTY startup, outputs, layers, pause/resume, cursor
-- M5 window management: complete — master-stack tiling, floating, workspaces, focus cycle, click-to-focus verified on DRM, visible focus borders (winit + DRM), gaps, window rules (app_id → workspace/mode)
+- M5 window management: complete — master-stack tiling, floating, workspaces, focus cycle, click-to-focus verified on DRM, visible focus borders (winit + DRM), gaps, window rules (app_id → workspace/mode), layer-surface exclusive-zone tiling (windows inset below waybar/panels)
 - Config: complete — Lua-only autostart and keybinds
+- Wayland protocols: xdg_output added alongside wl_output, xdg_shell, layer_shell, seat, compositor, shm, viewporter, data_device, dmabuf
 - Animations: not implemented
 
 ## Open defects / known limits
@@ -70,6 +71,9 @@ es.bind_cmd("Super+r", "rofi -show drun")
 - Click-to-focus on DRM: verified working 2026-11-12
 - Tiling-to-floating focus change bug (parked): after Super+Space on focused window, Super+arrows may not change focus to tiled windows
 - IPC `CompCmd::GotoWorkspace`/`CloseWindow` no-ops in winit path; not drained in DRM path
+- Focus borders on DRM: fixed green overlay (borders now render as thin ring behind windows, not filled rect on cursor plane)
+- xdg_output (`zxdg_output_manager_v1`) now advertised — waybar starts and connects (was crashing exit 1 without it)
+- Tiling respects layer-surface exclusive zones: `wm.work_area` set from `LayerMap::non_exclusive_zone()` on each commit, so tiled windows are inset below waybar/panels instead of covering them
 
 ## Documentation
 
