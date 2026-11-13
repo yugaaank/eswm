@@ -1653,7 +1653,7 @@ impl State {
         // Cursor first so it renders on top (smithay renders elements top-to-bottom).
         let pointer_location = udev.pointer_location;
         if let Some((buffer, hotspot)) = udev.cursor_buffer.clone() {
-            let pos = (pointer_location - Point::from(hotspot))
+            let pos = pointer_location
                 .to_physical(Scale::from(output.current_scale().fractional_scale()))
                 .to_i32_round();
             // shortcut: cursor buffer import failure just drops the cursor for a frame
@@ -1679,7 +1679,7 @@ impl State {
                 None,
             );
             udev.cursor_buffer = Some((buf.clone(), (img.xhot as f64, img.yhot as f64)));
-            let pos = (pointer_location - Point::from((img.xhot as f64, img.yhot as f64)))
+            let pos = pointer_location
                 .to_physical(Scale::from(output.current_scale().fractional_scale()))
                 .to_i32_round();
             if let Ok(cursor) = MemoryRenderBufferRenderElement::from_buffer(
