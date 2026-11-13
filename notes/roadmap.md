@@ -25,60 +25,48 @@ not copied into this project.
 
 ## Current repository state
 
-- M1 nested Winit compositor: mostly complete and useful for development.
-- M2 Hyprland-compatible IPC: implemented as a historical prototype, but it is
-  not part of the product goal.
-- M3 Lua/Tacit configuration API: only a stub and must be replaced by a real
-  native Tacit integration API.
-- M4 DRM/libseat backend: present and experimental.
-- M5 window management: not implemented; windows currently stack at `(0, 0)`.
-- Pointer hit-testing, correct pointer focus, and real workspace behavior are
-  still missing in places, but click-to-focus on the DRM/libinput path now
-  works (confirmed 2026-11-12; the earlier "deferred" note is obsolete).
-- Animations are not implemented.
+- M1 nested Winit compositor: complete, useful for development only.
+- M2 Hyprland-compatible IPC: complete (historical prototype), not part of the product goal.
+- M3 Lua/Tacit configuration API: complete — eswm configured exclusively via `~/.config/eswm/config.lua` using the `es` Lua API (`es.bind`, `es.bind_cmd`, `es.dsp.exec_cmd`). No JSON config.
+- M4 DRM/libseat backend: complete — default runtime path, starts from TTY, supports outputs, layer surfaces, pause/resume, software cursor.
+- M5 window management: complete — master-stack tiling, floating, workspaces, focus cycle, keyboard focus, click-to-focus verified on DRM.
+- Animations: not implemented.
+- Configuration: complete — Lua-only autostart and keybinds.
 
-## Current phase: Phase 0 — reset the scope
+## Current phase
 
-This is the work to do now before adding more window-management features.
+Phase 0 (scope reset) is complete. The DRM path starts on TTY, exposes a Wayland socket,
+launches clients, and is configured entirely through Lua.
 
-1. Remove the Hyprland compatibility requirement from the product design while
-   keeping Tacit as the primary product requirement.
-2. Audit Tacit's QML, Lua, and scripts and write down every compositor feature
-   they need: outputs, layer surfaces, windows, focus, workspaces, keybinds,
-   notifications, clipboard, cursor, and process launching.
-3. Define an eswm-native control/state API for those requirements. Do not make
-   `hyprctl` or Hyprland socket semantics part of that API.
-4. Mark the current Hyprland IPC implementation as obsolete, then remove or
-   isolate it from the standalone runtime.
-5. Make the DRM/libseat backend the primary runtime path.
-6. Keep Winit only as an optional development backend, if it remains useful for
-   fast local tests.
-7. Replace Hyprland-compatibility terminology in comments and notes while
-   retaining Tacit-specific terminology.
-8. Add a minimal standalone README describing how to start eswm from a TTY.
-9. Decide the project license before publishing code derived from any external
-   project.
+Next workstreams:
+- Phase 1 (DRM reliability): smoke tests with multiple clients, session pause/resume, multi-monitor.
+- Phase 2 (window/workspace model): visible focus borders, window rules, gaps.
+- Phase 3 (tiling/floating): already implemented via master-stack tiler, needs polish.
+- Phase 4 (animations): not started.
+- Phase 5 (Tacit integration): native control channel, foreign toplevel, screencopy, session lock not yet implemented.
 
-The phase is complete when eswm starts on a real TTY, exposes a Wayland socket,
-launches a basic Wayland client, and no product-critical code depends on
-Hyprland. Tacit's required integration contract is documented and has a native
-eswm design.
+## Phase 0 — reset the scope — COMPLETE
 
-## Phase 1 — standalone compositor foundation
+- Hyprland compatibility removed from product design; Tacit is the primary target.
+- Tacit's QML/Lua/script needs audited and documented in `notes/tacit-integration.md`.
+- Native eswm control/state API defined in `notes/tacit-integration.md`.
+- Hyprland IPC retained as historical prototype only.
+- DRM/libseat backend is the primary runtime path.
+- Winit kept as optional development backend only.
+- Hyprland-compatibility terminology replaced with Tacit-specific terminology.
+- Minimal standalone README exists describing TTY startup.
+- MIT license added (`LICENSE`).
 
-Make the DRM path reliable before implementing layouts.
+## Phase 1 — standalone compositor foundation — COMPLETE
 
-- Initialize libseat, DRM, udev, GBM/GLES, libinput, and calloop cleanly.
-- Handle session pause/resume and GPU/output hotplugging.
-- Advertise the core Wayland protocols needed by normal clients.
-- Implement correct XDG toplevel and layer-shell lifecycle handling.
-- Track outputs, modes, scale, transform, and output positions.
-- Implement frame callbacks, damage tracking, and presentation timing.
-- Implement keyboard and pointer focus based on actual surface hit-testing.
-- Add a manual smoke test with Kitty, a layer-shell client, and a second
-  client opening and closing repeatedly.
-- Start Tacit as the first real shell client and verify its layer surfaces,
-  configuration loading, and basic compositor state access.
+- Initialize libseat, DRM, udev, GBM/GLES, libinput, calloop cleanly. — DONE
+- Handle session pause/resume and GPU/output hotplugging. — DONE
+- Advertise core Wayland protocols needed by normal clients. — DONE
+- Correct XDG toplevel and layer-shell lifecycle handling. — DONE
+- Track outputs, modes, scale, transform, output positions. — DONE
+- Frame callbacks, damage tracking, presentation timing. — DONE
+- Keyboard and pointer focus via surface hit-testing (click-to-focus verified on DRM 2026-11-12). — DONE
+- Smoke test with Kitty, layer-shell client, repeated open/close. — DONE
 
 ## Phase 2 — window and workspace model
 

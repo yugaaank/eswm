@@ -170,6 +170,33 @@ Not live yet: the event stream (clients poll `state`), `output.focus`,
 `config.reload`, `window.swap`, and multi-output `workspace.focus` (primary
 output only). Windows are identified by a numeric `id`, not a Hyprland address.
 
+## eswm Lua configuration (replaces Hyprland keybinds/config)
+
+eswm is configured exclusively through `~/.config/eswm/config.lua` using the
+`es` Lua API. There is no JSON config and no hardcoded keybinds.
+
+- `es.bind("modifiers+key", "action", [arg])` — registers a keybind
+- `es.bind_cmd("modifiers+key", "command")` — spawns an arbitrary command on keypress
+- `es.dsp.exec_cmd("command")` — spawns a command (used for autostart)
+
+Modifiers: `logo`, `ctrl`, `alt`, `shift`. Keys: `return`, `q`, `f`, `m`,
+`space`, `backspace`, `left`, `right`, `up`, `down`, `1`–`9`, `vt1`–`vt12`.
+Actions: `spawn_terminal`, `close_window`, `switch_workspace`,
+`move_window_to_workspace`, `cycle_focus_prev/next`, `swap_focused_prev/next`,
+`focus_workspace_prev/next`, `toggle_fullscreen`, `toggle_maximized`,
+`toggle_window_mode`, `toggle_layout_mode`, `spawn_fuzzel`, `quit`, `change_vt`.
+
+Example `config.lua` (see `config.example.lua` for full):
+
+```lua
+es.dsp.exec_cmd("awww-daemon")
+es.dsp.exec_cmd("fuzzel")
+es.bind("Super+Return", "spawn_terminal")
+es.bind("Super+q", "close_window")
+es.bind("Super+1", "switch_workspace", 1)
+es.bind_cmd("Super+r", "rofi -show drun")
+```
+
 Queries:
 
 - `state` — full snapshot: outputs, workspaces, windows, layers, focus.
