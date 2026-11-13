@@ -14,7 +14,7 @@
 - Nested dev backend: `TACIT_COMP_BACKEND=winit ./target/debug/eswm` then `WAYLAND_DISPLAY=eswm-dev kitty`
 - Wayland socket: `$XDG_RUNTIME_DIR/eswm-<wayland-display>.sock` (default `eswm-test`)
 - Logs: `/tmp/eswm.log` (info+), `/tmp/eswm-panic.log`, `/tmp/<name>-spawn.log` per spawned program
-- `.cargo/config.toml` points at locally built libdisplay-info 0.2 under `/tmp/opencode/ldi`; if /tmp is wiped, cargo will fail to link
+- No special build config needed — libdisplay-info is provided by the system (0.3.x, ABI-compatible enough for smithay 0.7's usage). `.cargo/config.toml` is essentially empty.
 
 ## Configuration (Lua-only)
 
