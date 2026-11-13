@@ -330,6 +330,8 @@ struct State {
     ipc: Option<Ipc>,
     // M3: Lua state with Hyprland config API (es.bind, es.define_submap, es.dsp.*, es.config{}, etc.)
     lua: Option<mlua::Lua>,
+    // Keybinds defined via Lua es.bind(); checked during key event processing
+    pub lua_keybinds: Arc<std::sync::Mutex<Vec<Keybind>>>,
     // M4: real DRM backend data; None in nested (winit) mode
     udev: Option<udev::UdevData>,
     // M4: calloop scheduling handle (timers, idle); None in nested mode
@@ -459,6 +461,7 @@ fn new_state(
         control: None,
         primary_output: None,
         layer_wrappers: Vec::new(),
+        lua_keybinds: Arc::new(std::sync::Mutex::new(Vec::new())),
     }
 }
 
@@ -475,7 +478,7 @@ fn init_ipc_and_lua(state: &mut State) {
     let snapshot = state.ipc.as_ref().unwrap().snapshot.clone();
     let cmd_tx = state.ipc.as_ref().unwrap().cmd_tx.clone();
     // Register the Hyprland config API (es.bind, es.define_submap, es.dsp.*, es.config{}, is_file_exists, safe_require)
-    if let Err(e) = register_api(&lua, snapshot, &cmd_tx) {
+    if let Err(e) = register_api(&lua, snapshot, &cmd_tx, state.lua_keybinds.clone()) {
         tracing::warn!("Lua API registration failed (mlua/lua5.1-dev may be missing): {e}");
     }
     // Store lua in state for _do_file/_do_chunk access; kept alive for the session

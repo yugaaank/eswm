@@ -39,13 +39,30 @@ Each entry is whitespace-split into program + args and spawned on eswm's
 Wayland socket (detached, `TERMINAL=kitty`, logs to `/tmp/<name>-spawn.log`).
 `es.dsp.exec_cmd` from the Lua API spawns commands the same way.
 
-Keybinds are also configurable in the same config file. See `config.example.json`
-for the full list of supported actions (`spawn_terminal`, `close_window`,
+## Lua configuration
+
+In addition to `config.json`, eswm loads `$XDG_CONFIG_HOME/eswm/config.lua`
+(fallback `~/.config/eswm/config.lua`) on startup if it exists. Use it to
+define keybinds and run setup commands via the `es` Lua API:
+
+```lua
+-- ~/.config/eswm/config.lua
+es.bind("Super+Return", "spawn_terminal")
+es.bind("Super+q", "close_window")
+es.dsp.exec_cmd("fuzzel")
+```
+
+Supported `es.bind` actions: `spawn_terminal`, `close_window`,
 `switch_workspace`, `move_window_to_workspace`, `cycle_focus_prev/next`,
 `swap_focused_prev/next`, `focus_workspace_prev/next`, `toggle_fullscreen`,
 `toggle_maximized`, `toggle_window_mode`, `toggle_layout_mode`, `spawn_fuzzel`,
-`quit`). Config keybinds override the hardcoded defaults; any keybind not
-configured falls back to the default listed below.
+`quit`, `change_vt`. Modifiers: `logo` (Super), `ctrl`, `alt`, `shift`.
+
+See `config.example.lua` for a complete example.
+
+Keybinds from both `config.json` (keybinds array) and `config.lua` (`es.bind`)
+are merged; config.json keybinds take precedence over Lua keybinds. If neither
+is configured, no keybinds are bound.
 
 ## Build
 
@@ -56,34 +73,21 @@ cargo test        # 19/19 green (nested winit path)
 
 ## Keybinds (udev/DRM backend)
 
-All keybinds are configurable in `$XDG_CONFIG_HOME/eswm/config.json` (see
-`config.example.json`). If the file is missing or has no `keybinds` section,
-eswm uses the default keybinds below — these match the previous hardcoded
-behavior.
+All keybinds are configurable in `$XDG_CONFIG_HOME/eswm/config.json` (keybinds
+array) or `~/.config/eswm/config.lua` (`es.bind()` calls). See the
+Configuration section above for details and `config.example.json` /
+`config.example.lua` for complete examples.
 
-Default keybinds:
-
-- `Super+Return` — spawn kitty
-- `Super+Q` — close focused window
-- `Super+1..9` — switch workspace
-- `Super+Shift+1..9` — move focused window to workspace
-- `Super+Left/Right` — previous/next window (cycle focus)
-- `Super+Ctrl+Left/Right` — swap focused window with neighbor
-- `Super+Alt+Left/Right` — previous/next workspace
-- `Super+Space` — toggle focused window Tiled/Floating
-- `Super+Shift+Space` — toggle global spawn mode (tiling/floating cascade)
-- `Super+Alt+Space` — fuzzel launcher
-- `Super+F` — fullscreen · `Super+M` — maximize
-- `Super+LMB/RMB` — drag floating window move/resize
-- `Ctrl+Alt+Backspace` — quit · `Ctrl+Alt+F1..12` — VT switch
+If neither config file defines keybinds, no keybinds are bound — eswm has no
+hardcoded keybinds.
 
 Supported actions: `spawn_terminal`, `close_window`, `switch_workspace`,
 `move_window_to_workspace`, `cycle_focus_prev/next`, `swap_focused_prev/next`,
 `focus_workspace_prev/next`, `toggle_fullscreen`, `toggle_maximized`,
 `toggle_window_mode`, `toggle_layout_mode`, `spawn_fuzzel`, `quit`, `change_vt`.
 
-Modifiers: `logo`, `ctrl`, `alt`, `shift`. Keys: `return`, `q`, `f`, `m`,
-`space`, `backspace`, `left`, `right`, `up`, `down`, `1`–`9`, `vt1`–`vt12`.
+Modifiers: `logo` (Super), `ctrl`, `alt`, `shift`. Keys: `return`, `q`, `f`,
+`m`, `space`, `backspace`, `left`, `right`, `up`, `down`, `1`–`9`, `vt1`–`vt12`.
 
 ## Status
 

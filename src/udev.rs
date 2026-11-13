@@ -4,7 +4,7 @@
 use std::{
     collections::HashMap,
     io,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -493,14 +493,35 @@ for cmd in &config.autostart {
 let sig = std::env::var("TACIT_COMP_SIG").unwrap_or_else(|_| "eswm".into());
 state.ipc = Some(ipc::Ipc::new(sig));
 
-// Lua config API (es.dsp.exec_cmd, etc.)
+// Lua config API (es.dsp.exec_cmd, es.bind, etc.)
 let lua = crate::lua_state::init().unwrap_or_else(|_| mlua::Lua::new());
 let snapshot = state.ipc.as_ref().unwrap().snapshot.clone();
 let cmd_tx = state.ipc.as_ref().unwrap().cmd_tx.clone();
-if let Err(e) = crate::lua_state::register_api(&lua, snapshot, &cmd_tx) {
+if let Err(e) = crate::lua_state::register_api(&lua, snapshot, &cmd_tx, state.lua_keybinds.clone()) {
     tracing::warn!("Lua API registration failed: {e}");
 }
 state.lua = Some(lua);
+
+// Load Lua config file (~/.config/eswm/config.lua) if it exists.
+let lua_config_path = std::env::var("XDG_CONFIG_HOME")
+    .map(PathBuf::from)
+    .unwrap_or_else(|_| {
+        std::env::var("HOME")
+            .map(|h| PathBuf::from(h).join(".config"))
+            .unwrap_or_default()
+    })
+    .join("eswm")
+    .join("config.lua");
+
+if lua_config_path.exists() {
+    if let Some(lua) = &state.lua {
+        let snapshot = state.ipc.as_ref().unwrap().snapshot.clone();
+        let cmd_tx = state.ipc.as_ref().unwrap().cmd_tx.clone();
+        if let Err(e) = crate::lua_state::_do_file(lua, lua_config_path.to_str().unwrap(), snapshot, &cmd_tx) {
+            tracing::warn!("Failed to load Lua config {}: {e}", lua_config_path.display());
+        }
+    }
+}
 
     let mut clients = Vec::new();
 
@@ -734,22 +755,38 @@ fn execute_config_keybind(state: &mut State, kb: &crate::Keybind) -> FilterResul
     FilterResult::Intercept(())
 }
 
-// All keybinds are now driven from config.json (default_keybinds in main.rs
-// provides the previous hardcoded behavior when config.json is missing or has
-// no keybinds section). process_shortcut only checks config keybinds; anything
-// not configured is forwarded to clients.
+// All keybinds are driven from config.json keybinds and Lua es.bind() calls.
+// process_shortcut checks config keybinds first, then Lua keybinds;
+// anything not configured is forwarded to clients.
 fn process_shortcut(state: &mut State, mods: &ModifiersState, keysym: KeysymHandle) -> FilterResult<()> {
     crate::prune_dead_windows(state);
     let raw = u32::from(keysym.modified_sym());
 
-    // Config keybinds are the only source of keybind behavior now.
+    // Config keybinds take precedence.
     // Clone the matched keybind to avoid holding an immutable borrow of state.config
     // while mutably borrowing state in execute_config_keybind.
     if let Some(kb) = check_config_keybind(&state.config, mods, raw).cloned() {
         return execute_config_keybind(state, &kb);
     }
 
-    // No config keybind matched — forward to clients.
+    // Lua keybinds (from es.bind() in config.lua).
+    let lua_kb = {
+        let guard = state.lua_keybinds.lock().unwrap();
+        guard.iter().find(|kb| {
+            let kb_mods = parse_mods(&kb.mods);
+            let mods_match = kb_mods.logo == mods.logo
+                && kb_mods.ctrl == mods.ctrl
+                && kb_mods.alt == mods.alt
+                && kb_mods.shift == mods.shift;
+            let key_match = parse_key(&kb.key).map_or(false, |k| k == raw);
+            mods_match && key_match
+        }).cloned()
+    };
+    if let Some(kb) = lua_kb {
+        return execute_config_keybind(state, &kb);
+    }
+
+    // No keybind matched — forward to clients.
     FilterResult::Forward
 }
 

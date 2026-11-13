@@ -18,22 +18,54 @@ pub fn init() -> Result<Lua, mlua::Error> {
     Ok(lua)
 }
 
+/// Parse a keybind string like "Super+Return" into (mods, key).
+fn parse_keybind_string(keybind: &str) -> (Vec<String>, String) {
+    let parts: Vec<&str> = keybind.split('+').collect();
+    let mut mods = Vec::new();
+    let mut key = String::new();
+    for part in parts {
+        match part {
+            "Super" | "SUPER" | "logo" => mods.push("logo".into()),
+            "Ctrl" | "CTRL" | "ctrl" => mods.push("ctrl".into()),
+            "Alt" | "ALT" | "alt" => mods.push("alt".into()),
+            "Shift" | "SHIFT" | "shift" => mods.push("shift".into()),
+            k => key = k.to_string(),
+        }
+    }
+    (mods, key)
+}
+
 /// Register the eswm config API (`es` table) into the given Lua state.
 /// Adds the `es` table with submodules: `bind`, `define_submap`, `dsp`, `config`,
 /// plus helpers `is_file_exists` and `safe_require`.
 /// 
 /// `snapshot` is shared with the IPC layer (Arc<Mutex<Snapshot>>).
 /// `cmd_tx` is a flume sender for CompCmd; these are injected as upvalues.
-pub fn register_api(lua: &Lua, _snapshot: Arc<std::sync::Mutex<crate::ipc::Snapshot>>, _cmd_tx: &Sender<crate::ipc::CompCmd>) -> Result<(), mlua::Error> {
+/// `lua_keybinds` is shared with the compositor so keybinds defined in Lua
+/// are checked during key event processing.
+pub fn register_api(
+    lua: &Lua,
+    _snapshot: Arc<std::sync::Mutex<crate::ipc::Snapshot>>,
+    _cmd_tx: &Sender<crate::ipc::CompCmd>,
+    lua_keybinds: Arc<std::sync::Mutex<Vec<crate::Keybind>>>,
+) -> Result<(), mlua::Error> {
     // Register the `es` table with all submodules
     let es = lua.create_table()?;
 
-    // es.bind(keybind_string) -> "ok"
-    // Creates the bind table outside the closure to avoid capturing lua
-    let _bind_table = lua.create_table()?;
-    let bind = lua.create_function(move |_, keybind: String| -> Result<(), mlua::Error> {
-        let _ = keybind; // TODO: parse keybind and send CompCmd
-        // For now, just mark it as handled
+    // es.bind(keybind_string, action_string) -> registers a keybind
+    // Example: es.bind("Super+Return", "spawn_terminal")
+    let bind = lua.create_function(move |_, (keybind, action): (String, String)| -> Result<(), mlua::Error> {
+        let (mods, key) = parse_keybind_string(&keybind);
+        if key.is_empty() {
+            return Err(mlua::Error::RuntimeError("keybind missing key".into()));
+        }
+        let kb = crate::Keybind {
+            mods,
+            key,
+            action,
+            arg: None,
+        };
+        lua_keybinds.lock().unwrap().push(kb);
         Ok(())
     })?;
     es.set("bind", bind)?;
