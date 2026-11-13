@@ -64,6 +64,29 @@ pub struct Output {
     pub active_workspace: WorkspaceId,
 }
 
+/// Clamp a window render position so it stays within the output geometry.
+/// After the xdg window-geometry offset is subtracted, x/y may go negative
+/// or push the window past the output's right/bottom edge. This pins the
+/// window inside the output; if the window is larger than the output it is
+/// pinned to the top-left corner.
+pub fn clamp_to_output(x: i32, y: i32, rect: Rect, output: &Output) -> (i32, i32) {
+    let og = output.geometry;
+    let left = og.x;
+    let top = og.y;
+    let right = og
+        .x
+        .saturating_add(og.width as i32)
+        .saturating_sub(rect.width as i32);
+    let bottom = og
+        .y
+        .saturating_add(og.height as i32)
+        .saturating_sub(rect.height as i32);
+    // If the window is larger than the output, right < left; pin to left/top.
+    let right = right.max(left);
+    let bottom = bottom.max(top);
+    (x.clamp(left, right), y.clamp(top, bottom))
+}
+
 #[derive(Default)]
 pub struct WindowManager {
     next_output: OutputId,
@@ -718,7 +741,7 @@ impl WindowManager {
 
 #[cfg(test)]
 mod tests {
-    use super::{Rect, WindowManager, WindowMode};
+    use super::{clamp_to_output, Output, Rect, WindowManager, WindowMode};
 
     fn manager() -> (WindowManager, u64) {
         let mut manager = WindowManager::new();
@@ -856,5 +879,148 @@ mod tests {
         assert_eq!(manager.focus_workspace_relative(1), Some(2));
         assert_eq!(manager.focus_workspace_relative(1), Some(1));
         assert_eq!(manager.focus_workspace_relative(-1), Some(2));
+    }
+
+    fn test_output() -> Output {
+        Output {
+            id: 1,
+            name: "test".into(),
+            geometry: Rect {
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 1080,
+            },
+            active_workspace: 1,
+        }
+    }
+
+    #[test]
+    fn clamp_to_output_keeps_inside_position_unchanged() {
+        let output = test_output();
+        let (x, y) = clamp_to_output(
+            100,
+            200,
+            Rect {
+                x: 0,
+                y: 0,
+                width: 800,
+                height: 600,
+            },
+            &output,
+        );
+        assert_eq!((x, y), (100, 200));
+    }
+
+    #[test]
+    fn clamp_to_output_clamps_negative_to_left_top_edge() {
+        let output = test_output();
+        let (x, y) = clamp_to_output(
+            -100,
+            -50,
+            Rect {
+                x: 0,
+                y: 0,
+                width: 800,
+                height: 600,
+            },
+            &output,
+        );
+        assert_eq!((x, y), (0, 0));
+    }
+
+    #[test]
+    fn clamp_to_output_clamps_past_right_edge() {
+        let output = test_output();
+        let (x, y) = clamp_to_output(
+            2000,
+            0,
+            Rect {
+                x: 0,
+                y: 0,
+                width: 800,
+                height: 600,
+            },
+            &output,
+        );
+        assert_eq!(x, 1120); // 1920 - 800
+        assert_eq!(y, 0);
+    }
+
+    #[test]
+    fn clamp_to_output_clamps_past_bottom_edge() {
+        let output = test_output();
+        let (x, y) = clamp_to_output(
+            0,
+            1500,
+            Rect {
+                x: 0,
+                y: 0,
+                width: 800,
+                height: 600,
+            },
+            &output,
+        );
+        assert_eq!(x, 0);
+        assert_eq!(y, 480); // 1080 - 600
+    }
+
+    #[test]
+    fn clamp_to_output_window_larger_than_output_pins_to_top_left() {
+        let output = test_output();
+        let (x, y) = clamp_to_output(
+            500,
+            500,
+            Rect {
+                x: 0,
+                y: 0,
+                width: 2000,
+                height: 2000,
+            },
+            &output,
+        );
+        assert_eq!((x, y), (0, 0));
+    }
+
+    #[test]
+    fn clamp_to_output_respects_offset_output_origin() {
+        let output = Output {
+            id: 2,
+            name: "second".into(),
+            geometry: Rect {
+                x: 1920,
+                y: 0,
+                width: 1280,
+                height: 720,
+            },
+            active_workspace: 1,
+        };
+        let (x, y) = clamp_to_output(
+            1800,
+            -50,
+            Rect {
+                x: 0,
+                y: 0,
+                width: 800,
+                height: 600,
+            },
+            &output,
+        );
+        assert_eq!(x, 1920); // clamped to left edge of output
+        assert_eq!(y, 0);
+
+        let (x, y) = clamp_to_output(
+            3500,
+            200,
+            Rect {
+                x: 0,
+                y: 0,
+                width: 800,
+                height: 600,
+            },
+            &output,
+        );
+        assert_eq!(x, 2400); // 1920 + 1280 - 800
+        assert_eq!(y, 120); // 720 - 600
     }
 }

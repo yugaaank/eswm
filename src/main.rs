@@ -164,6 +164,11 @@ pub fn placed_windows(state: &mut State) -> Vec<(WlSurface, i32, i32, wm::Window
                 x -= off.x;
                 y -= off.y;
             }
+            // Clamp the render position so the window stays inside its output
+            // after the xdg geometry offset is subtracted.
+            if let Some(output) = state.wm.output(window.output) {
+                (x, y) = crate::wm::clamp_to_output(x, y, window.target_rect, output);
+            }
             tracing::info!("render window id={id:?} rect={:?} focused={}", window.target_rect, window.focused);
             Some((
                 surface.wl_surface().clone(),
@@ -776,15 +781,6 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
             }
             for surface in state.layer_shell_state.layer_surfaces() {
                 send_frames_surface_tree(surface.wl_surface(), start_time.elapsed().as_millis() as u32);
-            }
-
-            if let Some(stream) = listener.accept()? {
-                println!("Got a client: {:?}", stream);
-                let client = display
-                    .handle()
-                    .insert_client(stream, Arc::new(ClientState::default()))
-                    .unwrap();
-                clients.push(client);
             }
 
             display.dispatch_clients(&mut state)?;
