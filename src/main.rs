@@ -151,7 +151,10 @@ pub fn placed_windows(state: &mut State) -> Vec<(WlSurface, i32, i32, wm::Window
                 );
                 return None;
             }
-            let (mut x, mut y) = (window.target_rect.x, window.target_rect.y);
+            // Clone window fields before mutable borrow for set_xdg_offset
+            let target_rect = window.target_rect;
+            let focused = window.focused;
+            let (mut x, mut y) = (target_rect.x, target_rect.y);
             // Clients (kitty, GTK/zen) set xdg window geometry with an offset into
             // their own buffer (shadows/padding); align the buffer so the logical
             // window lands on the tiling rect instead of shifted by that offset.
@@ -165,15 +168,16 @@ pub fn placed_windows(state: &mut State) -> Vec<(WlSurface, i32, i32, wm::Window
             }) {
                 x -= off.x;
                 y -= off.y;
+                state.wm.set_xdg_offset(id, (off.x, off.y));
             }
-            tracing::info!("render window id={id:?} rect={:?} focused={}", window.target_rect, window.focused);
+            tracing::info!("render window id={id:?} rect={:?} focused={}", target_rect, focused);
             Some((
                 surface.wl_surface().clone(),
                 x,
                 y,
                 id,
-                window.focused,
-                window.target_rect,
+                focused,
+                target_rect,
             ))
         })
         .collect()
@@ -248,6 +252,20 @@ impl State {
             }
         }
         map.arrange();
+        // Insent tiled windows from exclusive layer-surface zones (waybar, panels).
+        let work_area = map.non_exclusive_zone();
+        let wa = wm::Rect {
+            x: work_area.loc.x,
+            y: work_area.loc.y,
+            width: work_area.size.w.max(0) as u32,
+            height: work_area.size.h.max(0) as u32,
+        };
+        if self.wm.work_area != Some(wa) {
+            self.wm.work_area = Some(wa);
+            if let Some(output_id) = self.wm.primary_output_id() {
+                self.wm.arrange_output(output_id);
+            }
+        }
         // smithay's arrange never sends the initial configure (the spec reserves
         // it for the compositor, on the surface's first commit) — send any
         // pending configure or layer clients (fuzzel, awww) wait forever.
@@ -345,6 +363,8 @@ struct State {
     /// desktop::LayerSurface wrappers, created once per layer surface (LayerMap
     /// needs the stable desktop wrapper, not the raw shell surface).
     layer_wrappers: Vec<smithay::desktop::LayerSurface>,
+    // Cached border buffers keyed by (width, height, color) to avoid per-frame
+    // allocation. Border elements are rebuilt each frame from cached buffers.
 }
 
 fn install_diag_logging() {
@@ -447,7 +467,7 @@ fn new_state(
         shm_state,
         viewporter_state,
         seat_state,
-        output_state: OutputManagerState::new(),
+        output_state: OutputManagerState::new_with_xdg_output::<State>(&dh),
         data_device_state: DataDeviceState::new::<State>(dh),
         seat,
         output,
@@ -751,7 +771,7 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
                     Transform::Normal,
                     None,
                 );
-                let pos = Point::from(((*x - BORDER_PX) as f64, (*y - BORDER_PX) as f64));
+                let pos = Point::from((*x as f64, *y as f64));
                 if let Ok(elem) = MemoryRenderBufferRenderElement::from_buffer(
                     renderer,
                     pos,
@@ -767,8 +787,6 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
             let layer_elements = state
                 .layer_shell_state
                 .layer_surfaces()
-                .collect::<Vec<_>>()
-                .into_iter()
                 .flat_map(|surface| {
                     render_elements_from_surface_tree(
                         renderer,

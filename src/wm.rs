@@ -43,6 +43,8 @@ pub struct Window {
     pub focused: bool,
     pub rect: Rect,
     pub target_rect: Rect,
+    /// xdg window geometry offset from set_window_geometry; render position = target_rect - offset
+    pub xdg_offset: (i32, i32),
     /// Focus state last sent to the client as xdg Activated; None = never sent.
     pub activated_sent: Option<bool>,
 }
@@ -75,8 +77,20 @@ pub struct WindowManager {
     windows: BTreeMap<WindowId, Window>,
     layout_mode: LayoutMode,
     cascade_count: u32,
-    /// Inner gap (px) between tiled windows and the output edge.
-    gap: u32,
+    /// Outer gap (px) between tiled windows and the output / work-area edge.
+    /// Outer gap (px) between tiled windows and the output / work-area edge.
+    outer: u32,
+    /// Inner gap (px) between adjacent tiled windows.
+    inner: u32,
+    /// Border width (px) drawn around each window.
+    border_size: u32,
+    /// Focused border color (RGBA).
+    border_color_focused: [u8; 4],
+    /// Unfocused border color (RGBA).
+    border_color_unfocused: [u8; 4],
+    /// Tiling work area, excluding exclusive layer-surface zones (waybar, panels).
+    /// None = use full output geometry.
+    pub work_area: Option<Rect>,
     /// App-id/class → workspace/mode rules, matched at window creation.
     rules: Vec<WindowRule>,
 }
@@ -94,6 +108,11 @@ impl WindowManager {
         Self {
             next_output: 1,
             next_window: 1,
+            outer: 10,
+            inner: 10,
+            border_size: 2,
+            border_color_focused: [0, 200, 0, 255],
+            border_color_unfocused: [80, 80, 80, 255],
             ..Self::default()
         }
     }
@@ -227,6 +246,12 @@ impl WindowManager {
         false
     }
 
+    pub fn set_xdg_offset(&mut self, id: WindowId, offset: (i32, i32)) {
+        if let Some(window) = self.windows.get_mut(&id) {
+            window.xdg_offset = offset;
+        }
+    }
+
     pub fn set_activated_sent(&mut self, id: WindowId, sent: bool) {
         if let Some(window) = self.windows.get_mut(&id) {
             window.activated_sent = Some(sent);
@@ -298,12 +323,41 @@ impl WindowManager {
         self.layout_mode
     }
 
-    pub fn set_gap(&mut self, gap: u32) {
-        self.gap = gap;
+    pub fn set_outer(&mut self, outer: u32) {
+        self.outer = outer;
     }
 
-    pub fn gap(&self) -> u32 {
-        self.gap
+    pub fn outer(&self) -> u32 {
+        self.outer
+    }
+
+    pub fn set_inner(&mut self, inner: u32) {
+        self.inner = inner;
+    }
+
+    pub fn inner(&self) -> u32 {
+        self.inner
+    }
+
+    pub fn set_border_size(&mut self, size: u32) {
+        self.border_size = size;
+    }
+
+    pub fn border_size(&self) -> u32 {
+        self.border_size
+    }
+
+    pub fn set_border_colors(&mut self, focused: [u8; 4], unfocused: [u8; 4]) {
+        self.border_color_focused = focused;
+        self.border_color_unfocused = unfocused;
+    }
+
+    pub fn border_color_focused(&self) -> [u8; 4] {
+        self.border_color_focused
+    }
+
+    pub fn border_color_unfocused(&self) -> [u8; 4] {
+        self.border_color_unfocused
     }
 
     pub fn add_window_rule(&mut self, rule: WindowRule) {
@@ -352,16 +406,23 @@ impl WindowManager {
     }
 
     /// Highest-most mapped window of the active workspace at pos (newest first).
-    pub fn window_at(&self, pos: (f64, f64)) -> Option<WindowId> {
+    pub fn window_at(&self, pos: (f64, f64), border_size: u32) -> Option<WindowId> {
         let primary = self.primary_output_id()?;
         let output_state = self.outputs.get(&primary)?;
         let workspace = self.workspaces.get(&output_state.active_workspace)?;
+        let bs = border_size as i32;
         for id in workspace.windows.iter().rev() {
             let Some(window) = self.windows.get(id) else { continue };
             if !window.mapped {
                 continue;
             }
-            let r = window.target_rect;
+            // Hit test against target_rect expanded by border size (border is part of window)
+            let r = Rect {
+                x: window.target_rect.x - bs,
+                y: window.target_rect.y - bs,
+                width: window.target_rect.width.saturating_add(2 * border_size),
+                height: window.target_rect.height.saturating_add(2 * border_size),
+            };
             if r.width == 0 || r.height == 0 {
                 continue;
             }
@@ -376,8 +437,6 @@ impl WindowManager {
         }
         None
     }
-
-    /// Move/resize a window directly (drag in floating mode). `rect` replaces
     /// target_rect; size changes flow through the next configure.
     pub fn set_window_rect(&mut self, id: WindowId, rect: Rect) -> bool {
         let Some(window) = self.windows.get_mut(&id) else {
@@ -439,6 +498,7 @@ impl WindowManager {
                 rect: Rect::default(),
                 target_rect: floating_rect.unwrap_or_default(),
                 activated_sent: None,
+                xdg_offset: (0, 0),
             },
         );
         if let Some(target) = self.workspaces.get_mut(&workspace) {
@@ -667,20 +727,23 @@ impl WindowManager {
         if tiled.is_empty() {
             return;
         }
-        let gap = self.gap;
+        let outer = self.outer;
+        let inner_gap = self.inner;
+        // when set, otherwise fall back to the full output geometry.
+        let base = self.work_area.unwrap_or(output_state.geometry);
         // Inner geometry inset by gap on all sides so gaps/borders show.
         let inner = Rect {
-            x: output_state.geometry.x + gap as i32,
-            y: output_state.geometry.y + gap as i32,
-            width: output_state.geometry.width.saturating_sub(2 * gap),
-            height: output_state.geometry.height.saturating_sub(2 * gap),
+            x: base.x + outer as i32,
+            y: base.y + outer as i32,
+            width: base.width.saturating_sub(2 * outer),
+            height: base.height.saturating_sub(2 * outer),
         };
         let master_width = if tiled.len() == 1 {
             inner.width
         } else {
             ((inner.width as u64 * 3) / 5) as u32
         };
-        let stack_width = inner.width.saturating_sub(master_width);
+        let stack_width = inner.width.saturating_sub(master_width).saturating_sub(inner_gap);
         self.set_target_rect(
             tiled[0],
             Rect {
@@ -694,13 +757,13 @@ impl WindowManager {
 
         let stack = &tiled[1..];
         if !stack.is_empty() {
-            let stack_x = inner.x + master_width as i32;
+            let stack_x = inner.x + master_width as i32 + inner_gap as i32;
             // Split inner height across stack windows with a gap between each.
-            let stack_h_inner = inner.height.saturating_sub((stack.len() as u32 + 1) * gap);
+            let stack_h_inner = inner.height.saturating_sub((stack.len() as u32 + 1) * inner_gap);
             let cell_h = stack_h_inner / stack.len() as u32;
             for (index, id) in stack.iter().enumerate() {
                 let top =
-                    inner.y + gap as i32 + (index as u32 * (cell_h + gap)) as i32;
+                    inner.y + inner_gap as i32 + (index as u32 * (cell_h + inner_gap)) as i32;
                 self.set_target_rect(
                     *id,
                     Rect {
@@ -782,6 +845,8 @@ mod tests {
 
     fn manager() -> (WindowManager, u64) {
         let mut manager = WindowManager::new();
+        manager.set_outer(0);
+        manager.set_inner(0);
         let output = manager.add_output(
             "test",
             Rect {
@@ -921,7 +986,8 @@ mod tests {
     #[test]
     fn gap_insets_tiled_windows() {
         let (mut manager, output) = manager();
-        manager.set_gap(10);
+        manager.set_outer(10);
+        manager.set_inner(10);
         let first = manager.add_window(output, "kitty", "one").unwrap();
         let second = manager.add_window(output, "kitty", "two").unwrap();
 
@@ -934,9 +1000,9 @@ mod tests {
 
         // Stack window should be to the right, inset.
         let s = manager.window(second).unwrap().target_rect;
-        assert_eq!(s.x, 10 + 1140); // inner.x + master_width
+        assert_eq!(s.x, 10 + 1140 + 10); // inner.x + master_width + inner_gap
         assert_eq!(s.y, 20); // inner.y + gap
-        assert_eq!(s.width, 760); // 1900 - 1140
+        assert_eq!(s.width, 750); // 1900 - 1140 - 10
         assert_eq!(s.height, 1040); // (1060 - 2*10) / 1 = 1040
     }
 

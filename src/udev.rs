@@ -13,7 +13,7 @@ use std::{
 };
 
 pub use smithay::utils::SERIAL_COUNTER as SCOUNTER;
-use smithay::desktop::{layer_map_for_output, LayerMap};
+use smithay::desktop::{layer_map_for_output, LayerMap, WindowSurfaceType};
 use smithay::utils::IsAlive;
 use smithay::wayland::shell::wlr_layer::Layer as WlrLayer;
 use smithay::{
@@ -785,7 +785,7 @@ const BORDER_PX: i32 = 2;
 fn pointer_focus(state: &mut State, pos: Point<f64, Logical>) -> Option<(wl_surface::WlSurface, Point<f64, Logical>)> {
     crate::prune_dead_windows(state);
     let dragging = state.udev.as_ref().unwrap().drag;
-    let id = dragging.map(|drag| drag.window).or_else(|| state.wm.window_at((pos.x, pos.y)));
+    let id = dragging.map(|drag| drag.window).or_else(|| state.wm.window_at((pos.x, pos.y), state.wm.border_size()));
     if let Some(udev) = state.udev.as_mut() {
         udev.pointer_focus = id;
     }
@@ -974,7 +974,7 @@ impl State {
                     let mods = self.udev.as_ref().unwrap().last_mods;
                     // Super+button starts a move/resize drag on a floating window
                     if mods.logo && (button == BTN_LEFT || button == BTN_RIGHT) {
-                        if let Some(id) = self.wm.window_at((location.x, location.y)) {
+                        if let Some(id) = self.wm.window_at((location.x, location.y), self.wm.border_size()) {
                             if self.wm.window(id).map(|w| w.mode) == Some(wm::WindowMode::Floating) {
                                 let rect = self.wm.window(id).unwrap().target_rect;
                                 self.udev.as_mut().unwrap().drag = Some(DragState {
@@ -992,7 +992,7 @@ impl State {
                         }
                     }
                     // click to focus + wl_keyboard enter (empty clicks keep focus)
-                    let id = self.wm.window_at((location.x, location.y));
+                    let id = self.wm.window_at((location.x, location.y), self.wm.border_size());
                     if let Some(id) = id {
                         self.wm.focus_window(id);
                     }
@@ -1654,7 +1654,7 @@ impl State {
         let pointer_location = udev.pointer_location;
         if let Some((buffer, hotspot)) = udev.cursor_buffer.clone() {
             let pos = (pointer_location - Point::from(hotspot))
-                .to_physical(Scale::from(1.0))
+                .to_physical(Scale::from(output.current_scale().fractional_scale()))
                 .to_i32_round();
             // shortcut: cursor buffer import failure just drops the cursor for a frame
             if let Ok(cursor) = MemoryRenderBufferRenderElement::from_buffer(
@@ -1680,7 +1680,7 @@ impl State {
             );
             udev.cursor_buffer = Some((buf.clone(), (img.xhot as f64, img.yhot as f64)));
             let pos = (pointer_location - Point::from((img.xhot as f64, img.yhot as f64)))
-                .to_physical(Scale::from(1.0))
+                .to_physical(Scale::from(output.current_scale().fractional_scale()))
                 .to_i32_round();
             if let Ok(cursor) = MemoryRenderBufferRenderElement::from_buffer(
                 &mut renderer,
@@ -1701,7 +1701,13 @@ impl State {
         let mut layer_elements_above: Vec<EswmRenderElements<UdevRenderer<'_>>> = Vec::new();
         let mut layer_elements_below: Vec<EswmRenderElements<UdevRenderer<'_>>> = Vec::new();
         if let Some(output) = self.primary_output.clone() {
-            let map = layer_map_for_output(&output);
+            let mut map = layer_map_for_output(&output);
+            for layer in &self.layer_wrappers {
+                if map.layer_for_surface(layer.wl_surface(), WindowSurfaceType::ALL).is_none() {
+                    let _ = map.map_layer(layer);
+                }
+            }
+            map.arrange();
             for layer in map.layers() {
                 let Some(geom) = map.layer_geometry(layer) else { continue };
                 let tree = render_elements_from_surface_tree(
@@ -1721,65 +1727,96 @@ impl State {
         }
         elements.extend(layer_elements_above);
 
-        // M5/P2: visible focus borders — green for focused, gray for unfocused.
-        const BORDER_PX: i32 = 2;
-        let border_focused = [0u8, 200, 0, 255];
-        let border_unfocused = [80u8, 80, 80, 255];
-        for (ws, x, y, _, focused, rect) in &placed {
-            let color = if *focused { &border_focused } else { &border_unfocused };
-            let bw = rect.width.saturating_add(2 * BORDER_PX as u32);
-            let bh = rect.height.saturating_add(2 * BORDER_PX as u32);
-            let mut pixels = Vec::with_capacity((bw * bh * 4) as usize);
-            for _ in 0..(bw * bh) {
-                pixels.extend_from_slice(color);
+        // M5/P2: visible borders around each window (Hyprland-style: outside the rect,
+        // fullscreen/maximized windows skip them). Edge strips only — no filled boxes.
+        let border_size = self.wm.border_size();
+        let color_focused = self.wm.border_color_focused();
+        let color_unfocused = self.wm.border_color_unfocused();
+        if border_size > 0 {
+            let bp = border_size as f64;
+            let mut border_elements: Vec<EswmRenderElements<UdevRenderer>> = Vec::new();
+            for (ws, x, y, id, focused, rect) in &placed {
+                let mode = self.wm.window(*id).map(|w| w.mode).unwrap_or(wm::WindowMode::Tiled);
+                // Always render the window surface tree
+                let tree_elements = render_elements_from_surface_tree(
+                    &mut renderer,
+                    ws,
+                    (*x, *y),
+                    1.0,
+                    1.0,
+                    Kind::Unspecified,
+                );
+                elements.extend(
+                    tree_elements
+                        .into_iter()
+                        .map(EswmRenderElements::Surface),
+                );
+                // Borders only when not fullscreen/maximized (Hyprland behavior)
+                if !matches!(mode, wm::WindowMode::Fullscreen | wm::WindowMode::Maximized) {
+                    let color = if *focused { &color_focused } else { &color_unfocused };
+                    let px = [color[0], color[1], color[2], color[3]];
+                    let wx = rect.x as f64 - bp;
+                    let wy = rect.y as f64 - bp;
+                    let w = rect.width as f64 + 2.0 * bp;
+                    let h = rect.height as f64 + 2.0 * bp;
+                    let edge_w = rect.width as u32 + 2 * border_size;
+                    let edge_h = border_size;
+                    let side_w = border_size;
+                    let side_h = rect.height as u32;
+                    let mut make_edge = |ew: u32, eh: u32, pos: (f64, f64)| {
+                        let mut pix = Vec::with_capacity((ew * eh * 4) as usize);
+                        for _ in 0..eh {
+                            for _ in 0..ew {
+                                pix.extend_from_slice(&px);
+                            }
+                        }
+                        let buf = MemoryRenderBuffer::from_slice(
+                            &pix, Fourcc::Argb8888, (ew as i32, eh as i32), 1, Transform::Normal, None,
+                        );
+                        MemoryRenderBufferRenderElement::from_buffer(
+                            &mut renderer,
+                            Point::from(pos),
+                            &buf,
+                            None, None, None, Kind::Unspecified,
+                        ).ok().map(EswmRenderElements::Cursor)
+                    };
+                    // top edge
+                    if let Some(elem) = make_edge(edge_w, edge_h, (wx, wy)) {
+                        border_elements.push(elem);
+                    }
+                    // bottom edge
+                    if let Some(elem) = make_edge(edge_w, edge_h, (wx, wy + h - bp)) {
+                        border_elements.push(elem);
+                    }
+                    // left edge
+                    if let Some(elem) = make_edge(side_w, side_h, (wx, wy)) {
+                        border_elements.push(elem);
+                    }
+                    // right edge
+                    if let Some(elem) = make_edge(side_w, side_h, (wx + w - bp, wy)) {
+                        border_elements.push(elem);
+                    }
+                }
             }
-            let buf = MemoryRenderBuffer::from_slice(
-                &pixels,
-                Fourcc::Argb8888,
-                (bw as i32, bh as i32),
-                1,
-                Transform::Normal,
-                None,
-            );
-            let pos = Point::from(((*x - BORDER_PX) as f64, (*y - BORDER_PX) as f64));
-            if let Ok(elem) = MemoryRenderBufferRenderElement::from_buffer(
-                &mut renderer,
-                pos,
-                &buf,
-                None,
-                None,
-                None,
-                Kind::Unspecified,
-            ) {
-                elements.push(EswmRenderElements::Cursor(elem));
+            elements.extend(border_elements);
+        } else {
+            for (ws, x, y, _, _, rect) in &placed {
+                let tree_elements = render_elements_from_surface_tree(
+                    &mut renderer,
+                    ws,
+                    (*x, *y),
+                    1.0,
+                    1.0,
+                    Kind::Unspecified,
+                );
+                elements.extend(
+                    tree_elements
+                        .into_iter()
+                        .map(EswmRenderElements::Surface),
+                );
             }
-            let tree_elements = render_elements_from_surface_tree(
-                &mut renderer,
-                ws,
-                (*x, *y),
-                1.0,
-                1.0,
-                Kind::Unspecified,
-            );
-            elements.extend(
-                tree_elements
-                    .into_iter()
-                    .map(EswmRenderElements::Surface),
-            );
         }
-
         elements.extend(layer_elements_below);
-
-        // Debug: log output geometry, scale, pointer, and each placed window rect
-        let output_scale = format!("{:?}", output.current_scale());
-        tracing::info!("render debug: output_mode={:?} scale={} pointer=({:.0},{:.0}) cursor_buffer={} placed_windows={}",
-            mode_size.map(|s| (s.w, s.h)), output_scale,
-            udev.pointer_location.x, udev.pointer_location.y,
-            udev.cursor_buffer.is_some(),
-            placed.len());
-        for (_ws, x, y, id, focused, rect) in &placed {
-            tracing::info!("render debug: window id={id:?} focused={focused} rect=({},{}) {}x{}", x, y, rect.width, rect.height);
-        }
 
         // shortcut: with no clients AND no cursor the damage tracker marks the
         // frame empty and it never scans out; prime it with a 1x1 element
