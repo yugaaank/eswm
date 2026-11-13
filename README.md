@@ -57,8 +57,11 @@ cargo test        # 19/19 green (nested winit path)
 ## Keybinds (udev/DRM backend)
 
 All keybinds are configurable in `$XDG_CONFIG_HOME/eswm/config.json` (see
-`config.example.json`). Config keybinds override these defaults; anything not
-configured uses the hardcoded default below.
+`config.example.json`). If the file is missing or has no `keybinds` section,
+eswm uses the default keybinds below — these match the previous hardcoded
+behavior.
+
+Default keybinds:
 
 - `Super+Return` — spawn kitty
 - `Super+Q` — close focused window
@@ -73,6 +76,14 @@ configured uses the hardcoded default below.
 - `Super+F` — fullscreen · `Super+M` — maximize
 - `Super+LMB/RMB` — drag floating window move/resize
 - `Ctrl+Alt+Backspace` — quit · `Ctrl+Alt+F1..12` — VT switch
+
+Supported actions: `spawn_terminal`, `close_window`, `switch_workspace`,
+`move_window_to_workspace`, `cycle_focus_prev/next`, `swap_focused_prev/next`,
+`focus_workspace_prev/next`, `toggle_fullscreen`, `toggle_maximized`,
+`toggle_window_mode`, `toggle_layout_mode`, `spawn_fuzzel`, `quit`, `change_vt`.
+
+Modifiers: `logo`, `ctrl`, `alt`, `shift`. Keys: `return`, `q`, `f`, `m`,
+`space`, `backspace`, `left`, `right`, `up`, `down`, `1`–`9`, `vt1`–`vt12`.
 
 ## Status
 

@@ -20,6 +20,18 @@
     { "mods": ["logo"], "key": "space", "action": "toggle_window_mode" },
     { "mods": ["logo", "shift"], "key": "space", "action": "toggle_layout_mode" },
     { "mods": ["logo", "alt"], "key": "space", "action": "spawn_fuzzel" },
-    { "mods": ["ctrl", "alt"], "key": "backspace", "action": "quit" }
+    { "mods": ["ctrl", "alt"], "key": "backspace", "action": "quit" },
+    { "mods": ["ctrl", "alt"], "key": "vt1", "action": "change_vt", "arg": 1 },
+    { "mods": ["ctrl", "alt"], "key": "vt2", "action": "change_vt", "arg": 2 },
+    { "mods": ["ctrl", "alt"], "key": "vt3", "action": "change_vt", "arg": 3 },
+    { "mods": ["ctrl", "alt"], "key": "vt4", "action": "change_vt", "arg": 4 },
+    { "mods": ["ctrl", "alt"], "key": "vt5", "action": "change_vt", "arg": 5 },
+    { "mods": ["ctrl", "alt"], "key": "vt6", "action": "change_vt", "arg": 6 },
+    { "mods": ["ctrl", "alt"], "key": "vt7", "action": "change_vt", "arg": 7 },
+    { "mods": ["ctrl", "alt"], "key": "vt8", "action": "change_vt", "arg": 8 },
+    { "mods": ["ctrl", "alt"], "key": "vt9", "action": "change_vt", "arg": 9 },
+    { "mods": ["ctrl", "alt"], "key": "vt10", "action": "change_vt", "arg": 10 },
+    { "mods": ["ctrl", "alt"], "key": "vt11", "action": "change_vt", "arg": 11 },
+    { "mods": ["ctrl", "alt"], "key": "vt12", "action": "change_vt", "arg": 12 }
   ]
 }

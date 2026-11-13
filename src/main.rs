@@ -582,6 +582,39 @@ pub struct Config {
     pub keybinds: Vec<Keybind>,
 }
 
+/// Default keybinds matching the previous hardcoded behavior.
+/// Used when config.json has no keybinds section (or is missing entirely).
+pub fn default_keybinds() -> Vec<Keybind> {
+    let mut kb: Vec<Keybind> = vec![
+        // Super keybinds
+        Keybind { mods: vec!["logo".into()], key: "Return".into(), action: "spawn_terminal".into(), arg: None },
+        Keybind { mods: vec!["logo".into()], key: "q".into(), action: "close_window".into(), arg: None },
+        Keybind { mods: vec!["logo".into()], key: "f".into(), action: "toggle_fullscreen".into(), arg: None },
+        Keybind { mods: vec!["logo".into()], key: "m".into(), action: "toggle_maximized".into(), arg: None },
+        Keybind { mods: vec!["logo".into()], key: "space".into(), action: "toggle_window_mode".into(), arg: None },
+        Keybind { mods: vec!["logo".into(), "shift".into()], key: "space".into(), action: "toggle_layout_mode".into(), arg: None },
+        Keybind { mods: vec!["logo".into(), "alt".into()], key: "space".into(), action: "spawn_fuzzel".into(), arg: None },
+        Keybind { mods: vec!["logo".into()], key: "left".into(), action: "cycle_focus_prev".into(), arg: None },
+        Keybind { mods: vec!["logo".into()], key: "right".into(), action: "cycle_focus_next".into(), arg: None },
+        Keybind { mods: vec!["logo".into(), "ctrl".into()], key: "left".into(), action: "swap_focused_prev".into(), arg: None },
+        Keybind { mods: vec!["logo".into(), "ctrl".into()], key: "right".into(), action: "swap_focused_next".into(), arg: None },
+        Keybind { mods: vec!["logo".into(), "alt".into()], key: "left".into(), action: "focus_workspace_prev".into(), arg: None },
+        Keybind { mods: vec!["logo".into(), "alt".into()], key: "right".into(), action: "focus_workspace_next".into(), arg: None },
+        // Ctrl+Alt
+        Keybind { mods: vec!["ctrl".into(), "alt".into()], key: "backspace".into(), action: "quit".into(), arg: None },
+    ];
+    // Super+1..9 → switch workspace; Super+Shift+1..9 → move window to workspace
+    for i in 1..=9i32 {
+        kb.push(Keybind { mods: vec!["logo".into()], key: i.to_string(), action: "switch_workspace".into(), arg: Some(i) });
+        kb.push(Keybind { mods: vec!["logo".into(), "shift".into()], key: i.to_string(), action: "move_window_to_workspace".into(), arg: Some(i) });
+    }
+    // Ctrl+Alt+F1..12 → change VT
+    for i in 1..=12i32 {
+        kb.push(Keybind { mods: vec!["ctrl".into(), "alt".into()], key: format!("vt{i}"), action: "change_vt".into(), arg: Some(i) });
+    }
+    kb
+}
+
 pub fn load_config() -> Config {
     let config_dir = std::env::var("XDG_CONFIG_HOME")
         .map(std::path::PathBuf::from)
@@ -592,10 +625,14 @@ pub fn load_config() -> Config {
         })
         .join("eswm");
     let config_path = config_dir.join("config.json");
-    std::fs::read_to_string(&config_path)
+    let mut config: Config = std::fs::read_to_string(&config_path)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if config.keybinds.is_empty() {
+        config.keybinds = default_keybinds();
+    }
+    config
 }
 
 // Spawn a Wayland client against eswm's socket, detached (own process group so

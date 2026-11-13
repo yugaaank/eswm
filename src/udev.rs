@@ -600,6 +600,18 @@ fn parse_key(name: &str) -> Option<u32> {
         "7" => Some(keysyms::KEY_7 as u32),
         "8" => Some(keysyms::KEY_8 as u32),
         "9" => Some(keysyms::KEY_9 as u32),
+        "vt1" => Some(keysyms::KEY_XF86Switch_VT_1 as u32),
+        "vt2" => Some(keysyms::KEY_XF86Switch_VT_2 as u32),
+        "vt3" => Some(keysyms::KEY_XF86Switch_VT_3 as u32),
+        "vt4" => Some(keysyms::KEY_XF86Switch_VT_4 as u32),
+        "vt5" => Some(keysyms::KEY_XF86Switch_VT_5 as u32),
+        "vt6" => Some(keysyms::KEY_XF86Switch_VT_6 as u32),
+        "vt7" => Some(keysyms::KEY_XF86Switch_VT_7 as u32),
+        "vt8" => Some(keysyms::KEY_XF86Switch_VT_8 as u32),
+        "vt9" => Some(keysyms::KEY_XF86Switch_VT_9 as u32),
+        "vt10" => Some(keysyms::KEY_XF86Switch_VT_10 as u32),
+        "vt11" => Some(keysyms::KEY_XF86Switch_VT_11 as u32),
+        "vt12" => Some(keysyms::KEY_XF86Switch_VT_12 as u32),
         _ => None,
     }
 }
@@ -707,6 +719,13 @@ fn execute_config_keybind(state: &mut State, kb: &crate::Keybind) -> FilterResul
                 .quit
                 .store(true, Ordering::SeqCst);
         }
+        "change_vt" => {
+            if let Some(vt) = kb.arg {
+                if let Err(err) = state.udev.as_mut().unwrap().session.change_vt(vt) {
+                    warn!("failed to switch to vt {vt}: {err:?}");
+                }
+            }
+        }
         _ => {
             warn!("unknown keybind action: {}", kb.action);
             return FilterResult::Forward;
@@ -715,137 +734,22 @@ fn execute_config_keybind(state: &mut State, kb: &crate::Keybind) -> FilterResul
     FilterResult::Intercept(())
 }
 
-// Keybinds (M5 step 4): Super+Return terminal, Super+Q close, Super+1..9 workspaces,
-// Ctrl+Alt+Backspace quit, Ctrl+Alt+F1-12 VT switch. Everything else forwards to clients.
-// Configurable keybinds from $XDG_CONFIG_HOME/eswm/config.json are checked first;
-// hardcoded defaults apply when no config keybind matches.
+// All keybinds are now driven from config.json (default_keybinds in main.rs
+// provides the previous hardcoded behavior when config.json is missing or has
+// no keybinds section). process_shortcut only checks config keybinds; anything
+// not configured is forwarded to clients.
 fn process_shortcut(state: &mut State, mods: &ModifiersState, keysym: KeysymHandle) -> FilterResult<()> {
-    use xkbcommon::xkb::keysyms;
     crate::prune_dead_windows(state);
     let raw = u32::from(keysym.modified_sym());
 
-    // Config keybinds take precedence over hardcoded defaults.
+    // Config keybinds are the only source of keybind behavior now.
     // Clone the matched keybind to avoid holding an immutable borrow of state.config
     // while mutably borrowing state in execute_config_keybind.
     if let Some(kb) = check_config_keybind(&state.config, mods, raw).cloned() {
         return execute_config_keybind(state, &kb);
     }
 
-    if mods.logo {
-        let plain = !mods.ctrl && !mods.alt && !mods.shift;
-        if mods.ctrl {
-            let delta = match raw {
-                keysyms::KEY_Left => Some(-1),
-                keysyms::KEY_Right => Some(1),
-                _ => None,
-            };
-            if let Some(delta) = delta {
-                if state.wm.swap_focused(delta) {
-                    crate::apply_layout(state);
-                }
-                return FilterResult::Intercept(());
-            }
-        }
-        if mods.alt {
-            let delta = match raw {
-                keysyms::KEY_Left => Some(-1),
-                keysyms::KEY_Right => Some(1),
-                _ => None,
-            };
-            if let Some(delta) = delta {
-                if state.wm.focus_workspace_relative(delta).is_some() {
-                    crate::apply_layout(state);
-                }
-                return FilterResult::Intercept(());
-            }
-        }
-        if mods.shift && (keysyms::KEY_1..=keysyms::KEY_9).contains(&raw) {
-            let workspace = (raw - keysyms::KEY_1 + 1) as i32;
-            if let Some(id) = state.wm.focused_id() {
-                state.wm.move_window_to_workspace(id, workspace);
-                crate::apply_layout(state);
-            }
-            return FilterResult::Intercept(());
-        }
-        if plain && raw == keysyms::KEY_f {
-            if let Some(id) = state.wm.focused_id() {
-                state.wm.toggle_fullscreen(id);
-                crate::apply_layout(state);
-            }
-            return FilterResult::Intercept(());
-        }
-        if plain && raw == keysyms::KEY_m {
-            if let Some(id) = state.wm.focused_id() {
-                state.wm.toggle_maximized(id);
-                crate::apply_layout(state);
-            }
-            return FilterResult::Intercept(());
-        }
-        if raw == keysyms::KEY_Return {
-            crate::spawn_terminal();
-            return FilterResult::Intercept(());
-        }
-        if mods.alt && raw == keysyms::KEY_space {
-            // Super+Alt+Space: fuzzel launcher
-            crate::spawn_on_socket("fuzzel", &[]);
-            return FilterResult::Intercept(());
-        }
-        if raw == keysyms::KEY_q {
-            if let Some(id) = state.wm.focused_id() {
-                if let Some(toplevel) = crate::toplevel_for_window(state, id) {
-                    toplevel.send_close();
-                }
-            }
-            return FilterResult::Intercept(());
-        }
-        if (keysyms::KEY_1..=keysyms::KEY_9).contains(&raw) {
-            switch_workspace(state, (raw - keysyms::KEY_1 + 1) as i32);
-            return FilterResult::Intercept(());
-        }
-        let cycle = match raw {
-            keysyms::KEY_Left | keysyms::KEY_Up => Some(-1),
-            keysyms::KEY_Right | keysyms::KEY_Down => Some(1),
-            _ => None,
-        };
-        if let Some(delta) = cycle {
-            if state.wm.cycle_focus(delta) {
-                crate::apply_layout(state);
-            }
-            return FilterResult::Intercept(());
-        }
-        if raw == keysyms::KEY_space {
-            if mods.shift {
-                // Super+Shift+Space: toggle global spawn mode (Hyprland/Windows)
-                state.wm.toggle_layout_mode();
-            } else if let Some(id) = state.wm.focused_id() {
-                // Super+Space: toggle the focused window between tiling and floating
-                state.wm.toggle_window_mode(id);
-            }
-            crate::apply_layout(state);
-            return FilterResult::Intercept(());
-        }
-    }
-
-    if mods.ctrl && mods.alt {
-        if raw == keysyms::KEY_BackSpace {
-            info!("quit requested via keybind");
-            state
-                .udev
-                .as_ref()
-                .unwrap()
-                .quit
-                .store(true, Ordering::SeqCst);
-            return FilterResult::Intercept(());
-        }
-        if (keysyms::KEY_XF86Switch_VT_1..=keysyms::KEY_XF86Switch_VT_12).contains(&raw) {
-            let vt = (raw - keysyms::KEY_XF86Switch_VT_1 + 1) as i32;
-            if let Err(err) = state.udev.as_mut().unwrap().session.change_vt(vt) {
-                warn!("failed to switch to vt {vt}: {err:?}");
-            }
-            return FilterResult::Intercept(());
-        }
-    }
-
+    // No config keybind matched — forward to clients.
     FilterResult::Forward
 }
 
