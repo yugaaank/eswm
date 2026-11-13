@@ -19,50 +19,49 @@ to run Tacit without depending on Hyprland.
 
 ## Configuration
 
-Session autostart is read from `$XDG_CONFIG_HOME/eswm/config.json`
-(fallback `~/.config/eswm/config.json`). If the file is missing or invalid,
-nothing autostarts — configure your entries in the config file.
+eswm is configured entirely through `~/.config/eswm/config.lua`
+(fallback `$XDG_CONFIG_HOME/eswm/config.lua`) using the `es` Lua API.
+There is no JSON config file — everything is Lua.
 
-Format — see `config.example.json`:
+### Autostart
 
-```json
-{
-  "autostart": [
-    "awww-daemon",
-    "fuzzel",
-    "awww img /home/user/Pictures/Wallpapers/wall.jpg"
-  ]
-}
-```
-
-Each entry is whitespace-split into program + args and spawned on eswm's
-Wayland socket (detached, `TERMINAL=kitty`, logs to `/tmp/<name>-spawn.log`).
-`es.dsp.exec_cmd` from the Lua API spawns commands the same way.
-
-## Lua configuration
-
-In addition to `config.json`, eswm loads `$XDG_CONFIG_HOME/eswm/config.lua`
-(fallback `~/.config/eswm/config.lua`) on startup if it exists. Use it to
-define keybinds and run setup commands via the `es` Lua API:
+Commands to run on session start, via `es.dsp.exec_cmd`:
 
 ```lua
 -- ~/.config/eswm/config.lua
-es.bind("Super+Return", "spawn_terminal")
-es.bind("Super+q", "close_window")
+es.dsp.exec_cmd("awww-daemon")
 es.dsp.exec_cmd("fuzzel")
+es.dsp.exec_cmd("awww img /home/user/Pictures/Wallpapers/wall.jpg")
 ```
 
-Supported `es.bind` actions: `spawn_terminal`, `close_window`,
-`switch_workspace`, `move_window_to_workspace`, `cycle_focus_prev/next`,
+Each command is whitespace-split into program + args and spawned on eswm's
+Wayland socket (detached, `TERMINAL=kitty`, logs to `/tmp/<name>-spawn.log`).
+
+### Keybinds
+
+Define keybinds with `es.bind("modifiers+key", "action", [arg])`:
+
+```lua
+es.bind("Super+Return", "spawn_terminal")
+es.bind("Super+q", "close_window")
+es.bind("Super+1", "switch_workspace", 1)
+es.bind("Ctrl+Alt+vt1", "change_vt", 1)
+```
+
+Supported actions: `spawn_terminal`, `close_window`, `switch_workspace`,
+`move_window_to_workspace`, `cycle_focus_prev/next`,
 `swap_focused_prev/next`, `focus_workspace_prev/next`, `toggle_fullscreen`,
 `toggle_maximized`, `toggle_window_mode`, `toggle_layout_mode`, `spawn_fuzzel`,
-`quit`, `change_vt`. Modifiers: `logo` (Super), `ctrl`, `alt`, `shift`.
+`quit`, `change_vt`.
+
+Modifiers: `logo` (Super), `ctrl`, `alt`, `shift`.
+Keys: `return`, `q`, `f`, `m`, `space`, `backspace`, `left`, `right`, `up`,
+`down`, `1`–`9`, `vt1`–`vt12`.
+
+The optional `arg` (integer) is used by `switch_workspace`,
+`move_window_to_workspace`, and `change_vt`.
 
 See `config.example.lua` for a complete example.
-
-Keybinds from both `config.json` (keybinds array) and `config.lua` (`es.bind`)
-are merged; config.json keybinds take precedence over Lua keybinds. If neither
-is configured, no keybinds are bound.
 
 ## Build
 
@@ -73,13 +72,12 @@ cargo test        # 19/19 green (nested winit path)
 
 ## Keybinds (udev/DRM backend)
 
-All keybinds are configurable in `$XDG_CONFIG_HOME/eswm/config.json` (keybinds
-array) or `~/.config/eswm/config.lua` (`es.bind()` calls). See the
-Configuration section above for details and `config.example.json` /
-`config.example.lua` for complete examples.
+All keybinds are configurable in `~/.config/eswm/config.lua` via `es.bind()`
+calls. See the Configuration section above for details and
+`config.example.lua` for a complete example.
 
-If neither config file defines keybinds, no keybinds are bound — eswm has no
-hardcoded keybinds.
+If no keybinds are defined, no keybinds are bound — eswm has no hardcoded
+keybinds.
 
 Supported actions: `spawn_terminal`, `close_window`, `switch_workspace`,
 `move_window_to_workspace`, `cycle_focus_prev/next`, `swap_focused_prev/next`,

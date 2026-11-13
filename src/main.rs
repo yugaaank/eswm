@@ -324,14 +324,13 @@ struct State {
     seat: Seat<Self>,
     output: Output,
     pub wm: wm::WindowManager,
-    pub config: Config,
     pub dh: DisplayHandle,
     // M2: IPC-backed state; snapshot is rebuilt from the shell state each loop iteration
     ipc: Option<Ipc>,
     // M3: Lua state with Hyprland config API (es.bind, es.define_submap, es.dsp.*, es.config{}, etc.)
     lua: Option<mlua::Lua>,
     // Keybinds defined via Lua es.bind(); checked during key event processing
-    pub lua_keybinds: Arc<std::sync::Mutex<Vec<Keybind>>>,
+    pub lua_keybinds: Arc<std::sync::Mutex<Vec<lua_state::Keybind>>>,
     // M4: real DRM backend data; None in nested (winit) mode
     udev: Option<udev::UdevData>,
     // M4: calloop scheduling handle (timers, idle); None in nested mode
@@ -399,7 +398,6 @@ fn new_state(
     let mut seat_state = SeatState::new();
     let seat = seat_state.new_wl_seat(dh, seat_name);
     let mut wm = wm::WindowManager::new();
-    let config = crate::load_config();
 
     // In nested mode the winit window masquerades as one virtual output; the DRM
     // backend attaches real outputs per connector instead.
@@ -452,7 +450,6 @@ fn new_state(
         seat,
         output,
         wm,
-        config,
         dh: dh.clone(),
         ipc: None,
         lua: None,
@@ -568,40 +565,6 @@ pub fn parse_cmd(cmd: &str) -> (&str, Vec<&str>) {
     (program, args)
 }
 
-/// A configurable keybinding: modifier keys + key → action.
-#[derive(Debug, Default, serde::Deserialize, Clone)]
-pub struct Keybind {
-    pub mods: Vec<String>,
-    pub key: String,
-    pub action: String,
-    pub arg: Option<i32>,
-}
-
-/// Session config loaded from $XDG_CONFIG_HOME/eswm/config.json
-/// (fallback: ~/.config/eswm/config.json).
-#[derive(Debug, Default, serde::Deserialize)]
-pub struct Config {
-    pub autostart: Vec<String>,
-    pub keybinds: Vec<Keybind>,
-}
-
-
-pub fn load_config() -> Config {
-    let config_dir = std::env::var("XDG_CONFIG_HOME")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| {
-            std::env::var("HOME")
-                .map(|h| std::path::PathBuf::from(h).join(".config"))
-                .unwrap_or_default()
-        })
-        .join("eswm");
-    let config_path = config_dir.join("config.json");
-    let config: Config = std::fs::read_to_string(&config_path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default();
-    config
-}
 
 // Spawn a Wayland client against eswm's socket, detached (own process group so
 // VT signals don't hit it). Stdout/stderr go to <name>-spawn.log in /tmp.

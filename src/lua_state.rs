@@ -18,6 +18,15 @@ pub fn init() -> Result<Lua, mlua::Error> {
     Ok(lua)
 }
 
+/// A keybinding registered via Lua `es.bind()`.
+#[derive(Debug, Clone)]
+pub struct Keybind {
+    pub mods: Vec<String>,
+    pub key: String,
+    pub action: String,
+    pub arg: Option<i32>,
+}
+
 /// Parse a keybind string like "Super+Return" into (mods, key).
 fn parse_keybind_string(keybind: &str) -> (Vec<String>, String) {
     let parts: Vec<&str> = keybind.split('+').collect();
@@ -47,23 +56,24 @@ pub fn register_api(
     lua: &Lua,
     _snapshot: Arc<std::sync::Mutex<crate::ipc::Snapshot>>,
     _cmd_tx: &Sender<crate::ipc::CompCmd>,
-    lua_keybinds: Arc<std::sync::Mutex<Vec<crate::Keybind>>>,
+    lua_keybinds: Arc<std::sync::Mutex<Vec<Keybind>>>,
 ) -> Result<(), mlua::Error> {
     // Register the `es` table with all submodules
     let es = lua.create_table()?;
 
-    // es.bind(keybind_string, action_string) -> registers a keybind
+    // es.bind(keybind_string, action_string, [arg]) -> registers a keybind
     // Example: es.bind("Super+Return", "spawn_terminal")
-    let bind = lua.create_function(move |_, (keybind, action): (String, String)| -> Result<(), mlua::Error> {
+    // Example: es.bind("Super+1", "switch_workspace", 1)
+    let bind = lua.create_function(move |_, (keybind, action, arg): (String, String, Option<i32>)| -> Result<(), mlua::Error> {
         let (mods, key) = parse_keybind_string(&keybind);
         if key.is_empty() {
             return Err(mlua::Error::RuntimeError("keybind missing key".into()));
         }
-        let kb = crate::Keybind {
+        let kb = Keybind {
             mods,
             key,
             action,
-            arg: None,
+            arg,
         };
         lua_keybinds.lock().unwrap().push(kb);
         Ok(())

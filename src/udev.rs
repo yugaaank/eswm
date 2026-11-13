@@ -80,7 +80,7 @@ use tracing::{debug, error, info, warn};
 
 use smithay_drm_extras::drm_scanner::{DrmScanEvent, DrmScanner};
 
-use crate::{send_frames_surface_tree, State, wm, ipc};
+use crate::{send_frames_surface_tree, State, wm, ipc, lua_state};
 
 type UdevRenderer<'a> = MultiRenderer<
     'a,
@@ -479,14 +479,6 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         Ok(control) => state.control = Some(control),
         Err(err) => tracing::warn!("control socket disabled: {err}"),
     }
-// Spawn session autostart entries from $XDG_CONFIG_HOME/eswm/config.json.
-// Entries are whitespace-split into program + args and spawned on eswm's
-// socket. Empty config means nothing autostarts.
-let config = crate::load_config();
-for cmd in &config.autostart {
-    let (program, args) = crate::parse_cmd(cmd);
-    crate::spawn_on_socket(program, &args);
-}
 
 // IPC command channel (hyprctl compat). No Lua here: the DRM path does not
 // initialize the historical Hyprland/Tacit compatibility path.
@@ -637,13 +629,13 @@ fn parse_key(name: &str) -> Option<u32> {
     }
 }
 
-/// Return the first config keybind whose mods and key match the current event.
-fn check_config_keybind<'a>(
-    config: &'a crate::Config,
+/// Return the first Lua keybind whose mods and key match the current event.
+fn find_lua_keybind<'a>(
+    keybinds: &'a [lua_state::Keybind],
     mods: &ModifiersState,
     raw: u32,
-) -> Option<&'a crate::Keybind> {
-    config.keybinds.iter().find(|kb| {
+) -> Option<&'a lua_state::Keybind> {
+    keybinds.iter().find(|kb| {
         let kb_mods = parse_mods(&kb.mods);
         let mods_match = kb_mods.logo == mods.logo
             && kb_mods.ctrl == mods.ctrl
@@ -654,8 +646,8 @@ fn check_config_keybind<'a>(
     })
 }
 
-/// Execute a single config keybind action.
-fn execute_config_keybind(state: &mut State, kb: &crate::Keybind) -> FilterResult<()> {
+/// Execute a single keybind action.
+fn execute_keybind(state: &mut State, kb: &lua_state::Keybind) -> FilterResult<()> {
     match kb.action.as_str() {
         "spawn_terminal" => crate::spawn_terminal(),
         "spawn_fuzzel" => crate::spawn_on_socket("fuzzel", &[]),
@@ -755,35 +747,19 @@ fn execute_config_keybind(state: &mut State, kb: &crate::Keybind) -> FilterResul
     FilterResult::Intercept(())
 }
 
-// All keybinds are driven from config.json keybinds and Lua es.bind() calls.
-// process_shortcut checks config keybinds first, then Lua keybinds;
-// anything not configured is forwarded to clients.
+// All keybinds are driven from Lua es.bind() calls in ~/.config/eswm/config.lua.
+// process_shortcut checks Lua keybinds; anything not configured is forwarded to clients.
 fn process_shortcut(state: &mut State, mods: &ModifiersState, keysym: KeysymHandle) -> FilterResult<()> {
     crate::prune_dead_windows(state);
     let raw = u32::from(keysym.modified_sym());
 
-    // Config keybinds take precedence.
-    // Clone the matched keybind to avoid holding an immutable borrow of state.config
-    // while mutably borrowing state in execute_config_keybind.
-    if let Some(kb) = check_config_keybind(&state.config, mods, raw).cloned() {
-        return execute_config_keybind(state, &kb);
-    }
-
     // Lua keybinds (from es.bind() in config.lua).
     let lua_kb = {
         let guard = state.lua_keybinds.lock().unwrap();
-        guard.iter().find(|kb| {
-            let kb_mods = parse_mods(&kb.mods);
-            let mods_match = kb_mods.logo == mods.logo
-                && kb_mods.ctrl == mods.ctrl
-                && kb_mods.alt == mods.alt
-                && kb_mods.shift == mods.shift;
-            let key_match = parse_key(&kb.key).map_or(false, |k| k == raw);
-            mods_match && key_match
-        }).cloned()
+        find_lua_keybind(&guard, mods, raw).cloned()
     };
     if let Some(kb) = lua_kb {
-        return execute_config_keybind(state, &kb);
+        return execute_keybind(state, &kb);
     }
 
     // No keybind matched — forward to clients.
