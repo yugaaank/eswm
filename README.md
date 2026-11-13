@@ -17,6 +17,28 @@ to run Tacit without depending on Hyprland.
 - Socket: `$XDG_RUNTIME_DIR/eswm-<wayland-display>.sock` (default `eswm-test`).
 - Logs: `/tmp/eswm.log`, `/tmp/eswm-panic.log`.
 
+## Configuration
+
+Session autostart is read from `$XDG_CONFIG_HOME/eswm/config.json`
+(fallback `~/.config/eswm/config.json`). If the file is missing or invalid,
+eswm falls back to the hardcoded startup (random wallpaper via awww + fuzzel).
+
+Format — see `config.example.json`:
+
+```json
+{
+  "autostart": [
+    "awww-daemon",
+    "fuzzel",
+    "awww img /home/user/Pictures/Wallpapers/wall.jpg"
+  ]
+}
+```
+
+Each entry is whitespace-split into program + args and spawned on eswm's
+Wayland socket (detached, `TERMINAL=kitty`, logs to `/tmp/<name>-spawn.log`).
+`es.dsp.exec_cmd` from the Lua API spawns commands the same way.
+
 ## Build
 
 ```

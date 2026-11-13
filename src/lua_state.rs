@@ -52,9 +52,12 @@ pub fn register_api(lua: &Lua, _snapshot: Arc<std::sync::Mutex<crate::ipc::Snaps
     })?;
     let dsp_table = lua.create_table()?;
     dsp_table.set("global", dsp_global)?;
-    // Set exec_cmd on dsp_table BEFORE borrowing for es.set
+    // es.dsp.exec_cmd("program arg1 arg2") -> spawns the command on eswm's socket
     let dsp_exec_cmd = lua.create_function(move |_, cmd: String| -> Result<(), mlua::Error> {
-        let _ = cmd; // TODO: send CompCmd::Dispatch
+        let (program, args) = crate::parse_cmd(&cmd);
+        if !program.is_empty() {
+            crate::spawn_on_socket(program, &args);
+        }
         Ok(())
     })?;
     dsp_table.set("exec_cmd", dsp_exec_cmd)?;

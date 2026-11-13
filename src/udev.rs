@@ -479,14 +479,33 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         Ok(control) => state.control = Some(control),
         Err(err) => tracing::warn!("control socket disabled: {err}"),
     }
+// Read session config for autostart entries; fall back to hardcoded
+// wallpaper + fuzzel when no config file exists.
+let config = crate::load_config();
+if config.autostart.is_empty() {
     crate::start_wallpaper();
     // fuzzel as layer surface on session start (also on Super+Alt+Space)
     crate::spawn_on_socket("fuzzel", &[]);
+} else {
+    for cmd in &config.autostart {
+        let (program, args) = crate::parse_cmd(cmd);
+        crate::spawn_on_socket(program, &args);
+    }
+}
 
 // IPC command channel (hyprctl compat). No Lua here: the DRM path does not
 // initialize the historical Hyprland/Tacit compatibility path.
 let sig = std::env::var("TACIT_COMP_SIG").unwrap_or_else(|_| "eswm".into());
 state.ipc = Some(ipc::Ipc::new(sig));
+
+// Lua config API (es.dsp.exec_cmd, etc.)
+let lua = crate::lua_state::init().unwrap_or_else(|_| mlua::Lua::new());
+let snapshot = state.ipc.as_ref().unwrap().snapshot.clone();
+let cmd_tx = state.ipc.as_ref().unwrap().cmd_tx.clone();
+if let Err(e) = crate::lua_state::register_api(&lua, snapshot, &cmd_tx) {
+    tracing::warn!("Lua API registration failed: {e}");
+}
+state.lua = Some(lua);
 
     let mut clients = Vec::new();
 

@@ -554,6 +554,37 @@ pub fn spawn_terminal() {
     spawn_on_socket("kitty", &[]);
 }
 
+/// Split a command string into program + args (whitespace split).
+pub fn parse_cmd(cmd: &str) -> (&str, Vec<&str>) {
+    let mut parts = cmd.split_whitespace();
+    let program = parts.next().unwrap_or("");
+    let args: Vec<&str> = parts.collect();
+    (program, args)
+}
+
+/// Session config loaded from $XDG_CONFIG_HOME/eswm/config.json
+/// (fallback: ~/.config/eswm/config.json).
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct Config {
+    pub autostart: Vec<String>,
+}
+
+pub fn load_config() -> Config {
+    let config_dir = std::env::var("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            std::env::var("HOME")
+                .map(|h| std::path::PathBuf::from(h).join(".config"))
+                .unwrap_or_default()
+        })
+        .join("eswm");
+    let config_path = config_dir.join("config.json");
+    std::fs::read_to_string(&config_path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
 // Spawn a Wayland client against eswm's socket, detached (own process group so
 // VT signals don't hit it). Stdout/stderr go to <name>-spawn.log in /tmp.
 pub fn spawn_on_socket(program: &str, args: &[&str]) {

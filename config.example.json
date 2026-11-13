@@ -1,0 +1,7 @@
+{
+  "autostart": [
+    "awww-daemon",
+    "fuzzel",
+    "awww img /home/user/Pictures/Wallpapers/wall.jpg"
+  ]
+}
