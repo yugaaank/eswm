@@ -164,11 +164,6 @@ pub fn placed_windows(state: &mut State) -> Vec<(WlSurface, i32, i32, wm::Window
                 x -= off.x;
                 y -= off.y;
             }
-            // Clamp the render position so the window stays inside its output
-            // after the xdg geometry offset is subtracted.
-            if let Some(output) = state.wm.output(window.output) {
-                (x, y) = crate::wm::clamp_to_output(x, y, window.target_rect, output);
-            }
             tracing::info!("render window id={id:?} rect={:?} focused={}", window.target_rect, window.focused);
             Some((
                 surface.wl_surface().clone(),
