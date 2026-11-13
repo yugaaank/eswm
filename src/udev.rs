@@ -792,11 +792,12 @@ fn pointer_focus(state: &mut State, pos: Point<f64, Logical>) -> Option<(wl_surf
     let id = id?;
     let toplevel = crate::toplevel_for_window(state, id)?;
     let rect = state.wm.window(id)?.target_rect;
+        let offset = state.wm.window(id)?.xdg_offset;
     Some((
         toplevel.wl_surface().clone(),
         // smithay computes surface-local coords as `event.location - loc`,
         // so this must be the window ORIGIN, not the surface-local point.
-        Point::from((rect.x as f64, rect.y as f64)),
+        Point::from((rect.x as f64 - offset.0 as f64, rect.y as f64 - offset.1 as f64)),
     ))
 }
 
@@ -1653,7 +1654,7 @@ impl State {
         // Cursor first so it renders on top (smithay renders elements top-to-bottom).
         let pointer_location = udev.pointer_location;
         if let Some((buffer, hotspot)) = udev.cursor_buffer.clone() {
-            let pos = pointer_location
+            let pos = (pointer_location - Point::from(hotspot))
                 .to_physical(Scale::from(output.current_scale().fractional_scale()))
                 .to_i32_round();
             // shortcut: cursor buffer import failure just drops the cursor for a frame
@@ -1679,7 +1680,7 @@ impl State {
                 None,
             );
             udev.cursor_buffer = Some((buf.clone(), (img.xhot as f64, img.yhot as f64)));
-            let pos = pointer_location
+            let pos = (pointer_location - Point::from((img.xhot as f64, img.yhot as f64)))
                 .to_physical(Scale::from(output.current_scale().fractional_scale()))
                 .to_i32_round();
             if let Ok(cursor) = MemoryRenderBufferRenderElement::from_buffer(
