@@ -18,13 +18,14 @@ pub fn init() -> Result<Lua, mlua::Error> {
     Ok(lua)
 }
 
-/// A keybinding registered via Lua `es.bind()`.
+/// A keybinding registered via Lua `es.bind()` or `es.bind_cmd()`.
 #[derive(Debug, Clone)]
 pub struct Keybind {
     pub mods: Vec<String>,
     pub key: String,
     pub action: String,
     pub arg: Option<i32>,
+    pub cmd: Option<String>,
 }
 
 /// Parse a keybind string like "Super+Return" into (mods, key).
@@ -61,6 +62,8 @@ pub fn register_api(
     // Register the `es` table with all submodules
     let es = lua.create_table()?;
 
+    let lua_keybinds_cmd = lua_keybinds.clone();
+
     // es.bind(keybind_string, action_string, [arg]) -> registers a keybind
     // Example: es.bind("Super+Return", "spawn_terminal")
     // Example: es.bind("Super+1", "switch_workspace", 1)
@@ -74,11 +77,31 @@ pub fn register_api(
             key,
             action,
             arg,
+            cmd: None,
         };
         lua_keybinds.lock().unwrap().push(kb);
         Ok(())
     })?;
     es.set("bind", bind)?;
+
+    // es.bind_cmd(keybind_string, command_string) -> spawns command on keypress
+    // Example: es.bind_cmd("Super+R", "rofi -show drun")
+    let bind_cmd = lua.create_function(move |_, (keybind, command): (String, String)| -> Result<(), mlua::Error> {
+        let (mods, key) = parse_keybind_string(&keybind);
+        if key.is_empty() {
+            return Err(mlua::Error::RuntimeError("keybind missing key".into()));
+        }
+        let kb = Keybind {
+            mods,
+            key,
+            action: "exec_cmd".into(),
+            arg: None,
+            cmd: Some(command),
+        };
+        lua_keybinds_cmd.lock().unwrap().push(kb);
+        Ok(())
+    })?;
+    es.set("bind_cmd", bind_cmd)?;
 
     // es.define_submap(map_name, keys) -> "ok"
     let define_submap = lua.create_function(move |_, map_name: String| -> Result<(), mlua::Error> {

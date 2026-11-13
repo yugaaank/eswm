@@ -61,6 +61,19 @@ Keys: `return`, `q`, `f`, `m`, `space`, `backspace`, `left`, `right`, `up`,
 The optional `arg` (integer) is used by `switch_workspace`,
 `move_window_to_workspace`, and `change_vt`.
 
+### Run arbitrary commands on keypress
+
+Bind a key to any shell command via `es.bind_cmd("modifiers+key", "command")`:
+
+```lua
+es.bind_cmd("Super+r", "rofi -show drun")
+es.bind_cmd("Super+e", "emacsclient -c")
+```
+
+The command string is whitespace-split into program + args and spawned on
+eswm's Wayland socket (detached, `TERMINAL=kitty`, logs to
+`/tmp/<name>-spawn.log`).
+
 See `config.example.lua` for a complete example.
 
 ## Build

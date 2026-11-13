@@ -1,16 +1,19 @@
 -- eswm Lua configuration (~/.config/eswm/config.lua)
--- Loaded on startup after config.json; defines keybinds via es.bind().
+-- Loaded on startup; defines keybinds and autostart via the `es` Lua API.
 
--- Spawn a terminal on Super+Return
+-- Autostart (spawned on session start)
+es.dsp.exec_cmd("awww-daemon")
+es.dsp.exec_cmd("fuzzel")
+es.dsp.exec_cmd("awww img /home/user/Pictures/Wallpapers/wall.jpg")
+
+-- Keybinds: es.bind("modifiers+key", "action", [arg])
 es.bind("Super+Return", "spawn_terminal")
-
--- Close focused window on Super+Q
 es.bind("Super+q", "close_window")
 
 -- Workspace switching: Super+1..9
 for i = 1, 9 do
-    es.bind("Super+" .. i, "switch_workspace")
-    es.bind("Super+Shift+" .. i, "move_window_to_workspace")
+    es.bind("Super+" .. i, "switch_workspace", i)
+    es.bind("Super+Shift+" .. i, "move_window_to_workspace", i)
 end
 
 -- Focus cycling
@@ -39,9 +42,9 @@ es.bind("Ctrl+Alt+Backspace", "quit")
 
 -- VT switching
 for i = 1, 12 do
-    es.bind("Ctrl+Alt+vt" .. i, "change_vt")
+    es.bind("Ctrl+Alt+vt" .. i, "change_vt", i)
 end
 
--- Autostart via Lua (alternative to config.json autostart)
-es.dsp.exec_cmd("awww-daemon")
-es.dsp.exec_cmd("fuzzel")
+-- Run arbitrary commands on keypress: es.bind_cmd("modifiers+key", "command")
+es.bind_cmd("Super+r", "rofi -show drun")
+es.bind_cmd("Super+e", "emacsclient -c")
