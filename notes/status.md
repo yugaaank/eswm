@@ -60,14 +60,12 @@ es.bind_cmd("Super+r", "rofi -show drun")
 - M2 Hyprland-compatible IPC: complete (historical prototype)
 - M3 Lua configuration API: complete — `es.bind`, `es.bind_cmd`, `es.dsp.exec_cmd`
 - M4 DRM/libseat backend: complete — primary path, TTY startup, outputs, layers, pause/resume, cursor
-- M5 window management: complete — master-stack tiling, floating, workspaces, focus cycle, click-to-focus verified on DRM
+- M5 window management: complete — master-stack tiling, floating, workspaces, focus cycle, click-to-focus verified on DRM, visible focus borders (winit + DRM), gaps, window rules (app_id → workspace/mode)
 - Config: complete — Lua-only autostart and keybinds
 - Animations: not implemented
 
 ## Open defects / known limits
 
-- No visible focus borders on winit dev backend (DRM has them)
-- No window rules (class → workspace/float), no gaps
 - Multi-output workspaces: second connector gets no workspaces of its own
 - Click-to-focus on DRM: verified working 2026-11-12
 - Tiling-to-floating focus change bug (parked): after Super+Space on focused window, Super+arrows may not change focus to tiled windows

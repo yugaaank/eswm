@@ -75,6 +75,18 @@ pub struct WindowManager {
     windows: BTreeMap<WindowId, Window>,
     layout_mode: LayoutMode,
     cascade_count: u32,
+    /// Inner gap (px) between tiled windows and the output edge.
+    gap: u32,
+    /// App-id/class → workspace/mode rules, matched at window creation.
+    rules: Vec<WindowRule>,
+}
+
+/// A window rule: match a window's app_id and assign a workspace and/or mode.
+#[derive(Clone, Debug)]
+pub struct WindowRule {
+    pub app_id: String,
+    pub workspace: Option<WorkspaceId>,
+    pub mode: Option<WindowMode>,
 }
 
 impl WindowManager {
@@ -286,6 +298,28 @@ impl WindowManager {
         self.layout_mode
     }
 
+    pub fn set_gap(&mut self, gap: u32) {
+        self.gap = gap;
+    }
+
+    pub fn gap(&self) -> u32 {
+        self.gap
+    }
+
+    pub fn add_window_rule(&mut self, rule: WindowRule) {
+        self.rules.push(rule);
+    }
+
+    /// Match a window's app_id against configured rules; return (workspace, mode).
+    fn match_rule(&self, app_id: &str) -> (Option<WorkspaceId>, Option<WindowMode>) {
+        for rule in &self.rules {
+            if rule.app_id == app_id {
+                return (rule.workspace, rule.mode);
+            }
+        }
+        (None, None)
+    }
+
     pub fn toggle_layout_mode(&mut self) -> LayoutMode {
         self.layout_mode = match self.layout_mode {
             LayoutMode::Hyprland => LayoutMode::Windows,
@@ -369,11 +403,21 @@ impl WindowManager {
         app_id: impl Into<String>,
         title: impl Into<String>,
     ) -> Option<WindowId> {
-        let workspace = self.outputs.get(&output)?.active_workspace;
-        let mode = match self.layout_mode {
+        let app_id_str = app_id.into();
+        // Apply window rules before choosing workspace/mode.
+        let (rule_ws, rule_mode) = self.match_rule(&app_id_str);
+        let workspace = rule_ws
+            .and_then(|ws| self.workspace(ws).map(|_| ws))
+            .unwrap_or_else(|| {
+                self.outputs
+                    .get(&output)
+                    .map(|o| o.active_workspace)
+                    .unwrap_or(1)
+            });
+        let mode = rule_mode.unwrap_or_else(|| match self.layout_mode {
             LayoutMode::Hyprland => WindowMode::Tiled,
             LayoutMode::Windows => WindowMode::Floating,
-        };
+        });
         let id = self.next_window;
         self.next_window += 1;
         let geometry = self.outputs.get(&output)?.geometry;
@@ -385,7 +429,7 @@ impl WindowManager {
             id,
             Window {
                 id,
-                app_id: app_id.into(),
+                app_id: app_id_str,
                 title: title.into(),
                 output,
                 workspace,
@@ -623,36 +667,50 @@ impl WindowManager {
         if tiled.is_empty() {
             return;
         }
-        let master_width = if tiled.len() == 1 {
-            output_state.geometry.width
-        } else {
-            ((output_state.geometry.width as u64 * 3) / 5) as u32
+        let gap = self.gap;
+        // Inner geometry inset by gap on all sides so gaps/borders show.
+        let inner = Rect {
+            x: output_state.geometry.x + gap as i32,
+            y: output_state.geometry.y + gap as i32,
+            width: output_state.geometry.width.saturating_sub(2 * gap),
+            height: output_state.geometry.height.saturating_sub(2 * gap),
         };
-        let stack_width = output_state.geometry.width.saturating_sub(master_width);
+        let master_width = if tiled.len() == 1 {
+            inner.width
+        } else {
+            ((inner.width as u64 * 3) / 5) as u32
+        };
+        let stack_width = inner.width.saturating_sub(master_width);
         self.set_target_rect(
             tiled[0],
             Rect {
+                x: inner.x,
+                y: inner.y,
                 width: master_width,
-                ..output_state.geometry
+                height: inner.height,
             },
         );
         // floating windows keep their own geometry; the tiler ignores them
 
         let stack = &tiled[1..];
-        for (index, id) in stack.iter().enumerate() {
-            let top =
-                (output_state.geometry.height as u64 * index as u64 / stack.len() as u64) as u32;
-            let bottom = (output_state.geometry.height as u64 * (index as u64 + 1)
-                / stack.len() as u64) as u32;
-            self.set_target_rect(
-                *id,
-                Rect {
-                    x: output_state.geometry.x + master_width as i32,
-                    y: output_state.geometry.y + top as i32,
-                    width: stack_width,
-                    height: bottom.saturating_sub(top),
-                },
-            );
+        if !stack.is_empty() {
+            let stack_x = inner.x + master_width as i32;
+            // Split inner height across stack windows with a gap between each.
+            let stack_h_inner = inner.height.saturating_sub((stack.len() as u32 + 1) * gap);
+            let cell_h = stack_h_inner / stack.len() as u32;
+            for (index, id) in stack.iter().enumerate() {
+                let top =
+                    inner.y + gap as i32 + (index as u32 * (cell_h + gap)) as i32;
+                self.set_target_rect(
+                    *id,
+                    Rect {
+                        x: stack_x,
+                        y: top,
+                        width: stack_width,
+                        height: cell_h,
+                    },
+                );
+            }
         }
     }
 
@@ -720,7 +778,7 @@ impl WindowManager {
 
 #[cfg(test)]
 mod tests {
-    use super::{Rect, WindowManager, WindowMode};
+    use super::{Rect, WindowManager, WindowMode, WindowRule};
 
     fn manager() -> (WindowManager, u64) {
         let mut manager = WindowManager::new();
@@ -858,6 +916,66 @@ mod tests {
         assert_eq!(manager.focus_workspace_relative(1), Some(2));
         assert_eq!(manager.focus_workspace_relative(1), Some(1));
         assert_eq!(manager.focus_workspace_relative(-1), Some(2));
+    }
+
+    #[test]
+    fn gap_insets_tiled_windows() {
+        let (mut manager, output) = manager();
+        manager.set_gap(10);
+        let first = manager.add_window(output, "kitty", "one").unwrap();
+        let second = manager.add_window(output, "kitty", "two").unwrap();
+
+        // Master should be inset by gap from output edge.
+        let m = manager.window(first).unwrap().target_rect;
+        assert_eq!(m.x, 10);
+        assert_eq!(m.y, 10);
+        assert_eq!(m.width, 1140); // inner.width = 1900, 1900*3/5 = 1140
+        assert_eq!(m.height, 1060); // 1080 - 20
+
+        // Stack window should be to the right, inset.
+        let s = manager.window(second).unwrap().target_rect;
+        assert_eq!(s.x, 10 + 1140); // inner.x + master_width
+        assert_eq!(s.y, 20); // inner.y + gap
+        assert_eq!(s.width, 760); // 1900 - 1140
+        assert_eq!(s.height, 1040); // (1060 - 2*10) / 1 = 1040
+    }
+
+    #[test]
+    fn window_rule_assigns_workspace() {
+        let (mut manager, output) = manager();
+        manager.add_window_rule(WindowRule {
+            app_id: "kitty".into(),
+            workspace: Some(2),
+            mode: None,
+        });
+        assert!(manager.add_workspace(output, 2, "2"));
+        let id = manager.add_window(output, "kitty", "one").unwrap();
+        assert_eq!(manager.window(id).unwrap().workspace, 2);
+    }
+
+    #[test]
+    fn window_rule_assigns_mode() {
+        let (mut manager, output) = manager();
+        manager.add_window_rule(WindowRule {
+            app_id: "fuzzel".into(),
+            workspace: None,
+            mode: Some(WindowMode::Floating),
+        });
+        let id = manager.add_window(output, "fuzzel", "one").unwrap();
+        assert_eq!(manager.window(id).unwrap().mode, WindowMode::Floating);
+    }
+
+    #[test]
+    fn window_rule_no_match_keeps_default() {
+        let (mut manager, output) = manager();
+        manager.add_window_rule(WindowRule {
+            app_id: "other".into(),
+            workspace: Some(2),
+            mode: Some(WindowMode::Floating),
+        });
+        let id = manager.add_window(output, "kitty", "one").unwrap();
+        assert_eq!(manager.window(id).unwrap().workspace, 1); // default active workspace
+        assert_eq!(manager.window(id).unwrap().mode, WindowMode::Tiled); // default Hyprland mode
     }
 
 }

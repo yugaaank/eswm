@@ -1721,7 +1721,38 @@ impl State {
         }
         elements.extend(layer_elements_above);
 
-        for (ws, x, y, id, _focused, _rect) in &placed {
+        // M5/P2: visible focus borders — green for focused, gray for unfocused.
+        const BORDER_PX: i32 = 2;
+        let border_focused = [0u8, 200, 0, 255];
+        let border_unfocused = [80u8, 80, 80, 255];
+        for (ws, x, y, _, focused, rect) in &placed {
+            let color = if *focused { &border_focused } else { &border_unfocused };
+            let bw = rect.width.saturating_add(2 * BORDER_PX as u32);
+            let bh = rect.height.saturating_add(2 * BORDER_PX as u32);
+            let mut pixels = Vec::with_capacity((bw * bh * 4) as usize);
+            for _ in 0..(bw * bh) {
+                pixels.extend_from_slice(color);
+            }
+            let buf = MemoryRenderBuffer::from_slice(
+                &pixels,
+                Fourcc::Argb8888,
+                (bw as i32, bh as i32),
+                1,
+                Transform::Normal,
+                None,
+            );
+            let pos = Point::from(((*x - BORDER_PX) as f64, (*y - BORDER_PX) as f64));
+            if let Ok(elem) = MemoryRenderBufferRenderElement::from_buffer(
+                &mut renderer,
+                pos,
+                &buf,
+                None,
+                None,
+                None,
+                Kind::Unspecified,
+            ) {
+                elements.push(EswmRenderElements::Cursor(elem));
+            }
             let tree_elements = render_elements_from_surface_tree(
                 &mut renderer,
                 ws,

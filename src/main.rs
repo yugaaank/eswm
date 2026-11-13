@@ -15,10 +15,12 @@ use mlua::Lua;
 
 use smithay::{
     backend::{
+        allocator::Fourcc,
         renderer::{
             element::{
+                memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement},
                 surface::{render_elements_from_surface_tree, WaylandSurfaceRenderElement},
-                Kind,
+                Kind, RenderElementStates,
             },
             gles::GlesRenderer,
             utils::{draw_render_elements, on_commit_buffer_handler},
@@ -37,7 +39,7 @@ use smithay::{
         calloop::LoopHandle,
         wayland_server::{protocol::wl_seat, Display, DisplayHandle, ListeningSocket},
     },
-    utils::{Rectangle, Serial, Transform},
+    utils::{Point, Logical, Rectangle, Serial, Transform},
     wayland::{
         output::{OutputHandler, OutputManagerState},
         buffer::BufferHandler,
@@ -725,7 +727,43 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
                     )
                 })
                 .collect::<Vec<WaylandSurfaceRenderElement<GlesRenderer>>>();
-            tracing::debug!("winit frame: {} placed, {} toplevel elements", placed.len(), toplevel_elements.len());
+            // M5/P2: visible focus border around the focused window (dev winit backend;
+            // DRM path draws borders via border_focused/border_unfocused buffers).
+            const BORDER_PX: i32 = 2;
+            let border_color = [0u8, 200, 0, 255]; // green
+            let mut border_elements: Vec<MemoryRenderBufferRenderElement<GlesRenderer>> =
+                Vec::new();
+            for (_, x, y, _, focused, rect) in &placed {
+                if !*focused {
+                    continue;
+                }
+                let bw = rect.width.saturating_add(2 * BORDER_PX as u32);
+                let bh = rect.height.saturating_add(2 * BORDER_PX as u32);
+                let mut pixels = Vec::with_capacity((bw * bh * 4) as usize);
+                for _ in 0..(bw * bh) {
+                    pixels.extend_from_slice(&border_color);
+                }
+                let buf = MemoryRenderBuffer::from_slice(
+                    &pixels,
+                    Fourcc::Argb8888,
+                    (bw as i32, bh as i32),
+                    1,
+                    Transform::Normal,
+                    None,
+                );
+                let pos = Point::from(((*x - BORDER_PX) as f64, (*y - BORDER_PX) as f64));
+                if let Ok(elem) = MemoryRenderBufferRenderElement::from_buffer(
+                    renderer,
+                    pos,
+                    &buf,
+                    None,
+                    None,
+                    None,
+                    Kind::Unspecified,
+                ) {
+                    border_elements.push(elem);
+                }
+            }
             let layer_elements = state
                 .layer_shell_state
                 .layer_surfaces()
@@ -747,6 +785,7 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
                 .render(&mut framebuffer, size, Transform::Flipped180)
                 .unwrap();
             frame.clear(Color32F::new(0.1, 0.0, 0.0, 1.0), &[damage]).unwrap();
+            draw_render_elements(&mut frame, 1.0, &border_elements, &[damage]).unwrap();
             draw_render_elements(&mut frame, 1.0, &toplevel_elements, &[damage]).unwrap();
             draw_render_elements(&mut frame, 1.0, &layer_elements, &[damage]).unwrap();
             // We rely on the nested compositor to do the sync for us
