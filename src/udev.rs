@@ -561,12 +561,175 @@ fn now(state: &State) -> u32 {
     state.udev.as_ref().unwrap().start.elapsed().as_millis() as u32
 }
 
+// Parse a list of modifier strings ("logo", "ctrl", "alt", "shift") into a ModifiersState.
+fn parse_mods(mods: &[String]) -> ModifiersState {
+    let mut m = ModifiersState::default();
+    for mod_str in mods {
+        match mod_str.to_lowercase().as_str() {
+            "logo" => m.logo = true,
+            "ctrl" => m.ctrl = true,
+            "alt" => m.alt = true,
+            "shift" => m.shift = true,
+            _ => {}
+        }
+    }
+    m
+}
+
+/// Map a key name string to its xkb keysym u32 value.
+fn parse_key(name: &str) -> Option<u32> {
+    use xkbcommon::xkb::keysyms;
+    let name = name.to_lowercase();
+    match name.as_str() {
+        "return" | "enter" => Some(keysyms::KEY_Return as u32),
+        "q" => Some(keysyms::KEY_q as u32),
+        "f" => Some(keysyms::KEY_f as u32),
+        "m" => Some(keysyms::KEY_m as u32),
+        "space" => Some(keysyms::KEY_space as u32),
+        "backspace" => Some(keysyms::KEY_BackSpace as u32),
+        "left" => Some(keysyms::KEY_Left as u32),
+        "right" => Some(keysyms::KEY_Right as u32),
+        "up" => Some(keysyms::KEY_Up as u32),
+        "down" => Some(keysyms::KEY_Down as u32),
+        "1" => Some(keysyms::KEY_1 as u32),
+        "2" => Some(keysyms::KEY_2 as u32),
+        "3" => Some(keysyms::KEY_3 as u32),
+        "4" => Some(keysyms::KEY_4 as u32),
+        "5" => Some(keysyms::KEY_5 as u32),
+        "6" => Some(keysyms::KEY_6 as u32),
+        "7" => Some(keysyms::KEY_7 as u32),
+        "8" => Some(keysyms::KEY_8 as u32),
+        "9" => Some(keysyms::KEY_9 as u32),
+        _ => None,
+    }
+}
+
+/// Return the first config keybind whose mods and key match the current event.
+fn check_config_keybind<'a>(
+    config: &'a crate::Config,
+    mods: &ModifiersState,
+    raw: u32,
+) -> Option<&'a crate::Keybind> {
+    config.keybinds.iter().find(|kb| {
+        let kb_mods = parse_mods(&kb.mods);
+        let mods_match = kb_mods.logo == mods.logo
+            && kb_mods.ctrl == mods.ctrl
+            && kb_mods.alt == mods.alt
+            && kb_mods.shift == mods.shift;
+        let key_match = parse_key(&kb.key).map_or(false, |k| k == raw);
+        mods_match && key_match
+    })
+}
+
+/// Execute a single config keybind action.
+fn execute_config_keybind(state: &mut State, kb: &crate::Keybind) -> FilterResult<()> {
+    match kb.action.as_str() {
+        "spawn_terminal" => crate::spawn_terminal(),
+        "spawn_fuzzel" => crate::spawn_on_socket("fuzzel", &[]),
+        "close_window" => {
+            if let Some(id) = state.wm.focused_id() {
+                if let Some(toplevel) = crate::toplevel_for_window(state, id) {
+                    toplevel.send_close();
+                }
+            }
+        }
+        "switch_workspace" => {
+            if let Some(ws) = kb.arg {
+                switch_workspace(state, ws);
+            }
+        }
+        "move_window_to_workspace" => {
+            if let Some(ws) = kb.arg {
+                if let Some(id) = state.wm.focused_id() {
+                    state.wm.move_window_to_workspace(id, ws);
+                    crate::apply_layout(state);
+                }
+            }
+        }
+        "cycle_focus_prev" => {
+            if state.wm.cycle_focus(-1) {
+                crate::apply_layout(state);
+            }
+        }
+        "cycle_focus_next" => {
+            if state.wm.cycle_focus(1) {
+                crate::apply_layout(state);
+            }
+        }
+        "swap_focused_prev" => {
+            if state.wm.swap_focused(-1) {
+                crate::apply_layout(state);
+            }
+        }
+        "swap_focused_next" => {
+            if state.wm.swap_focused(1) {
+                crate::apply_layout(state);
+            }
+        }
+        "focus_workspace_prev" => {
+            if state.wm.focus_workspace_relative(-1).is_some() {
+                crate::apply_layout(state);
+            }
+        }
+        "focus_workspace_next" => {
+            if state.wm.focus_workspace_relative(1).is_some() {
+                crate::apply_layout(state);
+            }
+        }
+        "toggle_fullscreen" => {
+            if let Some(id) = state.wm.focused_id() {
+                state.wm.toggle_fullscreen(id);
+                crate::apply_layout(state);
+            }
+        }
+        "toggle_maximized" => {
+            if let Some(id) = state.wm.focused_id() {
+                state.wm.toggle_maximized(id);
+                crate::apply_layout(state);
+            }
+        }
+        "toggle_window_mode" => {
+            if let Some(id) = state.wm.focused_id() {
+                state.wm.toggle_window_mode(id);
+            }
+            crate::apply_layout(state);
+        }
+        "toggle_layout_mode" => {
+            state.wm.toggle_layout_mode();
+            crate::apply_layout(state);
+        }
+        "quit" => {
+            info!("quit requested via keybind");
+            state
+                .udev
+                .as_ref()
+                .unwrap()
+                .quit
+                .store(true, Ordering::SeqCst);
+        }
+        _ => {
+            warn!("unknown keybind action: {}", kb.action);
+            return FilterResult::Forward;
+        }
+    }
+    FilterResult::Intercept(())
+}
+
 // Keybinds (M5 step 4): Super+Return terminal, Super+Q close, Super+1..9 workspaces,
 // Ctrl+Alt+Backspace quit, Ctrl+Alt+F1-12 VT switch. Everything else forwards to clients.
+// Configurable keybinds from $XDG_CONFIG_HOME/eswm/config.json are checked first;
+// hardcoded defaults apply when no config keybind matches.
 fn process_shortcut(state: &mut State, mods: &ModifiersState, keysym: KeysymHandle) -> FilterResult<()> {
     use xkbcommon::xkb::keysyms;
     crate::prune_dead_windows(state);
     let raw = u32::from(keysym.modified_sym());
+
+    // Config keybinds take precedence over hardcoded defaults.
+    // Clone the matched keybind to avoid holding an immutable borrow of state.config
+    // while mutably borrowing state in execute_config_keybind.
+    if let Some(kb) = check_config_keybind(&state.config, mods, raw).cloned() {
+        return execute_config_keybind(state, &kb);
+    }
 
     if mods.logo {
         let plain = !mods.ctrl && !mods.alt && !mods.shift;

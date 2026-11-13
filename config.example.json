@@ -3,5 +3,23 @@
     "awww-daemon",
     "fuzzel",
     "awww img /home/user/Pictures/Wallpapers/wall.jpg"
+  ],
+  "keybinds": [
+    { "mods": ["logo"], "key": "Return", "action": "spawn_terminal" },
+    { "mods": ["logo"], "key": "q", "action": "close_window" },
+    { "mods": ["logo"], "key": "1", "action": "switch_workspace", "arg": 1 },
+    { "mods": ["logo", "shift"], "key": "1", "action": "move_window_to_workspace", "arg": 1 },
+    { "mods": ["logo"], "key": "left", "action": "cycle_focus_prev" },
+    { "mods": ["logo"], "key": "right", "action": "cycle_focus_next" },
+    { "mods": ["logo", "ctrl"], "key": "left", "action": "swap_focused_prev" },
+    { "mods": ["logo", "ctrl"], "key": "right", "action": "swap_focused_next" },
+    { "mods": ["logo", "alt"], "key": "left", "action": "focus_workspace_prev" },
+    { "mods": ["logo", "alt"], "key": "right", "action": "focus_workspace_next" },
+    { "mods": ["logo"], "key": "f", "action": "toggle_fullscreen" },
+    { "mods": ["logo"], "key": "m", "action": "toggle_maximized" },
+    { "mods": ["logo"], "key": "space", "action": "toggle_window_mode" },
+    { "mods": ["logo", "shift"], "key": "space", "action": "toggle_layout_mode" },
+    { "mods": ["logo", "alt"], "key": "space", "action": "spawn_fuzzel" },
+    { "mods": ["ctrl", "alt"], "key": "backspace", "action": "quit" }
   ]
 }

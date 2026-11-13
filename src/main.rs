@@ -324,6 +324,7 @@ struct State {
     seat: Seat<Self>,
     output: Output,
     pub wm: wm::WindowManager,
+    pub config: Config,
     pub dh: DisplayHandle,
     // M2: IPC-backed state; snapshot is rebuilt from the shell state each loop iteration
     ipc: Option<Ipc>,
@@ -396,6 +397,7 @@ fn new_state(
     let mut seat_state = SeatState::new();
     let seat = seat_state.new_wl_seat(dh, seat_name);
     let mut wm = wm::WindowManager::new();
+    let config = crate::load_config();
 
     // In nested mode the winit window masquerades as one virtual output; the DRM
     // backend attaches real outputs per connector instead.
@@ -448,6 +450,7 @@ fn new_state(
         seat,
         output,
         wm,
+        config,
         dh: dh.clone(),
         ipc: None,
         lua: None,
@@ -562,11 +565,21 @@ pub fn parse_cmd(cmd: &str) -> (&str, Vec<&str>) {
     (program, args)
 }
 
+/// A configurable keybinding: modifier keys + key → action.
+#[derive(Debug, Default, serde::Deserialize, Clone)]
+pub struct Keybind {
+    pub mods: Vec<String>,
+    pub key: String,
+    pub action: String,
+    pub arg: Option<i32>,
+}
+
 /// Session config loaded from $XDG_CONFIG_HOME/eswm/config.json
 /// (fallback: ~/.config/eswm/config.json).
 #[derive(Debug, Default, serde::Deserialize)]
 pub struct Config {
     pub autostart: Vec<String>,
+    pub keybinds: Vec<Keybind>,
 }
 
 pub fn load_config() -> Config {
