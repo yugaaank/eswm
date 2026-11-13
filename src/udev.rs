@@ -479,18 +479,13 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         Ok(control) => state.control = Some(control),
         Err(err) => tracing::warn!("control socket disabled: {err}"),
     }
-// Read session config for autostart entries; fall back to hardcoded
-// wallpaper + fuzzel when no config file exists.
+// Spawn session autostart entries from $XDG_CONFIG_HOME/eswm/config.json.
+// Entries are whitespace-split into program + args and spawned on eswm's
+// socket. Empty config means nothing autostarts.
 let config = crate::load_config();
-if config.autostart.is_empty() {
-    crate::start_wallpaper();
-    // fuzzel as layer surface on session start (also on Super+Alt+Space)
-    crate::spawn_on_socket("fuzzel", &[]);
-} else {
-    for cmd in &config.autostart {
-        let (program, args) = crate::parse_cmd(cmd);
-        crate::spawn_on_socket(program, &args);
-    }
+for cmd in &config.autostart {
+    let (program, args) = crate::parse_cmd(cmd);
+    crate::spawn_on_socket(program, &args);
 }
 
 // IPC command channel (hyprctl compat). No Lua here: the DRM path does not

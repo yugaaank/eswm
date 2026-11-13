@@ -21,7 +21,7 @@ to run Tacit without depending on Hyprland.
 
 Session autostart is read from `$XDG_CONFIG_HOME/eswm/config.json`
 (fallback `~/.config/eswm/config.json`). If the file is missing or invalid,
-eswm falls back to the hardcoded startup (random wallpaper via awww + fuzzel).
+nothing autostarts — configure your entries in the config file.
 
 Format — see `config.example.json`:
 

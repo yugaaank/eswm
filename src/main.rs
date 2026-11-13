@@ -627,50 +627,6 @@ pub fn spawn_on_socket(program: &str, args: &[&str]) {
     }
 }
 
-// Pick a random wallpaper from ~/Pictures/Wallpapers and show it via awww.
-// Starts awww-daemon first (idempotent: `img` fails harmlessly if it dies again).
-pub fn start_wallpaper() {
-    let dir = match std::env::var("HOME") {
-        Ok(home) => std::path::PathBuf::from(home).join("Pictures/Wallpapers"),
-        Err(_) => return,
-    };
-    // coarse-random pick; not cryptographic, just variety per session
-    let seed = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_nanos() as usize ^ (std::process::id() as usize))
-        .unwrap_or(0);
-    let Some(entry) = std::fs::read_dir(&dir)
-        .ok()
-        .and_then(|rd| {
-            let files: Vec<_> = rd
-                .filter_map(|e| e.ok().map(|e| e.path()))
-                .filter(|p| p.is_file())
-                .collect();
-            if files.is_empty() { None } else { Some(files[seed % files.len()].clone()) }
-        })
-    else {
-        tracing::warn!("no wallpaper found in {}", dir.display());
-        return;
-    };
-    let path = entry;
-    let Some(path_str) = path.to_str().map(|p| p.to_owned()) else { return };
-    tracing::info!("wallpaper: {}", path_str);
-    spawn_on_socket("awww-daemon", &[]);
-    std::thread::spawn(move || {
-        // wait for the daemon's socket to appear, then set the image
-        let sock = std::env::var("XDG_RUNTIME_DIR").ok().map(|rd| {
-            std::path::PathBuf::from(rd).join(format!("{}-awww-daemon.sock", socket_name()))
-        });
-        for _ in 0..50 {
-            if sock.as_ref().is_some_and(|s| s.exists()) {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-        spawn_on_socket("awww", &["img", &path_str]);
-    });
-}
-
 // Development compatibility path; called only by the explicit Winit backend.
 fn drain_ipc_and_refresh(state: &mut State, size: (i32, i32)) {
     let ipc_cmd_rx = state.ipc.as_ref().map(|ipc| ipc.cmd_rx.clone());
