@@ -4,12 +4,13 @@
 
 - **Branch:** `main` (only branch; `feature/standalone-tacit` merged and deleted)
 - **Remote:** `origin` = `https://github.com/yugaaank/eswm.git`, `main` pushed and up to date
-- **HEAD:** `1d1a476` feat: keybinds come only from config.json, no defaults in code
+- **HEAD:** `7ebbde7` build: drop stale /tmp/opencode/ldi libdisplay-info workaround
+- **Last feature commit:** `99aa59e` feat: es.bind_cmd() to run arbitrary commands on keypress
 
 ## Build / run
 
 - `cargo build` — green, 36 pre-existing warnings, no new ones
-- `cargo test` — 16 unit + 4 integration tests pass
+- `cargo test` — 19/19 pass (16 unit + 3 integration: control, globals, ipc)
 - Native DRM is the default backend: `./target/debug/eswm` from a TTY (grabs the VT; Ctrl+Alt+F1/F3 to leave/return)
 - Nested dev backend: `TACIT_COMP_BACKEND=winit ./target/debug/eswm` then `WAYLAND_DISPLAY=eswm-dev kitty`
 - Wayland socket: `$XDG_RUNTIME_DIR/eswm-<wayland-display>.sock` (default `eswm-test`)
