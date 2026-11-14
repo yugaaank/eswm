@@ -792,12 +792,11 @@ fn pointer_focus(state: &mut State, pos: Point<f64, Logical>) -> Option<(wl_surf
     let id = id?;
     let toplevel = crate::toplevel_for_window(state, id)?;
     let rect = state.wm.window(id)?.target_rect;
-        let offset = state.wm.window(id)?.xdg_offset;
     Some((
         toplevel.wl_surface().clone(),
         // smithay computes surface-local coords as `event.location - loc`,
-        // so this must be the window ORIGIN, not the surface-local point.
-        Point::from((rect.x as f64 - offset.0 as f64, rect.y as f64 - offset.1 as f64)),
+        // so this must be the window origin, which is where we now render.
+        Point::from((rect.x as f64, rect.y as f64)),
     ))
 }
 

@@ -418,8 +418,8 @@ impl WindowManager {
             }
             // Hit test against target_rect expanded by border size (border is part of window)
             let r = Rect {
-                x: window.target_rect.x - window.xdg_offset.0 - bs,
-                y: window.target_rect.y - window.xdg_offset.1 - bs,
+                x: window.target_rect.x - bs,
+                y: window.target_rect.y - bs,
                 width: window.target_rect.width.saturating_add(2 * border_size),
                 height: window.target_rect.height.saturating_add(2 * border_size),
             };

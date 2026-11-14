@@ -156,30 +156,17 @@ pub fn placed_windows(state: &mut State) -> Vec<(WlSurface, i32, i32, wm::Window
                 );
                 return None;
             }
-            // Clone window fields before mutable borrow for set_xdg_offset
             let target_rect = window.target_rect;
             let focused = window.focused;
-            let (mut x, mut y) = (target_rect.x, target_rect.y);
-            // Clients (kitty, GTK/zen) set xdg window geometry with an offset into
-            // their own buffer (shadows/padding); align the buffer so the logical
-            // window lands on the tiling rect instead of shifted by that offset.
-            if let Some(off) = with_states(surface.wl_surface(), |states| {
-                states
-                    .cached_state
-                    .get::<SurfaceCachedState>()
-                    .current()
-                    .geometry
-                    .map(|geo| geo.loc)
-            }) {
-                x -= off.x;
-                y -= off.y;
-                state.wm.set_xdg_offset(id, (off.x, off.y));
-            }
+            // Render the surface buffer straight into the tiling rect so content
+            // fills the border space. With server-side decoration on, clients draw
+            // content edge-to-edge; an xdg geometry offset (set for CSD shadows/
+            // padding) only shifts content away from the border, leaving a gap.
             tracing::info!("render window id={id:?} rect={:?} focused={}", target_rect, focused);
             Some((
                 surface.wl_surface().clone(),
-                x,
-                y,
+                target_rect.x,
+                target_rect.y,
                 id,
                 focused,
                 target_rect,
