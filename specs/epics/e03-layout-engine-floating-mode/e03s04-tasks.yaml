@@ -1,0 +1,30 @@
+story_id: e03s04
+title: Floating corner snap + drag-to-top maximize
+status: failing
+bcps: 5
+delta: ADDED
+tasks:
+  - id: e03s04t1
+    description: Implement quarter-corner snap and top-edge maximize in wm.rs snap logic
+    verify: cargo test --bin eswm wm::tests
+    risk: P1
+    status: failing
+    allure:
+      severity: high
+      categories: ["unit", "wm"]
+  - id: e03s04t2
+    description: Wire corner snap + top maximize into pointer drag in udev.rs
+    verify: cargo test --bin eswm wm::tests
+    risk: P1
+    status: failing
+    allure:
+      severity: high
+      categories: ["unit", "wm"]
+  - id: e03s04t3
+    description: Unit test: dragging to top edge maximizes; dragging to corner snaps quarter
+    verify: cargo test --bin eswm snap_corner
+    risk: P2
+    status: failing
+    allure:
+      severity: normal
+      categories: ["unit", "wm"]

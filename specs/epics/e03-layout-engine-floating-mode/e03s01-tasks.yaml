@@ -1,0 +1,38 @@
+story_id: e03s01
+title: Per-output layout mode + Super+` toggle
+status: failing
+bcps: 3
+delta: ADDED
+tasks:
+  - id: e03s01t1
+    description: Add LayoutMode field to Output struct in wm.rs; default to tiling
+    verify: cargo test --bin eswm wm::tests
+    risk: P1
+    status: failing
+    allure:
+      severity: high
+      categories: ["unit", "wm"]
+  - id: e03s01t2
+    description: Add "toggle_layout_mode" keybind dispatch in udev.rs that cycles primary output's LayoutMode
+    verify: cargo test --bin eswm wm::tests
+    risk: P1
+    status: failing
+    allure:
+      severity: high
+      categories: ["unit", "wm"]
+  - id: e03s01t3
+    description: Unit test: toggle_layout_mode switches output between tiling and floating
+    verify: cargo test --bin eswm layout_toggle
+    risk: P2
+    status: failing
+    allure:
+      severity: normal
+      categories: ["unit", "wm"]
+  - id: e03s01t4
+    description: Update config.default.lua: Super+Space reserved (no launcher impl), Super+` = toggle_layout_mode
+    verify: test -f config.default.lua
+    risk: P3
+    status: failing
+    allure:
+      severity: minor
+      categories: ["config", "template"]

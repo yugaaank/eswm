@@ -1,0 +1,22 @@
+story_id: e03s06
+title: Focus border in DRM render path
+status: failing
+bcps: 5
+delta: ADDED
+tasks:
+  - id: e03s06t1
+    description: Draw focused-window border in udev.rs DRM render loop (replaces winit green hack)
+    verify: cargo build && cargo test --bin eswm
+    risk: P2
+    status: failing
+    allure:
+      severity: normal
+      categories: ["integration", "drm"]
+  - id: e03s06t2
+    description: Unit test: focused window has non-zero border rect computed
+    verify: cargo test --bin eswm wm::tests
+    risk: P2
+    status: failing
+    allure:
+      severity: normal
+      categories: ["unit", "wm"]

@@ -1,0 +1,30 @@
+story_id: e03s05
+title: Snap restore on drag-away
+status: failing
+bcps: 3
+delta: ADDED
+tasks:
+  - id: e03s05t1
+    description: Store pre-snap rect on Window when snapping occurs
+    verify: cargo test --bin eswm wm::tests
+    risk: P1
+    status: failing
+    allure:
+      severity: high
+      categories: ["unit", "wm"]
+  - id: e03s05t2
+    description: Wire drag-away restore in udev.rs: when snapped window dragged past threshold, restore pre-snap rect
+    verify: cargo test --bin eswm wm::tests
+    risk: P1
+    status: failing
+    allure:
+      severity: high
+      categories: ["unit", "wm"]
+  - id: e03s05t3
+    description: Unit test: snapped window dragged away restores original rect
+    verify: cargo test --bin eswm snap_restore
+    risk: P2
+    status: failing
+    allure:
+      severity: normal
+      categories: ["unit", "wm"]

@@ -4,7 +4,7 @@ epics:
     slug: window-workspace-model
     title: Window and Workspace State Model
     wsjf_rank: 1
-    status: planned
+    status: completed
     stories: []
     description: |
       Introduce the core window-manager state layer: Window and Workspace
@@ -12,3 +12,14 @@ epics:
       and integration with the existing master-stack tiler and floating
       windows. Deferred: animations, tiling polish, Tacit integration,
       Xwayland.
+  - id: e03
+    slug: layout-engine-floating-mode
+    title: Layout Engine & Windows 11 Floating Mode
+    wsjf_rank: 2
+    status: planned
+    stories: []
+    description: |
+      Two distinct compositor modes per output: tiling (master-stack and dwindle
+      layouts) and floating (Windows 11 snap behaviour: edge/corner snap,
+      drag-to-top maximize, snap restore). Per-output LayoutMode, Super+` layout
+      toggle, focus border in DRM render path.
