@@ -7,7 +7,7 @@ use std::sync::Arc;
 use flume::Sender;
 use mlua::{Lua, Table};
 
-use crate::wm::DecorationConfig;
+use crate::wm::{DecorationConfig, LayoutMode};
 
 /// Initialize a new Lua state with the eswm config API pre-loaded.
 /// Registers `es` table with `bind`, `define_submap`, `dsp`, `config` submodules,
@@ -171,6 +171,31 @@ pub fn register_api(
         }
     })?;
     dsp_table.set("set_corner_radius", dsp_set_corner_radius)?;
+
+    // es.dsp.set_titlebar_height(n) -> titlebar strip height in px; 0 = none
+    let dsp_set_titlebar_height = lua.create_function({
+        let decoration = decoration.clone();
+        move |_, height: u32| -> Result<(), mlua::Error> {
+            decoration.lock().unwrap().titlebar_height = height;
+            Ok(())
+        }
+    })?;
+    dsp_table.set("set_titlebar_height", dsp_set_titlebar_height)?;
+
+    // es.dsp.set_layout_mode("tiling"|"floating") -> default mode for new windows
+    let dsp_set_layout_mode = lua.create_function({
+        let decoration = decoration.clone();
+        move |_, mode: String| -> Result<(), mlua::Error> {
+            let layout = match mode.as_str() {
+                "tiling" | "tiled" => LayoutMode::Hyprland,
+                "floating" | "float" => LayoutMode::Windows,
+                _ => return Err(mlua::Error::RuntimeError("layout mode must be 'tiling' or 'floating'".into())),
+            };
+            decoration.lock().unwrap().layout_mode = layout;
+            Ok(())
+        }
+    })?;
+    dsp_table.set("set_layout_mode", dsp_set_layout_mode)?;
 
     // es.dsp.set_border_color_focused(r, g, b, a) -> focused border color (RGBA 0-255)
     let dsp_set_border_color_focused = lua.create_function({

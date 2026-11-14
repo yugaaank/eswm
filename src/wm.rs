@@ -120,6 +120,12 @@ pub struct DecorationConfig {
     /// Corner radius (px). Stored and exposed to config; rounded-corner
     /// clipping in the renderer is a separate rendering task.
     pub corner_radius: u32,
+    /// Titlebar height (px). eswm draws a titlebar strip with buttons at the
+    /// top of each window when > 0; clients draw below it.
+    pub titlebar_height: u32,
+    /// Default layout mode for newly spawned windows:
+    /// Hyprland = tiled by default, Windows = floating by default.
+    pub layout_mode: LayoutMode,
 }
 
 impl DecorationConfig {
@@ -131,6 +137,8 @@ impl DecorationConfig {
             border_color_focused: [200, 200, 200, 255],
             border_color_unfocused: [60, 60, 60, 255],
             corner_radius: 0,
+            titlebar_height: 0,
+            layout_mode: LayoutMode::Hyprland,
         }
     }
 }
@@ -250,6 +258,10 @@ impl WindowManager {
         self.windows.get(&id)
     }
 
+    pub fn window_mut(&mut self, id: WindowId) -> Option<&mut Window> {
+        self.windows.get_mut(&id)
+    }
+
     pub fn primary_output_id(&self) -> Option<OutputId> {
         self.outputs.keys().next().copied()
     }
@@ -353,6 +365,10 @@ impl WindowManager {
 
     pub fn layout_mode(&self) -> LayoutMode {
         self.layout_mode
+    }
+
+    pub fn set_layout_mode(&mut self, mode: LayoutMode) {
+        self.layout_mode = mode;
     }
 
     pub fn set_outer(&mut self, outer: u32) {

@@ -78,7 +78,8 @@ See `config.example.lua` for a complete example.
 
 ### Window decorations
 
-Border size, gaps, border colors, and corner radius are set via `es.dsp`:
+Border size, gaps, border colors, corner radius, titlebar height, and default
+layout mode are set via `es.dsp`:
 
 ```lua
 es.dsp.set_border_size(2)
@@ -86,12 +87,28 @@ es.dsp.set_outer_gap(10)
 es.dsp.set_inner_gap(10)
 es.dsp.set_border_color_focused(0, 200, 0, 255)   -- green
 es.dsp.set_border_color_unfocused(80, 80, 80, 255) -- gray
-es.dsp.set_corner_radius(0)                        -- stored; renderer clipping TBD
+es.dsp.set_corner_radius(0)                        -- 0 = square corners
+es.dsp.set_titlebar_height(0)                      -- 0 = no titlebar; eswm-drawn titlebar with close/maximize/minimize buttons when > 0
+es.dsp.set_layout_mode("tiling")                   -- "tiling" or "floating"; default mode for new windows
 ```
 
 Values default to a 2px border, 10px gaps, green focused / gray unfocused
-borders, and no corner rounding. `corner_radius` is stored and exposed to
-config; drawing rounded corners (clip) is a pending renderer task.
+borders, no corner radius, no titlebar, and tiling layout mode.
+
+## Layout mode
+
+`set_layout_mode("tiling")` (default) → new windows are tiled.
+`set_layout_mode("floating")` → new windows are floating by default.
+The mode persists in config.lua across restarts. Individual windows can still
+be toggled between tiled/floating with `Super+Space` or `toggle_window_mode`.
+
+## Floating windows
+
+Floating windows can be moved and resized:
+- `Super+left-drag` on a floating window → move
+- `Super+right-drag` on a floating window → resize
+- Titlebar drag (when `titlebar_height > 0`) → move without Super
+- Titlebar buttons → close / maximize / minimize
 
 ## Build
 

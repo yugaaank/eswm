@@ -56,3 +56,5 @@ es.dsp.set_inner_gap(10)
 es.dsp.set_border_color_focused(0, 200, 0, 255)   -- green
 es.dsp.set_border_color_unfocused(80, 80, 80, 255) -- gray
 es.dsp.set_corner_radius(0)                        -- stored; renderer clipping TBD
+es.dsp.set_titlebar_height(0)                      -- 0 = no titlebar; eswm-drawn titlebar when > 0
+es.dsp.set_layout_mode("tiling")                   -- "tiling" or "floating"; default mode for new windows

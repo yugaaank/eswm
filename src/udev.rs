@@ -997,6 +997,51 @@ impl State {
                             }
                         }
                     }
+                    // Titlebar button clicks: close / maximize / minimize.
+                    // Clicking the titlebar itself (not a button) drags a floating window.
+                    let titlebar_height = self.decoration.lock().unwrap().titlebar_height;
+                    if titlebar_height > 0 {
+                        if let Some(id) = self.wm.window_at((location.x, location.y), self.wm.border_size()) {
+                            let window = self.wm.window(id).unwrap();
+                            let rect = window.target_rect;
+                            let tb = titlebar_height as f64;
+                            let in_titlebar = location.y >= rect.y as f64 && location.y < rect.y as f64 + tb;
+                            if in_titlebar {
+                                let bw = self.wm.border_size() as f64;
+                                let tb_w = rect.width as f64 + 2.0 * bw;
+                                let btn_size = (tb - 2.0).max(0.0);
+                                let btn_gap = 4.0;
+                                let btn_area_start = rect.x as f64 + tb_w - (btn_size + btn_gap);
+                                let btn_area_end = rect.x as f64 + tb_w;
+                                if location.x >= btn_area_start && location.x <= btn_area_end {
+                                    // On a button: rightmost = close, middle = maximize, left = minimize
+                                    let offset_from_right = (rect.x as f64 + tb_w) - location.x;
+                                    if offset_from_right < btn_size + btn_gap {
+                                        // Close button
+                                        self.wm.remove_window(id);
+                                    } else if offset_from_right < 2.0 * (btn_size + btn_gap) {
+                                        // Maximize button
+                                        self.wm.toggle_maximized(id);
+                                    } else {
+                                        // Minimize button: hide window
+                                        if let Some(w) = self.wm.window_mut(id) {
+                                            w.mapped = false;
+                                        }
+                                    }
+                                } else if window.mode == wm::WindowMode::Floating {
+                                    // Titlebar drag: start move on floating window
+                                    let rect = self.wm.window(id).unwrap().target_rect;
+                                    self.udev.as_mut().unwrap().drag = Some(DragState {
+                                        window: id,
+                                        mode: DragMode::Move,
+                                        start: location,
+                                        orig_rect: rect,
+                                        button,
+                                    });
+                                }
+                            }
+                        }
+                    }
                     // click to focus + wl_keyboard enter (empty clicks keep focus)
                     let id = self.wm.window_at((location.x, location.y), self.wm.border_size());
                     if let Some(id) = id {
@@ -1735,11 +1780,15 @@ impl State {
 
         // M5/P2: visible borders around each window (Hyprland-style: outside the rect,
         // fullscreen/maximized windows skip them). Edge strips plus corner circles
-        // when corner_radius > 0, giving rounded corners.
+        // when corner_radius > 0, giving rounded corners. Titlebar strip with buttons
+        // when titlebar_height > 0.
         let border_size = self.wm.border_size();
         let color_focused = self.wm.border_color_focused();
         let color_unfocused = self.wm.border_color_unfocused();
-        let corner_radius = self.decoration.lock().unwrap().corner_radius;
+        let dec = self.decoration.lock().unwrap();
+        let corner_radius = dec.corner_radius;
+        let titlebar_height = dec.titlebar_height;
+        drop(dec);
         if border_size > 0 {
             let bp = border_size as f64;
             let mut border_elements: Vec<EswmRenderElements<UdevRenderer>> = Vec::new();
@@ -1879,6 +1928,56 @@ impl State {
                         if let Some(elem) = make_edge(side_w, side_h, (wx + w - bp, wy)) {
                             border_elements.push(elem);
                         }
+                    }
+                    // Titlebar strip with buttons (eswm-drawn server-side decoration)
+                    if titlebar_height > 0 && !matches!(mode, wm::WindowMode::Fullscreen | wm::WindowMode::Maximized) {
+                        let tb = titlebar_height as f64;
+                        let tb_w = rect.width as u32 + 2 * border_size;
+                        let tb_h = titlebar_height;
+                        let tb_px = [color[0], color[1], color[2], color[3]];
+                        // Titlebar background strip
+                        let mut tb_pix = Vec::with_capacity((tb_w * tb_h * 4) as usize);
+                        for _ in 0..(tb_w * tb_h) {
+                            tb_pix.extend_from_slice(&tb_px);
+                        }
+                        let tb_buf = MemoryRenderBuffer::from_slice(
+                            &tb_pix, Fourcc::Argb8888, (tb_w as i32, tb_h as i32), 1, Transform::Normal, None,
+                        );
+                        if let Some(elem) = MemoryRenderBufferRenderElement::from_buffer(
+                            &mut renderer,
+                            Point::from((wx, wy)),
+                            &tb_buf,
+                            None, None, None, Kind::Unspecified,
+                        ).ok() {
+                            border_elements.push(EswmRenderElements::Cursor(elem));
+                        }
+                        // Buttons on the right side of the titlebar
+                        let btn_size = tb_h.saturating_sub(2);
+                        let btn_gap = 4u32;
+                        let mut btn_x = (wx + w - bp as f64) - (btn_size + btn_gap) as f64;
+                        // Helper: draw a solid-color square button at (bx, by)
+                        let mut draw_button = |bx: f64, by: f64, bcol: [u8; 4], bsize: u32| {
+                            let mut bpix = Vec::with_capacity((bsize * bsize * 4) as usize);
+                            for _ in 0..(bsize * bsize) {
+                                bpix.extend_from_slice(&bcol);
+                            }
+                            let buf = MemoryRenderBuffer::from_slice(
+                                &bpix, Fourcc::Argb8888, (bsize as i32, bsize as i32), 1, Transform::Normal, None,
+                            );
+                            if let Some(elem) = MemoryRenderBufferRenderElement::from_buffer(
+                                &mut renderer,
+                                Point::from((bx, by)),
+                                &buf,
+                                None, None, None, Kind::Unspecified,
+                            ).ok() {
+                                border_elements.push(EswmRenderElements::Cursor(elem));
+                            }
+                        };
+                        draw_button(btn_x, wy + 1.0, [255, 0, 0, 255], btn_size); // close
+                        btn_x -= btn_size as f64 + btn_gap as f64;
+                        draw_button(btn_x, wy + 1.0, [200, 200, 0, 255], btn_size); // maximize
+                        btn_x -= btn_size as f64 + btn_gap as f64;
+                        draw_button(btn_x, wy + 1.0, [100, 100, 100, 255], btn_size); // minimize
                     }
                 }
             }

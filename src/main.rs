@@ -554,11 +554,18 @@ pub fn prune_dead_windows(state: &mut State) -> usize {
 // reflect config.lua. Called each frame before arrangement/render.
 fn apply_decoration_to_wm(state: &mut State) {
     let d = state.decoration.lock().unwrap();
-    state.wm.set_outer(d.outer);
-    state.wm.set_inner(d.inner);
-    state.wm.set_border_size(d.border_size);
-    state.wm.set_border_colors(d.border_color_focused, d.border_color_unfocused);
+    let outer = d.outer;
+    let inner = d.inner;
+    let border_size = d.border_size;
+    let color_focused = d.border_color_focused;
+    let color_unfocused = d.border_color_unfocused;
+    let layout_mode = d.layout_mode;
     drop(d);
+    state.wm.set_outer(outer);
+    state.wm.set_inner(inner);
+    state.wm.set_border_size(border_size);
+    state.wm.set_border_colors(color_focused, color_unfocused);
+    state.wm.set_layout_mode(layout_mode);
 }
 
 // M5: push target rects to clients as xdg_toplevel size configures, then mark applied.
