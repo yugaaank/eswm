@@ -719,6 +719,12 @@ fn execute_keybind(state: &mut State, kb: &lua_state::Keybind) -> FilterResult<(
                 crate::apply_layout(state);
             }
         }
+        "toggle_minimize" => {
+            if let Some(id) = state.wm.focused_id() {
+                state.wm.toggle_minimize(id);
+                crate::apply_layout(state);
+            }
+        }
         "toggle_window_mode" => {
             if let Some(id) = state.wm.focused_id() {
                 state.wm.toggle_window_mode(id);
@@ -1020,10 +1026,8 @@ impl State {
                                     // Maximize button
                                     self.wm.toggle_maximized(id);
                                 } else if offset_from_right < 3.0 * (btn_size + btn_gap) {
-                                    // Minimize button: hide window
-                                    if let Some(w) = self.wm.window_mut(id) {
-                                        w.mapped = false;
-                                    }
+                                    // Minimize button: hide window (with focus handling)
+                                    self.wm.toggle_minimize(id);
                                 } else if window.mode == wm::WindowMode::Floating {
                                     // Titlebar drag: start move on floating window
                                     let rect = self.wm.window(id).unwrap().target_rect;

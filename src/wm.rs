@@ -716,6 +716,72 @@ impl WindowManager {
         self.set_mode(id, mode)
     }
 
+    /// Toggle a window's mapped state (minimize/restore).
+    /// When minimizing the focused window, focus moves to another mapped window.
+    /// When restoring a window, it receives focus.
+    pub fn toggle_minimize(&mut self, id: WindowId) -> bool {
+        let (output, workspace, was_focused, was_mapped) = {
+            let Some(window) = self.windows.get(&id) else {
+                return false;
+            };
+            (
+                window.output,
+                window.workspace,
+                window.focused,
+                window.mapped,
+            )
+        };
+
+        if let Some(window) = self.windows.get_mut(&id) {
+            window.mapped = !window.mapped;
+        }
+
+        if was_focused && was_mapped {
+            // Minimizing the focused window: move focus to another mapped window.
+            let next: Option<WindowId> = self
+                .workspaces
+                .get(&workspace)
+                .and_then(|ws| {
+                    ws.windows.iter().copied().find_map(|other_id| {
+                        if other_id != id {
+                            self.windows
+                                .get(&other_id)
+                                .filter(|w| w.mapped)
+                                .map(|w| w.id)
+                        } else {
+                            None
+                        }
+                    })
+                });
+            if let Some(ws) = self.workspaces.get_mut(&workspace) {
+                match next {
+                    Some(next_id) => {
+                        ws.focused = Some(next_id);
+                        if let Some(w) = self.windows.get_mut(&next_id) {
+                            w.focused = true;
+                        }
+                    }
+                    None => {
+                        ws.focused = None;
+                        self.clear_focus_on_output(output);
+                    }
+                }
+            }
+        } else if !was_focused && !was_mapped {
+            // Restoring a window: give it focus.
+            self.clear_focus_on_output(output);
+            if let Some(ws) = self.workspaces.get_mut(&workspace) {
+                ws.focused = Some(id);
+                if let Some(w) = self.windows.get_mut(&id) {
+                    w.focused = true;
+                }
+            }
+        }
+
+        self.arrange_output(output);
+        true
+    }
+
     /// Swap two windows' slots in the same workspace.
     pub fn swap_windows(&mut self, a: WindowId, b: WindowId) -> bool {
         let (Some(first), Some(second)) = (self.windows.get(&a), self.windows.get(&b)) else {
@@ -805,14 +871,27 @@ impl WindowManager {
         let Some(workspace) = self.workspaces.get(&output_state.active_workspace).cloned() else {
             return;
         };
-        let fullscreen = workspace
+        let maximized = workspace
             .windows
             .iter()
             .filter_map(|id| self.windows.get(id))
-            .find(|window| matches!(window.mode, WindowMode::Fullscreen | WindowMode::Maximized))
-            .map(|window| window.id);
-        if let Some(id) = fullscreen {
-            self.set_target_rect(id, output_state.geometry);
+            .find(|window| matches!(window.mode, WindowMode::Fullscreen | WindowMode::Maximized));
+        if let Some(window) = maximized {
+            // Fullscreen takes the entire output. Maximized fills the work area
+            // (respects waybar/quickshell exclusive zones) minus the outer gap,
+            // so borders/titlebar still show and the window doesn't cover panels.
+            let rect = if matches!(window.mode, WindowMode::Fullscreen) {
+                output_state.geometry
+            } else {
+                let base = self.work_area.unwrap_or(output_state.geometry);
+                Rect {
+                    x: base.x + self.outer as i32,
+                    y: base.y + self.outer as i32,
+                    width: base.width.saturating_sub(2 * self.outer),
+                    height: base.height.saturating_sub(2 * self.outer),
+                }
+            };
+            self.set_target_rect(window.id, rect);
             return;
         }
         let tiled: Vec<_> = workspace
@@ -887,7 +966,13 @@ impl WindowManager {
         let Some(workspace) = self.workspaces.get(&active) else {
             return false;
         };
-        let windows = &workspace.windows;
+        // Only mapped (visible) windows are focusable via cycle_focus.
+        let windows: Vec<WindowId> = workspace
+            .windows
+            .iter()
+            .copied()
+            .filter(|id| self.windows.get(id).map(|w| w.mapped).unwrap_or(false))
+            .collect();
         if windows.is_empty() {
             return false;
         }

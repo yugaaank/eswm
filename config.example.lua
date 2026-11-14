@@ -31,6 +31,7 @@ es.bind("Super+Alt+Right", "focus_workspace_next")
 -- Window mode toggles
 es.bind("Super+Space", "toggle_window_mode")
 es.bind("Super+Shift+Space", "toggle_window_mode")
+es.bind("Super+M", "toggle_minimize")
 
 -- Quit eswm
 es.bind("Super+Alt+Backspace", "quit")
