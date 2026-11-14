@@ -33,7 +33,7 @@ use smithay::{
     desktop::{layer_map_for_output, LayerMap, WindowSurfaceType},
     utils::IsAlive,
     delegate_compositor, delegate_data_device, delegate_layer_shell, delegate_output, delegate_seat,
-    delegate_shm, delegate_viewporter, delegate_xdg_shell,
+    delegate_shm, delegate_viewporter, delegate_xdg_decoration, delegate_xdg_shell,
     input::{keyboard::FilterResult, Seat, SeatHandler, SeatState},
         reexports::{
         calloop::LoopHandle,
@@ -51,13 +51,18 @@ use smithay::{
             data_device::{ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler},
             SelectionHandler,
         },
-        shell::xdg::{PopupSurface, PositionerState, SurfaceCachedState, ToplevelSurface, XdgShellHandler, XdgShellState, XdgToplevelSurfaceData},
+        shell::xdg::{
+            decoration::{XdgDecorationHandler, XdgDecorationState},
+            PopupSurface, PositionerState, SurfaceCachedState, ToplevelSurface, XdgShellHandler,
+            XdgShellState, XdgToplevelSurfaceData,
+        },
         shell::wlr_layer::{Layer, LayerSurface, WlrLayerShellHandler, WlrLayerShellState},
         shm::{ShmHandler, ShmState},
         viewporter::ViewporterState,
     },
 };
 use wayland_protocols::xdg::shell::server::xdg_toplevel;
+use wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode as DecorationMode;
 use wayland_server::{
     backend::{ClientData, ClientId, DisconnectReason},
     protocol::{
@@ -235,6 +240,30 @@ impl WlrLayerShellHandler for State {
     }
 }
 
+// Tell clients eswm provides server-side decoration so they drop their own CSD
+// title bar. eswm itself draws no title bar — just the window border — so a
+// tiled window is bare content inside its border.
+impl XdgDecorationHandler for State {
+    fn new_decoration(&mut self, toplevel: ToplevelSurface) {
+        toplevel.with_pending_state(|state| {
+            state.decoration_mode = Some(DecorationMode::ServerSide);
+        });
+        toplevel.send_configure();
+    }
+
+    fn request_mode(&mut self, _toplevel: ToplevelSurface, _mode: DecorationMode) {
+        // eswm decides: server-side only; clients keep no title bar.
+    }
+
+    fn unset_mode(&mut self, toplevel: ToplevelSurface) {
+        // Re-assert server-side if the client unsets its preference.
+        toplevel.with_pending_state(|state| {
+            state.decoration_mode = Some(DecorationMode::ServerSide);
+        });
+        toplevel.send_configure();
+    }
+}
+
 impl State {
     /// Map unmapped layer surfaces into the primary output's LayerMap
     /// (sends proper anchored configures), re-arrange, and hand keyboard focus
@@ -335,6 +364,7 @@ struct State {
     compositor_state: CompositorState,
     xdg_shell_state: XdgShellState,
     layer_shell_state: WlrLayerShellState,
+    decoration_state: XdgDecorationState,
     shm_state: ShmState,
     viewporter_state: ViewporterState,
     seat_state: SeatState<Self>,
@@ -417,6 +447,7 @@ fn new_state(
     let shm_state = ShmState::new::<State>(dh, vec![]);
     let viewporter_state = ViewporterState::new::<State>(dh);
     let layer_shell_state = WlrLayerShellState::new::<State>(dh);
+    let decoration_state = XdgDecorationState::new::<State>(dh);
     let mut seat_state = SeatState::new();
     let seat = seat_state.new_wl_seat(dh, seat_name);
     let mut wm = wm::WindowManager::new();
@@ -464,6 +495,7 @@ fn new_state(
         compositor_state,
         xdg_shell_state: XdgShellState::new::<State>(dh),
         layer_shell_state,
+        decoration_state,
         shm_state,
         viewporter_state,
         seat_state,
@@ -859,6 +891,7 @@ impl ClientData for ClientState {
 
 // Macros used to delegate protocol handling to types in the app state.
 delegate_xdg_shell!(State);
+delegate_xdg_decoration!(State);
 delegate_layer_shell!(State);
 delegate_output!(State);
 delegate_compositor!(State);
