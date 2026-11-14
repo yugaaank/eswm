@@ -43,6 +43,9 @@ pub struct Window {
     pub focused: bool,
     pub rect: Rect,
     pub target_rect: Rect,
+    /// Rect saved before maximizing; restored when un-maximizing so the
+    /// window returns to its previous floating position (Windows-like behaviour).
+    pub saved_rect: Option<Rect>,
     /// xdg window geometry offset from set_window_geometry; render position = target_rect - offset
     pub xdg_offset: (i32, i32),
     /// Focus state last sent to the client as xdg Activated; None = never sent.
@@ -596,6 +599,7 @@ impl WindowManager {
                 focused: false,
                 rect: Rect::default(),
                 target_rect: floating_rect.unwrap_or_default(),
+                saved_rect: None,
                 activated_sent: None,
                 xdg_offset: (0, 0),
             },
@@ -706,14 +710,35 @@ impl WindowManager {
     }
 
     pub fn toggle_maximized(&mut self, id: WindowId) -> bool {
-        let Some(window) = self.windows.get(&id) else {
-            return false;
+        let (output, mode) = {
+            let Some(window) = self.windows.get(&id) else {
+                return false;
+            };
+            (window.output, window.mode)
         };
-        let mode = match window.mode {
-            WindowMode::Maximized => WindowMode::Tiled,
-            _ => WindowMode::Maximized,
-        };
-        self.set_mode(id, mode)
+
+        match mode {
+            WindowMode::Maximized => {
+                // Restore the saved floating rect so the window returns to
+                // its previous position (Windows-like maximise/unmaximise).
+                if let Some(w) = self.windows.get_mut(&id) {
+                    if let Some(saved) = w.saved_rect.take() {
+                        w.mode = WindowMode::Floating;
+                        w.target_rect = saved;
+                        w.rect = saved;
+                    }
+                }
+                self.arrange_output(output);
+                true
+            }
+            _ => {
+                // Save the current rect before maximizing so we can restore it.
+                if let Some(w) = self.windows.get_mut(&id) {
+                    w.saved_rect = Some(w.target_rect);
+                }
+                self.set_mode(id, WindowMode::Maximized)
+            }
+        }
     }
 
     /// Toggle a window's mapped state (minimize/restore).
