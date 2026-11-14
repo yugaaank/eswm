@@ -1376,4 +1376,17 @@ mod tests {
         assert_eq!(w.mode, WindowMode::Floating);
         assert_eq!(w.target_rect, before);
     }
+
+    #[test]
+    fn set_window_meta_updates_app_id_and_title() {
+        let (mut manager, output) = manager();
+        let window = manager.add_window(output, "kitty", "one").unwrap();
+
+        assert!(manager.set_window_meta(window, "firefox".into(), "Home Page".into()));
+        let w = manager.window(window).unwrap();
+        assert_eq!(w.app_id, "firefox");
+        assert_eq!(w.title, "Home Page");
+
+        assert!(!manager.set_window_meta(999, "x".into(), "y".into()));
+    }
 }
