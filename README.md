@@ -1,8 +1,3 @@
-# eswm
-
-Standalone Wayland compositor and window manager in Rust, built on Smithay 0.7,
-to run Tacit without depending on Hyprland.
-
 ## Setup
 
 Requires a Rust toolchain.
@@ -11,23 +6,12 @@ Requires a Rust toolchain.
 git clone https://github.com/yugaaank/eswm.git
 cd eswm
 cargo build
-cargo test        # 25/25 pass
+cargo test        # 31/31 pass
 ```
 
 ## Run locally
 
-Two backends:
-
-**Nested dev backend** (runs inside your existing Wayland session — easiest for local dev):
-
-```bash
-TACIT_COMP_BACKEND=winit ./target/debug/eswm
-WAYLAND_DISPLAY=eswm-dev kitty
-```
-
-Spawn more clients with `WAYLAND_DISPLAY=eswm-dev <app>`.
-
-**DRM/libseat backend** (default, grabs the VT — run from a TTY):
+**DRM/libseat backend** (default, grabs the VT, run from a TTY):
 
 1. Switch to a spare virtual console: `Ctrl+Alt+F3` (or `F2`–`F6`).
 2. Log in with your user.
@@ -40,7 +24,7 @@ Spawn more clients with `WAYLAND_DISPLAY=eswm-dev <app>`.
 
 5. To leave eswm and return to your graphical session, press `Ctrl+Alt+F1` (or whichever VT ran your desktop). To come back, switch to the VT eswm is running on.
 
-eswm grabs the VT and takes over the display — do not run it from a terminal inside an existing Wayland/X11 session; use the nested dev backend for that instead.
+eswm grabs the VT and takes over the display. Do not run it from a terminal inside an existing Wayland/X11 session.
 
 **Logs:** `/tmp/eswm.log` (info+), `/tmp/eswm-panic.log`, `/tmp/<name>-spawn.log` per spawned program.
 Debug logging: `RUST_LOG=eswm=info ./target/debug/eswm`.
@@ -58,18 +42,13 @@ es.dsp.set_titlebar_height(30)
 es.dsp.set_layout_mode("tiling")
 ```
 
-No hardcoded keybinds — empty config = no keybinds. See `config.example.lua` for a complete example.
+No hardcoded keybinds; empty config = no keybinds. See `config.example.lua` for a complete example.
 
 ## Runtime
 
-- **Default**: DRM/libseat backend — run from a TTY, grabs the VT.
+- **Default**: DRM/libseat backend, run from a TTY, grabs the VT.
   ```
   ./target/debug/eswm
-  ```
-- **Nested dev backend** (under an existing Wayland session):
-  ```
-  TACIT_COMP_BACKEND=winit ./target/debug/eswm
-  WAYLAND_DISPLAY=eswm-dev kitty
   ```
 - Socket: `$XDG_RUNTIME_DIR/eswm-<wayland-display>.sock` (default `eswm-test`).
 - Logs: `/tmp/eswm.log`, `/tmp/eswm-panic.log`.
@@ -78,7 +57,7 @@ No hardcoded keybinds — empty config = no keybinds. See `config.example.lua` f
 
 eswm is configured entirely through `~/.config/eswm/config.lua`
 (fallback `$XDG_CONFIG_HOME/eswm/config.lua`) using the `es` Lua API.
-There is no JSON config file — everything is Lua.
+There is no JSON config file; everything is Lua.
 
 ### Autostart
 
@@ -154,8 +133,8 @@ borders, no corner radius, no titlebar, and tiling layout mode.
 
 ## Layout mode
 
-`set_layout_mode("tiling")` (default) → new windows are tiled.
-`set_layout_mode("floating")` → new windows are floating by default.
+`set_layout_mode("tiling")` (default) -> new windows are tiled.
+`set_layout_mode("floating")` -> new windows are floating by default.
 The mode persists in config.lua across restarts. Individual windows can still
 be toggled between tiled/floating with `Super+Space` or `toggle_window_mode`.
 
@@ -163,10 +142,10 @@ be toggled between tiled/floating with `Super+Space` or `toggle_window_mode`.
 
 Floating windows are placed inside the work area (below waybar/panels/dock), not over them.
 Floating windows can be moved and resized:
-- `Super+left-drag` on a floating window → move
-- `Super+right-drag` on a floating window → resize
-- Titlebar drag (when `titlebar_height > 0`) → move without Super
-- Titlebar buttons → close / maximize / minimize
+- `Super+left-drag` on a floating window -> move
+- `Super+right-drag` on a floating window -> resize
+- Titlebar drag (when `titlebar_height > 0`) -> move without Super
+- Titlebar buttons -> close / maximize / minimize
 
 Tiled windows are inset by `border_size` on all sides and by `titlebar_height` on top, so the drawn frame (titlebar + borders) never overlaps a top panel. The titlebar extends above `target_rect.y`, so this accounting matches the maximized path.
 
@@ -174,53 +153,30 @@ Tiled windows are inset by `border_size` on all sides and by `titlebar_height` o
 
 ```
 cargo build
-cargo test        # 25/25 green (22 unit + 3 integration)
+cargo test        # 31/31 green (all unit tests)
 ```
 
 ## Testing
 
 ```
-cargo test          # 25/25 pass (22 unit + 3 integration)
+cargo test          # 31/31 pass (all unit tests)
 ```
 
-Unit tests live in `src/wm.rs` (tiler, floating, focus, fullscreen). Integration
-tests live in `tests/`:
-- `tests/globals.rs` — Wayland shell globals advertise correctly
-- `tests/ipc.rs` — hyprctl-compatible IPC socket
-- `tests/control.rs` — native control socket end-to-end
-
-Run a single test binary:
-
-```
-cargo test --test ipc
-```
+Unit tests live in `src/wm.rs` (tiler, floating, focus, fullscreen,
+workspace model) and `src/main.rs` (control-plane IPC commands). All tests
+run without a TTY or graphical session; no backend-dependent integration
+tests remain.
 
 Debug build output goes to `/tmp/eswm.log` (info+) and `/tmp/eswm-panic.log`.
 
-### Nested dev backend (no TTY needed)
-
-Run eswm inside your existing Wayland session:
-
-```
-TACIT_COMP_BACKEND=winit ./target/debug/eswm
-WAYLAND_DISPLAY=eswm-dev kitty
-```
-
-The nested compositor listens on `$XDG_RUNTIME_DIR/eswm-eswm-dev.sock`.
-Log level via `RUST_LOG`:
-
-```
-RUST_LOG=eswm=info ./target/debug/eswm
-```
-
 ## Development
 
-- `src/main.rs` — `State`, backend dispatch (winit vs DRM), xdg/layer/seat/compositor handlers, `new_toplevel`, `apply_layout`, `prune_dead_windows`, `spawn_on_socket`, winit run loop.
-- `src/udev.rs` — DRM/KMS + libinput backend (primary path), session pause/resume, per-connector outputs, input, keybinds (`process_shortcut`), dock strip hit-test.
-- `src/wm.rs` — `WindowManager`: outputs/workspaces/windows, master-stack tiler, floating cascade, work_area-based placement, unit tests.
-- `src/lua_state.rs` — Lua API: `es.bind`, `es.bind_cmd`, `es.dsp.exec_cmd`.
-- `src/control.rs` — native control socket (`$XDG_RUNTIME_DIR/eswm-<wayland-display>.sock`), newline-delimited JSON.
-- `src/ipc.rs` — hyprctl-compatible socket + `.socket2.sock` event stream (historical prototype).
+- `src/main.rs`: `State`, DRM backend dispatch, xdg/layer/seat/compositor handlers, `new_toplevel`, `apply_layout`, `prune_dead_windows`, `spawn_on_socket`, control-plane unit tests.
+- `src/udev.rs`: DRM/KMS + libinput backend (primary path), session pause/resume, per-connector outputs, input, keybinds (`process_shortcut`), dock strip hit-test.
+- `src/wm.rs`: `WindowManager`: outputs/workspaces/windows, master-stack tiler, floating cascade, work_area-based placement, unit tests.
+- `src/lua_state.rs`: Lua API: `es.bind`, `es.bind_cmd`, `es.dsp.exec_cmd`.
+- `src/control.rs`: native control socket (`$XDG_RUNTIME_DIR/eswm-<wayland-display>.sock`), newline-delimited JSON.
+- `src/ipc.rs`: hyprctl-compatible socket + `.socket2.sock` event stream (historical prototype).
 
 Keybinds and autostart are configured entirely in Lua (`~/.config/eswm/config.lua`); there are no hardcoded keybinds and no JSON config.
 
@@ -249,13 +205,13 @@ es.dsp.set_titlebar_height(30)
 es.dsp.set_layout_mode("tiling")
 ```
 
-## Keybinds (udev/DRM backend)
+## Keybinds (DRM backend)
 
 All keybinds are configurable in `~/.config/eswm/config.lua` via `es.bind()`
 calls. See the Configuration section above for details and
 `config.example.lua` for a complete example.
 
-If no keybinds are defined, no keybinds are bound — eswm has no hardcoded
+If no keybinds are defined, no keybinds are bound; eswm has no hardcoded
 keybinds.
 
 Supported actions: `spawn_terminal`, `close_window`, `switch_workspace`,
@@ -276,4 +232,4 @@ Open defect: none currently tracked.
 
 ## License
 
-MIT — see `LICENSE`.
+MIT; see `LICENSE`.
