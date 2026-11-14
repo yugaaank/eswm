@@ -1,0 +1,35 @@
+id: e02
+slug: window-workspace-model
+title: Window and Workspace State Model
+status: planned
+wsjf_rank: 1
+bcps_total: 21
+core_value: |
+  eswm provides a stable window-manager state model (windows, workspaces, focus)
+  so Tacit can manage client windows without depending on Hyprland.
+stories:
+  - id: e02s01
+    title: Window state model
+    bcps: 3
+    delta: ADDED
+    status: pending
+  - id: e02s02
+    title: Workspace state model
+    bcps: 3
+    delta: ADDED
+    status: pending
+  - id: e02s03
+    title: Workspace switching
+    bcps: 5
+    delta: ADDED
+    status: pending
+  - id: e02s04
+    title: Move window between workspaces
+    bcps: 5
+    delta: ADDED
+    status: pending
+  - id: e02s05
+    title: Tiler/floating integration with state model
+    bcps: 5
+    delta: MODIFIED
+    status: pending

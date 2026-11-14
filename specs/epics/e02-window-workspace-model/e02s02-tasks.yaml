@@ -1,0 +1,30 @@
+story_id: e02s02
+title: Workspace state model
+status: failing
+bcps: 3
+delta: ADDED
+tasks:
+  - id: e02s02t1
+    description: Define Workspace struct (identity, name, output, window membership, active per output, focus history, empty/persistent behavior)
+    verify: cargo test workspace_state_model
+    risk: P1
+    status: failing
+    allure:
+      severity: high
+      categories: ["unit", "wm"]
+  - id: e02s02t2
+    description: Create default workspace per output on startup
+    verify: cargo test default_workspace
+    risk: P1
+    status: failing
+    allure:
+      severity: high
+      categories: ["unit", "wm"]
+  - id: e02s02t3
+    description: Assign created windows to the active workspace of their output
+    verify: cargo test workspace_assignment
+    risk: P1
+    status: failing
+    allure:
+      severity: high
+      categories: ["unit", "wm"]

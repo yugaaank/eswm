@@ -1,0 +1,46 @@
+story_id: e02s03
+title: Workspace switching
+status: failing
+bcps: 5
+delta: ADDED
+tasks:
+  - id: e02s03t1
+    description: Add process_shortcut / execute_keybind call to run_winit so the dev backend handles workspace keybinds
+    verify: cargo test --lib wm::tests
+    risk: P1
+    status: failing
+    allure:
+      severity: high
+      categories: ["integration", "winit"]
+  - id: e02s03t2
+    description: Bind Super+1..Super+N to switch active workspace on focused output
+    verify: cargo test workspace_switch_binding
+    risk: P1
+    status: failing
+    allure:
+      severity: high
+      categories: ["integration", "ipc"]
+  - id: e02s03t3
+    description: On switch, move focus to new workspace's focused window and re-visible its windows
+    verify: cargo test workspace_switch_focus
+    risk: P1
+    status: failing
+    allure:
+      severity: high
+      categories: ["integration", "ipc"]
+  - id: e02s03t4
+    description: Hide windows of the previously active workspace from rendering/focus
+    verify: cargo test workspace_switch_hide
+    risk: P2
+    status: failing
+    allure:
+      severity: normal
+      categories: ["integration", "ipc"]
+  - id: e02s03t5
+    description: Write default config.lua template with switch_workspace binds at config.default.lua
+    verify: test -f config.default.lua
+    risk: P3
+    status: failing
+    allure:
+      severity: minor
+      categories: ["config", "template"]

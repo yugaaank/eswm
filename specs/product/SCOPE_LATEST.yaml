@@ -1,0 +1,63 @@
+core_value: |
+  eswm provides a stable window-manager state model (windows, workspaces, focus)
+  so Tacit can manage client windows without depending on Hyprland or another
+  compositor.
+
+summary: |
+  Phase 2 introduces the core window-manager state layer on top of the existing
+  DRM/compositor foundation (Phase 1 complete). It defines Window and Workspace
+  state, workspace switching, and moving windows between workspaces. Animations,
+  tiling-layout polish, and Tacit native integration are deferred to later
+  phases because they depend on a stable state model first.
+
+in_scope:
+  - Window state model: surface, role, output, workspace, tiled or floating,
+    current and target rectangle, focus and mapped state, min/max/fullscreen,
+    application identity and title. Maps to future epic e02.
+  - Workspace state model: identity and name, windows assigned to it, active
+    workspace per output, focused window and focus history, optional empty or
+    persistent workspace behavior. Maps to future epic e02.
+  - Workspace switching and moving windows between workspaces. Maps to future
+    epic e02.
+  - Integration of new state model with the existing master-stack tiler and
+    floating windows. Maps to future epic e02.
+
+out_of_scope:
+  - Animations (Phase 4): deferred. Window geometry and focus must be stable
+    before any interpolation or transition work.
+  - Tiling-layout polish and additional layouts (Phase 3): deferred. The state
+    model must be stable before the layout engine is refined.
+  - Tacit native integration (Phase 5): deferred. Depends on state queries
+    (window, workspace, output, focus) that this phase builds.
+  - Xwayland support: deferred. Optional, behind a build/runtime option; not
+    needed for Tacit on DRM.
+  - Multi-monitor hotplug beyond existing Phase 1 output tracking: deferred.
+    Phase 1 already covers outputs, modes, scale, transform, positions.
+
+constraints:
+  - Rust 2024; dependencies: smithay 0.7, wayland-server 0.31, winit, mlua.
+    No new dependencies introduced in this initiative.
+  - Lua-only configuration at ~/.config/eswm/config.lua; no JSON config path.
+  - DRM/libseat is the default runtime path; Winit is the nested dev backend
+    only.
+  - Never copy Pinnacle source, assets, or distinctive implementation
+    (reference only).
+  - Preflight (cargo clippy && cargo test && cargo build) must be green before
+    forward work.
+  - eswm easy brand: short, grep-unique names; no clever abbreviations.
+
+success_criteria:
+  - One workspace per output; windows are assignable to workspaces.
+  - Workspace switch moves focus and visible windows to the new workspace.
+  - Moving a window between workspaces updates both workspace membership and
+    window state.
+  - Existing tiling and floating behavior continues to work with the new state
+    model.
+  - cargo test passes; preflight green.
+
+references:
+  - notes/roadmap.md — Phase 2 window and workspace model
+  - notes/status.md
+  - notes/tacit-integration.md
+  - src/wm.rs — existing window management
+  - src/control.rs — existing control plane

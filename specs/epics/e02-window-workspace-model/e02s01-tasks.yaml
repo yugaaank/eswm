@@ -1,0 +1,30 @@
+story_id: e02s01
+title: Window state model
+status: failing
+bcps: 3
+delta: ADDED
+tasks:
+  - id: e02s01t1
+    description: Define Window struct (surface, role, output, workspace, tiled/floating, current/target rectangle, focus, mapped, min/max/fullscreen, app identity, title)
+    verify: cargo test window_state_model
+    risk: P1
+    status: failing
+    allure:
+      severity: high
+      categories: ["unit", "wm"]
+  - id: e02s01t2
+    description: Track windows on client surface creation and removal
+    verify: cargo test window_tracking
+    risk: P1
+    status: failing
+    allure:
+      severity: high
+      categories: ["unit", "wm"]
+  - id: e02s01t3
+    description: Expose window list query through control plane for tests
+    verify: cargo test window_query
+    risk: P2
+    status: failing
+    allure:
+      severity: normal
+      categories: ["unit", "wm"]

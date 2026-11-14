@@ -1,0 +1,38 @@
+story_id: e02s04
+title: Move window between workspaces
+status: failing
+bcps: 5
+delta: ADDED
+tasks:
+  - id: e02s04t1
+    description: Bind Super+Shift+1..Super+Shift+N to move focused window to target workspace
+    verify: cargo test move_window_binding
+    risk: P1
+    status: failing
+    allure:
+      severity: high
+      categories: ["integration", "ipc"]
+  - id: e02s04t2
+    description: Remove window from source workspace membership, add to target workspace
+    verify: cargo test move_window_membership
+    risk: P1
+    status: failing
+    allure:
+      severity: high
+      categories: ["integration", "ipc"]
+  - id: e02s04t3
+    description: Follow window to target workspace or stay on source (configurable), keeping focus sane
+    verify: cargo test move_window_follow
+    risk: P2
+    status: failing
+    allure:
+      severity: normal
+      categories: ["integration", "ipc"]
+  - id: e02s04t4
+    description: Confirm move_window_to_workspace keybind documented in config.default.lua
+    verify: test -f config.default.lua
+    risk: P3
+    status: failing
+    allure:
+      severity: minor
+      categories: ["config", "template"]

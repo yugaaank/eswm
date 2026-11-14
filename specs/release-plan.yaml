@@ -1,0 +1,14 @@
+version: 0.1.0
+epics:
+  - id: e02
+    slug: window-workspace-model
+    title: Window and Workspace State Model
+    wsjf_rank: 1
+    status: planned
+    stories: []
+    description: |
+      Introduce the core window-manager state layer: Window and Workspace
+      state models, workspace switching, moving windows between workspaces,
+      and integration with the existing master-stack tiler and floating
+      windows. Deferred: animations, tiling polish, Tacit integration,
+      Xwayland.

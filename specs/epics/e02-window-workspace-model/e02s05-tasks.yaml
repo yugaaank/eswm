@@ -1,0 +1,38 @@
+story_id: e02s05
+title: Tiler/floating integration with state model
+status: failing
+bcps: 5
+delta: MODIFIED
+tasks:
+  - id: e02s05t1
+    description: Audit arrange_output filters windows to output_state.active_workspace
+    verify: cargo test --lib wm::tests
+    risk: P2
+    status: failing
+    allure:
+      severity: normal
+      categories: ["unit", "wm"]
+  - id: e02s05t2
+    description: Add unit test: open windows on workspace 1 and 2, arrange workspace 1, assert workspace 2 windows have zero/unset target_rect
+    verify: cargo test --lib wm::tests
+    risk: P2
+    status: failing
+    allure:
+      severity: normal
+      categories: ["unit", "wm"]
+  - id: e02s05t3
+    description: Add unit test: floating window on workspace 2 is not included in workspace 1 tiling
+    verify: cargo test --lib wm::tests
+    risk: P2
+    status: failing
+    allure:
+      severity: normal
+      categories: ["unit", "wm"]
+  - id: e02s05t4
+    description: Add integration test: switch workspace via IPC, assert only new workspace's windows render in placed_windows
+    verify: cargo test --test control
+    risk: P1
+    status: failing
+    allure:
+      severity: high
+      categories: ["integration", "ipc"]
