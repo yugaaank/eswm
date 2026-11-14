@@ -748,6 +748,8 @@ impl WindowManager {
         if let Some(window_state) = self.windows.get_mut(&id) {
             window_state.workspace = workspace;
             window_state.focused = false;
+            // Reset target rect; arrange_output sets it if the new workspace is active.
+            window_state.target_rect = Rect::default();
         }
         self.clear_focus_on_output(window.output);
         // Keep keyboard focus alive: the moved window may have been the focused one.
@@ -1417,5 +1419,43 @@ mod tests {
 
         assert!(!manager.focus_workspace(output, 3));
         assert_eq!(manager.output(output).unwrap().active_workspace, 1);
+    }
+
+    #[test]
+    fn arrange_output_only_arranges_active_workspace() {
+        let (mut manager, output) = manager();
+        manager.set_outer(0);
+        manager.set_inner(0);
+        let w1 = manager.add_window(output, "kitty", "one").unwrap();
+        assert!(manager.add_workspace(output, 2, "two"));
+        let w2 = manager.add_window(output, "kitty", "two").unwrap();
+        assert!(manager.move_window_to_workspace(w2, 2));
+
+        manager.arrange_output(output);
+
+        let rect1 = manager.window(w1).unwrap().target_rect;
+        assert_ne!(rect1.width, 0);
+        let rect2 = manager.window(w2).unwrap().target_rect;
+        assert_eq!(rect2.width, 0);
+        assert_eq!(rect2.height, 0);
+    }
+
+    #[test]
+    fn floating_window_on_inactive_workspace_not_tiled() {
+        let (mut manager, output) = manager();
+        manager.set_outer(0);
+        manager.set_inner(0);
+        let w1 = manager.add_window(output, "kitty", "one").unwrap();
+        assert!(manager.add_workspace(output, 2, "two"));
+        let w2 = manager.add_window(output, "kitty", "two").unwrap();
+        manager.set_mode(w2, WindowMode::Floating);
+        assert!(manager.move_window_to_workspace(w2, 2));
+
+        manager.arrange_output(output);
+
+        // w1 is the only tiled window on active workspace 1 -> full width
+        assert_eq!(manager.window(w1).unwrap().target_rect.width, 1916);
+        // w2 is floating on workspace 2 -> not arranged, zero rect
+        assert_eq!(manager.window(w2).unwrap().target_rect.width, 0);
     }
 }

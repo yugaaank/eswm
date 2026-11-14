@@ -40,7 +40,7 @@ tasks:
     description: Write default config.lua template with switch_workspace binds at config.default.lua
     verify: test -f config.default.lua
     risk: P3
-    status: failing
+    status: passing
     allure:
       severity: minor
       categories: ["config", "template"]

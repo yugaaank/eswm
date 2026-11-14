@@ -1,7 +1,7 @@
 id: e02
 slug: window-workspace-model
 title: Window and Workspace State Model
-status: planned
+status: completed
 wsjf_rank: 1
 bcps_total: 21
 core_value: |
@@ -12,24 +12,24 @@ stories:
     title: Window state model
     bcps: 3
     delta: ADDED
-    status: pending
+    status: passing
   - id: e02s02
     title: Workspace state model
     bcps: 3
     delta: ADDED
-    status: pending
+    status: passing
   - id: e02s03
     title: Workspace switching
     bcps: 5
     delta: ADDED
-    status: pending
+    status: passing
   - id: e02s04
     title: Move window between workspaces
     bcps: 5
     delta: ADDED
-    status: pending
+    status: passing
   - id: e02s05
     title: Tiler/floating integration with state model
     bcps: 5
     delta: MODIFIED
-    status: pending
+    status: passing

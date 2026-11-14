@@ -754,7 +754,9 @@ mod tests {
     fn test_state() -> State {
         let mut display: Display<State> = Display::new().expect("create test display");
         let dh = display.handle();
-        new_state("test", &dh, true)
+        let mut state = new_state("test", &dh, true);
+        state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
+        state
     }
 
     #[test]
@@ -804,5 +806,65 @@ mod tests {
         let value: Value = serde_json::from_str(&response).unwrap();
         assert_eq!(value["id"], 5);
         assert_eq!(value["ok"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn control_window_move_to_workspace() {
+        let mut state = test_state();
+        let output_id = state.wm.primary_output_id().unwrap();
+        assert!(state.wm.add_window(output_id, "kitty", "one").is_some());
+        assert!(state.wm.add_workspace(output_id, 2, "2"));
+
+        let response = handle_request(
+            &mut state,
+            r#"{"id": 6, "cmd": "window.move", "args": {"id": 1, "workspace": 2}}"#,
+        );
+        let value: Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(value["id"], 6);
+        assert_eq!(value["ok"]["moved"], 1);
+        assert_eq!(value["ok"]["workspace"], 2);
+    }
+
+    #[test]
+    fn control_window_move_cross_output_fails() {
+        let mut state = test_state();
+        let output1 = state.wm.primary_output_id().unwrap();
+        assert!(state.wm.add_window(output1, "kitty", "one").is_some());
+        let output2 = state.wm.add_output(
+            "second",
+            wm::Rect {
+                x: 1920,
+                y: 0,
+                width: 1280,
+                height: 720,
+            },
+        );
+        // add_output creates its own workspace on output2; target workspace is on output2
+        let target_ws = state
+            .wm
+            .workspaces()
+            .find(|ws| ws.output == output2)
+            .map(|ws| ws.id)
+            .unwrap();
+
+        let response = handle_request(
+            &mut state,
+            &format!(
+                r#"{{"id": 7, "cmd": "window.move", "args": {{"id": 1, "workspace": {target_ws}}}}}"#
+            ),
+        );
+        let value: Value = serde_json::from_str(&response).unwrap();
+        assert!(value["error"].as_str().unwrap().contains("cannot move window"));
+    }
+
+    #[test]
+    fn control_window_move_nonexistent_window_fails() {
+        let mut state = test_state();
+        let response = handle_request(
+            &mut state,
+            r#"{"id": 8, "cmd": "window.move", "args": {"id": 99, "workspace": 1}}"#,
+        );
+        let value: Value = serde_json::from_str(&response).unwrap();
+        assert!(value["error"].as_str().unwrap().contains("cannot move window"));
     }
 }
