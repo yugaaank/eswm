@@ -856,15 +856,25 @@ impl WindowManager {
             // Fullscreen takes the entire output. Maximized fills the work area
             // (respects waybar/quickshell exclusive zones) minus the outer gap,
             // so borders/titlebar still show and the window doesn't cover panels.
+            // For maximized windows, target_rect accounts for titlebar height so
+            // the entire window (borders + titlebar + surface) fits within
+            // work_area minus the outer gap — the titlebar does not extend above
+            // work_area and cover waybar/quickshell panels.
             let rect = if matches!(window.mode, WindowMode::Fullscreen) {
                 output_state.geometry
             } else {
                 let base = self.work_area.unwrap_or(output_state.geometry);
+                let bp = self.border_size as i32;
+                let tb_h = self.titlebar_height as i32;
                 Rect {
-                    x: base.x + self.outer as i32,
-                    y: base.y + self.outer as i32,
-                    width: base.width.saturating_sub(2 * self.outer),
-                    height: base.height.saturating_sub(2 * self.outer),
+                    x: base.x + self.outer as i32 + bp,
+                    y: base.y + self.outer as i32 + bp + tb_h,
+                    width: base.width.saturating_sub(2 * self.outer).saturating_sub(2 * bp as u32),
+                    height: base
+                        .height
+                        .saturating_sub(2 * self.outer)
+                        .saturating_sub(tb_h as u32)
+                        .saturating_sub(2 * bp as u32),
                 }
             };
             self.set_target_rect(window.id, rect);
