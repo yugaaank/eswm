@@ -3,13 +3,12 @@
 // M4: adds the real DRM/libinput backend (src/udev.rs), the default runtime.
 use std::{os::unix::io::OwnedFd, sync::Arc};
 
-use ::winit::platform::pump_events::PumpStatus;
 mod control;
 mod ipc;
 mod lua_state;
 mod udev;
 mod wm;
-use ipc::{CompCmd, Ipc};
+use ipc::Ipc;
 use lua_state::{init, register_api, _do_file, _do_chunk};
 use mlua::Lua;
 
@@ -26,8 +25,6 @@ use smithay::{
             utils::{draw_render_elements, on_commit_buffer_handler},
             Color32F, Frame, Renderer,
         },
-        winit::{self, WinitEvent},
-        input::{InputEvent, KeyboardKeyEvent},
     },
     output::{Mode, Output, PhysicalProperties, Subpixel},
     desktop::{layer_map_for_output, LayerMap, WindowSurfaceType},
@@ -444,7 +441,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The standalone DRM/libinput backend is the product runtime. Winit is kept
     // behind an explicit setting for nested development and protocol tests.
     match std::env::var("TACIT_COMP_BACKEND").as_deref() {
-        Ok("winit") => run_winit(),
         _ => crate::udev::run_udev(),
     }
 }
@@ -537,31 +533,6 @@ fn new_state(
 
 // Development compatibility path for the explicit Winit backend. The standalone
 // DRM backend does not initialize this Hyprland/Tacit integration.
-fn init_ipc_and_lua(state: &mut State) {
-    // M2: hyprctl IPC. Signature env controls the hyprdir path; a distinct
-    // value keeps us away from a real Hyprland session's sockets.
-    let sig = std::env::var("TACIT_COMP_SIG").unwrap_or_else(|_| "eswm".into());
-    state.ipc = Some(Ipc::new(sig));
-
-    // M3: initialize Lua embed with Hyprland config API
-    let lua = init().unwrap_or_else(|_| Lua::new());
-    let snapshot = state.ipc.as_ref().unwrap().snapshot.clone();
-    let cmd_tx = state.ipc.as_ref().unwrap().cmd_tx.clone();
-    // Register the Hyprland config API (es.bind, es.define_submap, es.dsp.*, es.config{}, is_file_exists, safe_require)
-    if let Err(e) = register_api(
-        &lua,
-        snapshot,
-        &cmd_tx,
-        state.lua_keybinds.clone(),
-        state.decoration.clone(),
-        state.dock_entries.clone(),
-    ) {
-        tracing::warn!("Lua API registration failed (mlua/lua5.1-dev may be missing): {e}");
-    }
-    // Store lua in state for _do_file/_do_chunk access; kept alive for the session
-    state.lua = Some(lua);
-}
-
 /// Reap WM entries whose toplevel disappeared without a compositor callback (for
 /// example after a client lost its display socket). Stale entries otherwise hold
 /// master/stack slots forever.
@@ -732,258 +703,6 @@ pub fn spawn_on_socket(program: &str, args: &[&str]) {
     }
 }
 
-// Development compatibility path; called only by the explicit Winit backend.
-fn drain_ipc_and_refresh(state: &mut State, size: (i32, i32)) {
-    let ipc_cmd_rx = state.ipc.as_ref().map(|ipc| ipc.cmd_rx.clone());
-    let mut ipc_opt = state.ipc.take();
-    if let Some(ref ipc) = ipc_opt {
-        while let Ok(cmd) = ipc_cmd_rx.as_ref().unwrap().try_recv() {
-            ipc::apply_cmd(state, ipc, cmd);
-        }
-    }
-    state.ipc = ipc_opt;
-    ipc::refresh_snapshot(state, size);
-}
-
-pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
-    let mut display: Display<State> = Display::new()?;
-    let dh = display.handle();
-
-    let mut state = new_state("winit", &dh, true);
-    state.primary_output = Some(state.output.clone());
-
-    let socket = socket_name();
-    let listener = ListeningSocket::bind(&socket)
-        .map_err(|err| format!("socket '{socket}' already in use - kill stale eswm (is one running?)\n  {err}"))?;
-    println!("listening on {socket}");
-
-    init_ipc_and_lua(&mut state);
-
-    match control::Control::start(&socket_name()) {
-        Ok(control) => state.control = Some(control),
-        Err(err) => tracing::warn!("control socket disabled: {err}"),
-    }
-
-    let mut clients = Vec::new();
-
-    let (mut backend, mut winit) = winit::init::<GlesRenderer>()?;
-
-    let start_time = std::time::Instant::now();
-
-    let keyboard = state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
-    state.seat.add_pointer();
-
-    let mut size = backend.window_size();
-    let mut toplevel_surface = None;
-
-    loop {
-        // Accept new Wayland clients (awww-daemon, fuzzel, etc.) and insert them
-        // into the display so their protocol requests get dispatched.
-        if let Ok(Some(stream)) = listener.accept() {
-            if let Ok(client) = display.handle().insert_client(stream, Arc::new(crate::ClientState::default())) {
-                clients.push(client);
-            }
-        }
-
-        let status = winit.dispatch_new_events(|event| match event {
-            WinitEvent::Resized { .. } => {}
-            WinitEvent::Input(event) => match event {
-                InputEvent::Keyboard { event } => {
-                    keyboard.input::<(), _>(
-                        &mut state,
-                        event.key_code(),
-                        event.state(),
-                        0.into(),
-                        0,
-                        |_, _, _| FilterResult::Forward,
-                    );
-                }
-                InputEvent::PointerMotionAbsolute { .. } => {
-                    // M1 focus trick: keep one toplevel focused
-                    if toplevel_surface.is_none() {
-                        if let Some(surface) = state.xdg_shell_state.toplevel_surfaces().iter().next().cloned() {
-                            toplevel_surface = Some(surface.wl_surface().clone());
-                        };
-                        if let Some(surface) = toplevel_surface.as_ref() {
-                            keyboard.set_focus(&mut state, Some(surface.clone()), 0.into());
-                        }
-                    }
-                }
-                _ => {}
-            },
-            _ => (),
-        });
-
-        match status {
-            PumpStatus::Continue => (),
-            PumpStatus::Exit(_) => return Ok(()),
-        };
-
-        // Process incoming Wayland client requests (awww-daemon, fuzzel, etc.)
-        // so clients don't block waiting for responses to their roundtrips.
-        if let Err(err) = display.dispatch_clients(&mut state) {
-            tracing::warn!("wayland client dispatch error: {err}");
-        }
-        display.flush_clients();
-
-        size = backend.window_size();
-        let damage = Rectangle::from_size(size);
-
-        drain_ipc_and_refresh(&mut state, size.into());
-        control::drain(&mut state);
-
-        {
-            let (renderer, mut framebuffer) = backend.bind().unwrap();
-            // M5 placement shared with the udev path: active-workspace windows at target_rect
-            let placed = crate::placed_windows(&mut state);
-            let toplevel_elements = placed
-                .iter()
-                .flat_map(|(surface, x, y, ..)| {
-                    render_elements_from_surface_tree(
-                        renderer,
-                        surface,
-                        (*x, *y),
-                        1.0,
-                        1.0,
-                        Kind::Unspecified,
-                    )
-                })
-                .collect::<Vec<WaylandSurfaceRenderElement<GlesRenderer>>>();
-            // M5/P2: visible focus border around the focused window (dev winit backend;
-            // DRM path draws borders via border_focused/border_unfocused buffers).
-            const BORDER_PX: i32 = 2;
-            let border_color = [0u8, 200, 0, 255]; // green
-            let mut border_elements: Vec<MemoryRenderBufferRenderElement<GlesRenderer>> =
-                Vec::new();
-            for (_, x, y, _, focused, rect) in &placed {
-                if !*focused {
-                    continue;
-                }
-                let bw = rect.width.saturating_add(2 * BORDER_PX as u32);
-                let bh = rect.height.saturating_add(2 * BORDER_PX as u32);
-                let mut pixels = Vec::with_capacity((bw * bh * 4) as usize);
-                for _ in 0..(bw * bh) {
-                    pixels.extend_from_slice(&border_color);
-                }
-                let buf = MemoryRenderBuffer::from_slice(
-                    &pixels,
-                    Fourcc::Argb8888,
-                    (bw as i32, bh as i32),
-                    1,
-                    Transform::Normal,
-                    None,
-                );
-                let pos = Point::from((*x as f64, *y as f64));
-                if let Ok(elem) = MemoryRenderBufferRenderElement::from_buffer(
-                    renderer,
-                    pos,
-                    &buf,
-                    None,
-                    None,
-                    None,
-                    Kind::Unspecified,
-                ) {
-                    border_elements.push(elem);
-                }
-            }
-            let layer_elements = state
-                .layer_shell_state
-                .layer_surfaces()
-                .flat_map(|surface| {
-                    render_elements_from_surface_tree(
-                        renderer,
-                        surface.wl_surface(),
-                        (0, 0),
-                        1.0,
-                        1.0,
-                        Kind::Unspecified,
-                    )
-                })
-                .collect::<Vec<WaylandSurfaceRenderElement<GlesRenderer>>>();
-
-            // Default dock bar at bottom (eswm-rendered; external frontends use
-            // the es.dock API). Each entry is one segment: focused=light blue,
-            // active=gray, minimized=dim gray. Elements are built before the
-            // frame borrows `renderer` mutably.
-            let dock_h = state.wm.dock_height();
-            let mut dock_elements: Vec<MemoryRenderBufferRenderElement<GlesRenderer>> =
-                Vec::new();
-            if dock_h > 0 {
-                let entries = state.dock_entries.lock().unwrap();
-                let n = entries.len() as u32;
-                if n > 0 {
-                    let dw = size.w as u32;
-                    let entry_w = dw / n;
-                    let dock_y = (size.h as u32).saturating_sub(dock_h);
-                    dock_elements = Vec::with_capacity(n as usize);
-                    for (i, entry) in entries.iter().enumerate() {
-                        let color = if entry.focused {
-                            [200u8, 200, 255, 255]
-                        } else if entry.minimized {
-                            [50u8, 50, 50, 255]
-                        } else {
-                            [100u8, 100, 100, 255]
-                        };
-                        let x = (i as u32) * entry_w;
-                        let w = entry_w;
-                        let mut pixels = Vec::with_capacity((w * dock_h * 4) as usize);
-                        for _ in 0..(w * dock_h) {
-                            pixels.extend_from_slice(&color);
-                        }
-                        let buf = MemoryRenderBuffer::from_slice(
-                            &pixels,
-                            Fourcc::Argb8888,
-                            (w as i32, dock_h as i32),
-                            1,
-                            Transform::Normal,
-                            None,
-                        );
-                        let pos = Point::from((x as f64, dock_y as f64));
-                        if let Ok(elem) =
-                            MemoryRenderBufferRenderElement::from_buffer(
-                                renderer,
-                                pos,
-                                &buf,
-                                None,
-                                None,
-                                None,
-                                Kind::Unspecified,
-                            )
-                        {
-                            dock_elements.push(elem);
-                        }
-                    }
-                }
-            }
-
-            let mut frame = renderer
-                .render(&mut framebuffer, size, Transform::Flipped180)
-                .unwrap();
-            frame.clear(Color32F::new(0.1, 0.0, 0.0, 1.0), &[damage]).unwrap();
-            draw_render_elements(&mut frame, 1.0, &border_elements, &[damage]).unwrap();
-            draw_render_elements(&mut frame, 1.0, &toplevel_elements, &[damage]).unwrap();
-            draw_render_elements(&mut frame, 1.0, &layer_elements, &[damage]).unwrap();
-            draw_render_elements(&mut frame, 1.0, &dock_elements, &[damage]).unwrap();
-            // We rely on the nested compositor to do the sync for us
-            let _ = frame.finish().unwrap();
-
-            for surface in state.xdg_shell_state.toplevel_surfaces() {
-                send_frames_surface_tree(surface.wl_surface(), start_time.elapsed().as_millis() as u32);
-            }
-            for surface in state.layer_shell_state.layer_surfaces() {
-                send_frames_surface_tree(surface.wl_surface(), start_time.elapsed().as_millis() as u32);
-            }
-
-            display.dispatch_clients(&mut state)?;
-            display.flush_clients()?;
-        }
-
-        // It is important that all events on the display have been dispatched and flushed to clients before
-        // swapping buffers because this operation may block.
-        backend.submit(Some(&[damage])).unwrap();
-    }
-}
-
 pub fn send_frames_surface_tree(surface: &wl_surface::WlSurface, time: u32) {
     with_surface_tree_downward(
         surface,
@@ -1025,3 +744,65 @@ delegate_shm!(State);
 delegate_viewporter!(State);
 delegate_seat!(State);
 delegate_data_device!(State);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::control::handle_request;
+    use serde_json::Value;
+
+    fn test_state() -> State {
+        let mut display: Display<State> = Display::new().expect("create test display");
+        let dh = display.handle();
+        new_state("test", &dh, true)
+    }
+
+    #[test]
+    fn control_state_returns_outputs_workspaces_windows() {
+        let mut state = test_state();
+        let response = handle_request(&mut state, r#"{"id": 1, "cmd": "state"}"#);
+        let value: Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(value["id"], 1);
+        assert_eq!(value["ok"]["outputs"].as_array().unwrap().len(), 1);
+        assert_eq!(value["ok"]["workspaces"].as_array().unwrap().len(), 1);
+        assert!(value["ok"]["windows"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn control_unknown_command_returns_error() {
+        let mut state = test_state();
+        let response = handle_request(&mut state, r#"{"id": 2, "cmd": "no.such.command"}"#);
+        let value: Value = serde_json::from_str(&response).unwrap();
+        assert!(value["ok"].is_null());
+        assert!(value["error"].as_str().unwrap().contains("unknown command"));
+    }
+
+    #[test]
+    fn control_window_focus_nonexistent_returns_error() {
+        let mut state = test_state();
+        let response = handle_request(
+            &mut state,
+            r#"{"id": 3, "cmd": "window.focus", "args": {"id": 99}}"#,
+        );
+        let value: Value = serde_json::from_str(&response).unwrap();
+        assert!(value["error"].as_str().unwrap().contains("no window 99"));
+    }
+
+    #[test]
+    fn control_workspace_list_returns_workspaces() {
+        let mut state = test_state();
+        let response = handle_request(&mut state, r#"{"id": 4, "cmd": "workspace.list"}"#);
+        let value: Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(value["id"], 4);
+        assert_eq!(value["ok"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn control_output_list_returns_outputs() {
+        let mut state = test_state();
+        let response = handle_request(&mut state, r#"{"id": 5, "cmd": "output.list"}"#);
+        let value: Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(value["id"], 5);
+        assert_eq!(value["ok"].as_array().unwrap().len(), 1);
+    }
+}

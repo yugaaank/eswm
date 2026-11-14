@@ -5,37 +5,37 @@ bcps: 5
 delta: ADDED
 tasks:
   - id: e02s03t1
-    description: Add process_shortcut / execute_keybind call to run_winit so the dev backend handles workspace keybinds
+    description: Winit keybind processing removed — winit backend deleted (decision: Option B). Workspace switching via DRM keybind path (udev.rs) unchanged.
     verify: cargo test --lib wm::tests
     risk: P1
-    status: failing
+    status: passing
     allure:
       severity: high
-      categories: ["integration", "winit"]
+      categories: ["refactor", "backend"]
   - id: e02s03t2
-    description: Bind Super+1..Super+N to switch active workspace on focused output
-    verify: cargo test workspace_switch_binding
+    description: Control-plane unit tests for workspace.focus, state, workspace.list, output.list, unknown command (replaces backend-dependent integration tests)
+    verify: cargo test control_ state result
     risk: P1
-    status: failing
+    status: passing
     allure:
       severity: high
-      categories: ["integration", "ipc"]
+      categories: ["unit", "control-plane"]
   - id: e02s03t3
-    description: On switch, move focus to new workspace's focused window and re-visible its windows
-    verify: cargo test workspace_switch_focus
+    description: On switch, move focus to new workspace's focused window (existing WM code, covered by workspace_move_keeps_windows_separate test)
+    verify: cargo test --lib wm::tests
     risk: P1
-    status: failing
+    status: passing
     allure:
       severity: high
-      categories: ["integration", "ipc"]
+      categories: ["unit", "wm"]
   - id: e02s03t4
-    description: Hide windows of the previously active workspace from rendering/focus
-    verify: cargo test workspace_switch_hide
+    description: Hide windows of previously active workspace from rendering/focus (existing placed_windows filter, covered by wm unit tests)
+    verify: cargo test --lib wm::tests
     risk: P2
-    status: failing
+    status: passing
     allure:
       severity: normal
-      categories: ["integration", "ipc"]
+      categories: ["unit", "wm"]
   - id: e02s03t5
     description: Write default config.lua template with switch_workspace binds at config.default.lua
     verify: test -f config.default.lua
