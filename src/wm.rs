@@ -1389,4 +1389,33 @@ mod tests {
 
         assert!(!manager.set_window_meta(999, "x".into(), "y".into()));
     }
+
+    #[test]
+    fn workspace_remains_without_windows() {
+        let (mut manager, output) = manager();
+        assert!(manager.add_workspace(output, 2, "two"));
+        let window = manager.add_window(output, "kitty", "one").unwrap();
+        manager.remove_window(window);
+
+        assert!(manager.workspace(2).is_some());
+        assert_eq!(manager.workspace(2).unwrap().windows, Vec::<u64>::new());
+    }
+
+    #[test]
+    fn focus_workspace_rejects_foreign_output() {
+        let (mut manager, output) = manager();
+        let second = manager.add_output(
+            "second",
+            Rect {
+                x: 1920,
+                y: 0,
+                width: 1280,
+                height: 720,
+            },
+        );
+        assert!(manager.add_workspace(second, 3, "three"));
+
+        assert!(!manager.focus_workspace(output, 3));
+        assert_eq!(manager.output(output).unwrap().active_workspace, 1);
+    }
 }
