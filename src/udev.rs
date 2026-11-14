@@ -1734,10 +1734,12 @@ impl State {
         elements.extend(layer_elements_above);
 
         // M5/P2: visible borders around each window (Hyprland-style: outside the rect,
-        // fullscreen/maximized windows skip them). Edge strips only — no filled boxes.
+        // fullscreen/maximized windows skip them). Edge strips plus corner circles
+        // when corner_radius > 0, giving rounded corners.
         let border_size = self.wm.border_size();
         let color_focused = self.wm.border_color_focused();
         let color_unfocused = self.wm.border_color_unfocused();
+        let corner_radius = self.decoration.lock().unwrap().corner_radius;
         if border_size > 0 {
             let bp = border_size as f64;
             let mut border_elements: Vec<EswmRenderElements<UdevRenderer>> = Vec::new();
@@ -1786,21 +1788,97 @@ impl State {
                             None, None, None, Kind::Unspecified,
                         ).ok().map(EswmRenderElements::Cursor)
                     };
-                    // top edge
-                    if let Some(elem) = make_edge(edge_w, edge_h, (wx, wy)) {
-                        border_elements.push(elem);
-                    }
-                    // bottom edge
-                    if let Some(elem) = make_edge(edge_w, edge_h, (wx, wy + h - bp)) {
-                        border_elements.push(elem);
-                    }
-                    // left edge
-                    if let Some(elem) = make_edge(side_w, side_h, (wx, wy)) {
-                        border_elements.push(elem);
-                    }
-                    // right edge
-                    if let Some(elem) = make_edge(side_w, side_h, (wx + w - bp, wy)) {
-                        border_elements.push(elem);
+
+                    if corner_radius > 0 && corner_radius * 2 <= rect.width && corner_radius * 2 <= rect.height {
+                        // Rounded corners: shorten edges by corner_radius at each end,
+                        // fill corners with circles centered at the outer corners.
+                        let cr = corner_radius as f64;
+                        // top edge
+                        if let Some(elem) = make_edge(
+                            edge_w.saturating_sub(2 * corner_radius),
+                            edge_h,
+                            (wx + cr, wy),
+                        ) {
+                            border_elements.push(elem);
+                        }
+                        // bottom edge
+                        if let Some(elem) = make_edge(
+                            edge_w.saturating_sub(2 * corner_radius),
+                            edge_h,
+                            (wx + cr, wy + h - bp),
+                        ) {
+                            border_elements.push(elem);
+                        }
+                        // left edge
+                        if let Some(elem) = make_edge(
+                            side_w,
+                            side_h.saturating_sub(2 * corner_radius),
+                            (wx, wy + cr),
+                        ) {
+                            border_elements.push(elem);
+                        }
+                        // right edge
+                        if let Some(elem) = make_edge(
+                            side_w,
+                            side_h.saturating_sub(2 * corner_radius),
+                            (wx + w - bp, wy + cr),
+                        ) {
+                            border_elements.push(elem);
+                        }
+                        // corner circles at the outer corners of the border rect
+                        let circle_positions = [
+                            (wx, wy),                                        // top-left
+                            (wx + w - (corner_radius * 2) as f64, wy),       // top-right
+                            (wx, wy + h - (corner_radius * 2) as f64),       // bottom-left
+                            (wx + w - (corner_radius * 2) as f64,            // bottom-right
+                             wy + h - (corner_radius * 2) as f64),
+                        ];
+                        for pos in circle_positions {
+                            // Re-import the buffer at each position (render_element is position-bound).
+                            let d = corner_radius * 2;
+                            let r = corner_radius as f64;
+                            let mut pix = Vec::with_capacity((d * d * 4) as usize);
+                            for cy in 0..d {
+                                for cx in 0..d {
+                                    let dx = cx as f64 - r;
+                                    let dy = cy as f64 - r;
+                                    if dx * dx + dy * dy <= r * r {
+                                        pix.extend_from_slice(&px);
+                                    } else {
+                                        pix.extend_from_slice(&[0, 0, 0, 0]);
+                                    }
+                                }
+                            }
+                            let buf = MemoryRenderBuffer::from_slice(
+                                &pix, Fourcc::Argb8888, (d as i32, d as i32), 1, Transform::Normal, None,
+                            );
+                            if let Some(elem) = MemoryRenderBufferRenderElement::from_buffer(
+                                &mut renderer,
+                                Point::from(pos),
+                                &buf,
+                                None, None, None, Kind::Unspecified,
+                            ).ok() {
+                                border_elements.push(EswmRenderElements::Cursor(elem));
+                            }
+                        }
+                    } else {
+                        // Square corners (original behavior)
+                        // top edge
+                        if let Some(elem) = make_edge(edge_w, edge_h, (wx, wy)) {
+                            border_elements.push(elem);
+                        }
+                        // bottom edge
+                        if let Some(elem) = make_edge(edge_w, edge_h, (wx, wy + h - bp)) {
+                            border_elements.push(elem);
+                        }
+                        // left edge
+                        if let Some(elem) = make_edge(side_w, side_h, (wx, wy)) {
+                            border_elements.push(elem);
+                        }
+                        // right edge
+                        if let Some(elem) = make_edge(side_w, side_h, (wx + w - bp, wy)) {
+                            border_elements.push(elem);
+                        }
                     }
                 }
             }
