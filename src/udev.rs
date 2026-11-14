@@ -774,6 +774,8 @@ fn execute_keybind(state: &mut State, kb: &lua_state::Keybind) -> FilterResult<(
 fn process_shortcut(state: &mut State, mods: &ModifiersState, keysym: KeysymHandle) -> FilterResult<()> {
     crate::prune_dead_windows(state);
     let raw = u32::from(keysym.modified_sym());
+    tracing::info!("key press: logo={} ctrl={} alt={} shift={} raw={} (KEY_BackSpace={})",
+        mods.logo, mods.ctrl, mods.alt, mods.shift, raw, xkbcommon::xkb::keysyms::KEY_BackSpace);
 
     // Lua keybinds (from es.bind() in config.lua).
     let lua_kb = {
@@ -1060,8 +1062,16 @@ impl State {
                     drop(dec);
                     if dock_height > 0 {
                         if let Some((gx, gy, gw, gh)) = dock {
-                            if location.y >= gy + gh - dock_height as f64
-                                && location.y < gy + gh
+                            // Dock strip sits inside the non-exclusive zone (above
+                            // any bottom-anchored layer like waybar), matching the
+                            // render side; work_area already has dock_h subtracted.
+                            let wa_bottom = self
+                                .wm
+                                .work_area
+                                .map(|wa| wa.y as f64 + wa.height as f64)
+                                .unwrap_or(gh - dock_height as f64);
+                            if location.y >= wa_bottom
+                                && location.y < wa_bottom + dock_height as f64
                                 && location.x >= gx
                                 && location.x < gx + gw
                             {
@@ -2150,7 +2160,9 @@ impl State {
                 let n = entries.len() as u32;
                 tracing::debug!("dock debug: drawing dock at y={} h={} n={} size={}x{} loc={:?}", loc.y + size.h as i32 - dock_height as i32, dock_height, n, size.w, size.h, loc);
                 if n > 0 {
-                    let dock_y = (loc.y + size.h as i32 - dock_height as i32) as f64;
+                    let dock_y = self.wm.work_area
+                        .map(|wa| (wa.y + wa.height as i32) as f64)
+                        .unwrap_or((loc.y + size.h as i32 - dock_height as i32) as f64);
                     let dock_h = dock_height as i32;
                     let total_w = size.w as i32;
                     let seg_w = total_w / n as i32;
@@ -2465,4 +2477,31 @@ enum DeviceAddError {
     AddNode(egl::Error),
     NoRenderNode,
     PrimaryGpuMissing,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Super+Alt+Backspace must match the config's "quit" keybind exactly.
+    #[test]
+    fn quit_keybind_matches_super_alt_backspace() {
+        let kb = lua_state::Keybind {
+            mods: vec!["logo".into(), "alt".into()],
+            key: "backspace".into(),
+            arg: None,
+            cmd: None,
+            action: "quit".into(),
+        };
+        let mut mods = ModifiersState::default();
+        mods.logo = true;
+        mods.alt = true;
+        let raw = xkbcommon::xkb::keysyms::KEY_BackSpace as u32;
+        let matched = find_lua_keybind(std::slice::from_ref(&kb), &mods, raw);
+        assert!(matched.is_some(), "Super+Alt+Backspace should match quit keybind");
+        // Wrong modifiers must not match.
+        let mut wrong = ModifiersState::default();
+        wrong.logo = true;
+        assert!(find_lua_keybind(std::slice::from_ref(&kb), &wrong, raw).is_none());
+    }
 }

@@ -645,8 +645,10 @@ impl WindowManager {
         let id = self.next_window;
         self.next_window += 1;
         let geometry = self.outputs.get(&output)?.geometry;
+        // Floating placement respects the work area (waybar/dock excluded),
+        // not the raw output geometry, or windows spawn over panels.
         let floating_rect = match mode {
-            WindowMode::Floating => Some(self.floating_target(geometry)),
+            WindowMode::Floating => Some(self.floating_target(self.work_area.unwrap_or(geometry))),
             _ => None,
         };
         self.windows.insert(
@@ -1012,11 +1014,21 @@ impl WindowManager {
         // when set, otherwise fall back to the full output geometry.
         let base = self.work_area.unwrap_or(output_state.geometry);
         // Inner geometry inset by gap on all sides so gaps/borders show.
+        // Also account for the titlebar+borders: the window frame is drawn
+        // extending titlebar_height+border ABOVE target_rect.y, so without
+        // this inset the frame overlaps top panels (waybar) — same accounting
+        // the maximized path uses.
+        let bp = self.border_size as i32;
+        let tb_h = self.titlebar_height as i32;
         let inner = Rect {
-            x: base.x + outer as i32,
-            y: base.y + outer as i32,
-            width: base.width.saturating_sub(2 * outer),
-            height: base.height.saturating_sub(2 * outer),
+            x: base.x + outer as i32 + bp,
+            y: base.y + outer as i32 + bp + tb_h,
+            width: base.width.saturating_sub(2 * outer).saturating_sub(2 * bp as u32),
+            height: base
+                .height
+                .saturating_sub(2 * outer)
+                .saturating_sub(tb_h as u32)
+                .saturating_sub(2 * bp as u32),
         };
         let master_width = if tiled.len() == 1 {
             inner.width
@@ -1152,9 +1164,9 @@ mod tests {
         let second = manager.add_window(output, "kitty", "two").unwrap();
         let third = manager.add_window(output, "kitty", "three").unwrap();
 
-        assert_eq!(manager.window(first).unwrap().target_rect.width, 1152);
-        assert_eq!(manager.window(second).unwrap().target_rect.x, 1152);
-        assert_eq!(manager.window(second).unwrap().target_rect.height, 540);
+        assert_eq!(manager.window(first).unwrap().target_rect.width, 1149);
+        assert_eq!(manager.window(second).unwrap().target_rect.x, 1151);
+        assert_eq!(manager.window(second).unwrap().target_rect.height, 538);
         assert_eq!(manager.window(third).unwrap().target_rect.y, 540);
     }
 
@@ -1177,7 +1189,7 @@ mod tests {
         let floating = manager.add_window(output, "kitty", "two").unwrap();
         assert!(manager.set_mode(floating, WindowMode::Floating));
 
-        assert_eq!(manager.window(tiled).unwrap().target_rect.width, 1920);
+        assert_eq!(manager.window(tiled).unwrap().target_rect.width, 1916);
         assert_eq!(manager.window(floating).unwrap().mode, WindowMode::Floating);
     }
 
@@ -1198,7 +1210,7 @@ mod tests {
         assert!(manager.remove_output(second));
         let window = manager.window(window).unwrap();
         assert_eq!(window.output, first);
-        assert_eq!(window.target_rect.width, 1920);
+        assert_eq!(window.target_rect.width, 1916);
         assert!(manager.output(second).is_none());
         assert!(!manager.remove_output(second));
     }
@@ -1247,7 +1259,7 @@ mod tests {
         let (mut manager, output) = manager();
         let first = manager.add_window(output, "kitty", "one").unwrap();
         let second = manager.add_window(output, "kitty", "two").unwrap();
-        assert_eq!(manager.window(second).unwrap().target_rect.width, 768);
+        assert_eq!(manager.window(second).unwrap().target_rect.width, 767);
 
         assert!(manager.toggle_fullscreen(second));
         assert_eq!(manager.window(second).unwrap().mode, WindowMode::Fullscreen);
@@ -1255,7 +1267,7 @@ mod tests {
 
         assert!(manager.toggle_fullscreen(second));
         assert_eq!(manager.window(second).unwrap().mode, WindowMode::Tiled);
-        assert_eq!(manager.window(first).unwrap().target_rect.width, 1152);
+        assert_eq!(manager.window(first).unwrap().target_rect.width, 1149);
     }
 
     #[test]
@@ -1277,19 +1289,19 @@ mod tests {
         let first = manager.add_window(output, "kitty", "one").unwrap();
         let second = manager.add_window(output, "kitty", "two").unwrap();
 
-        // Master should be inset by gap from output edge.
+        // Master should be inset by gap from output edge (plus 2px border).
         let m = manager.window(first).unwrap().target_rect;
-        assert_eq!(m.x, 10);
-        assert_eq!(m.y, 10);
-        assert_eq!(m.width, 1140); // inner.width = 1900, 1900*3/5 = 1140
-        assert_eq!(m.height, 1060); // 1080 - 20
+        assert_eq!(m.x, 12);
+        assert_eq!(m.y, 12);
+        assert_eq!(m.width, 1137); // inner.width = 1896, 1896*3/5 = 1137
+        assert_eq!(m.height, 1056); // 1080 - 20 - 4
 
         // Stack window should be to the right, inset.
         let s = manager.window(second).unwrap().target_rect;
-        assert_eq!(s.x, 10 + 1140 + 10); // inner.x + master_width + inner_gap
-        assert_eq!(s.y, 20); // inner.y + gap
-        assert_eq!(s.width, 750); // 1900 - 1140 - 10
-        assert_eq!(s.height, 1040); // (1060 - 2*10) / 1 = 1040
+        assert_eq!(s.x, 12 + 1137 + 10); // inner.x + master_width + inner_gap
+        assert_eq!(s.y, 22); // inner.y + gap
+        assert_eq!(s.width, 749); // 1896 - 1137 - 10
+        assert_eq!(s.height, 1036); // (1056 - 2*10) / 1 = 1036
     }
 
     #[test]

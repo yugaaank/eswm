@@ -9,8 +9,8 @@
 
 ## Build / run
 
-- `cargo build` — green, 36 pre-existing warnings, no new ones
-- `cargo test` — 23/23 pass (20 unit + 3 integration: control, globals, ipc)
+- `cargo build` — green, 40 warnings (pre-existing), no new ones
+- `cargo test` — 25/25 pass (22 unit + 3 integration: control, globals, ipc)
 - Native DRM is the default backend: `./target/debug/eswm` from a TTY (grabs the VT; Ctrl+Alt+F1/F3 to leave/return)
 - Nested dev backend: `TACIT_COMP_BACKEND=winit ./target/debug/eswm` then `WAYLAND_DISPLAY=eswm-dev kitty`
 - Wayland socket: `$XDG_RUNTIME_DIR/eswm-<wayland-display>.sock` (default `eswm-test`)
@@ -74,6 +74,10 @@ es.bind_cmd("Super+r", "rofi -show drun")
 - Focus borders on DRM: fixed green overlay (borders now render as thin ring behind windows, not filled rect on cursor plane)
 - xdg_output (`zxdg_output_manager_v1`) now advertised — waybar starts and connects (was crashing exit 1 without it)
 - Tiling respects layer-surface exclusive zones: `wm.work_area` set from `LayerMap::non_exclusive_zone()` on each commit, so tiled windows are inset below waybar/panels instead of covering them
+- Floating placement now uses `work_area` (not raw output geometry), so new floating windows no longer spawn over panels
+- Tiled inner rect inset by `border_size` (all sides) + `titlebar_height` (top) so drawn frames never overlap top panels
+- Dock strip hit-test uses `work_area` bottom instead of raw dock geometry, matching the render side
+- Added tracing logs: layer mapped events + work_area updates in `main.rs`; key-press debug in `udev.rs`
 
 ## Documentation
 

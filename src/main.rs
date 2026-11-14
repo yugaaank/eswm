@@ -277,6 +277,9 @@ impl State {
             }
         }
         map.arrange();
+        for layer in map.layers() {
+            tracing::info!("layer mapped: ns={:?} layer={:?}", layer.namespace(), layer.layer());
+        }
         // Insent tiled windows from exclusive layer-surface zones (waybar, panels)
         // and from the bottom dock bar (if dock_height > 0).
         let work_area = map.non_exclusive_zone();
@@ -289,6 +292,11 @@ impl State {
         };
         if self.wm.work_area != Some(wa) {
             self.wm.work_area = Some(wa);
+            tracing::info!(
+                "work_area updated: non_exclusive_zone=loc({},{}) size({}x{}) layers={} dock_h={} -> wa=({},{} {}x{})",
+                work_area.loc.x, work_area.loc.y, work_area.size.w, work_area.size.h,
+                self.layer_wrappers.len(), dock_h, wa.x, wa.y, wa.width, wa.height
+            );
             if let Some(output_id) = self.wm.primary_output_id() {
                 self.wm.arrange_output(output_id);
             }
