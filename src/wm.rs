@@ -128,8 +128,8 @@ impl DecorationConfig {
             outer: 10,
             inner: 10,
             border_size: 2,
-            border_color_focused: [0, 200, 0, 255],
-            border_color_unfocused: [80, 80, 80, 255],
+            border_color_focused: [200, 200, 200, 255],
+            border_color_unfocused: [60, 60, 60, 255],
             corner_radius: 0,
         }
     }
@@ -143,8 +143,8 @@ impl WindowManager {
             outer: 10,
             inner: 10,
             border_size: 2,
-            border_color_focused: [0, 200, 0, 255],
-            border_color_unfocused: [80, 80, 80, 255],
+            border_color_focused: [200, 200, 200, 255],
+            border_color_unfocused: [60, 60, 60, 255],
             ..Self::default()
         }
     }
