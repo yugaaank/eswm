@@ -1103,7 +1103,7 @@ impl State {
                         self.wm.focus_window(id);
                     }
                     let hit_rect = id.and_then(|id| self.wm.window(id)).map(|w| w.target_rect);
-                    tracing::info!(
+                    tracing::debug!(
                         "click at ({:.0},{:.0}) -> window {id:?} rect {hit_rect:?}",
                         location.x,
                         location.y
@@ -1704,15 +1704,15 @@ impl State {
     fn render_surface(&mut self, node: DrmNode, crtc: crtc::Handle) {
         // Real tiling (M5): placement logic is shared with the winit loop (placed_windows).
         let placed = crate::placed_windows(self);
-        tracing::info!("render frame: {} window(s) placed", placed.len());
-        tracing::info!("render debug MARKER: debug block compiled in, placed.len()={}", placed.len());
+        tracing::debug!("render frame: {} window(s) placed", placed.len());
+        tracing::debug!("render debug MARKER: debug block compiled in, placed.len()={}", placed.len());
         if let Some(udev) = self.udev.as_ref() {
-            tracing::info!("render debug: pointer=({:.0},{:.0}) cursor_buffer={} placed_windows={}",
+            tracing::debug!("render debug: pointer=({:.0},{:.0}) cursor_buffer={} placed_windows={}",
                 udev.pointer_location.x, udev.pointer_location.y,
                 udev.cursor_buffer.is_some(),
                 placed.len());
             for (_ws, x, y, id, focused, rect) in &placed {
-                tracing::info!("render debug: window id={id:?} focused={focused} rect=({},{}) {}x{}", x, y, rect.width, rect.height);
+                tracing::debug!("render debug: window id={id:?} focused={focused} rect=({},{}) {}x{}", x, y, rect.width, rect.height);
             }
         }
 
@@ -1746,7 +1746,7 @@ impl State {
             udev.gpus.renderer(&primary_gpu, &render_node, format_needed)
         }
         .unwrap();
-        tracing::info!("render debug2: output_mode={:?} scale={:?} mode_size={:?} pointer=({:.0},{:.0}) cursor_buffer={}",
+        tracing::debug!("render debug2: output_mode={:?} scale={:?} mode_size={:?} pointer=({:.0},{:.0}) cursor_buffer={}",
             mode_size.map(|s| (s.w, s.h)),
             output.current_scale(),
             mode_size,
@@ -2142,13 +2142,13 @@ impl State {
         let dec = self.decoration.lock().unwrap();
         let dock_height = dec.dock_height;
         drop(dec);
-        tracing::info!("dock debug: dock_height={} mode_size={:?} entries={}", dock_height, mode_size.map(|s| (s.w, s.h)), self.wm.dock_entries().len());
+        tracing::debug!("dock debug: dock_height={} mode_size={:?} entries={}", dock_height, mode_size.map(|s| (s.w, s.h)), self.wm.dock_entries().len());
         if dock_height > 0 {
             if let Some(size) = mode_size {
                 let loc = output.current_location();
                 let entries = self.wm.dock_entries();
                 let n = entries.len() as u32;
-                tracing::info!("dock debug: drawing dock at y={} h={} n={} size={}x{} loc={:?}", loc.y + size.h as i32 - dock_height as i32, dock_height, n, size.w, size.h, loc);
+                tracing::debug!("dock debug: drawing dock at y={} h={} n={} size={}x{} loc={:?}", loc.y + size.h as i32 - dock_height as i32, dock_height, n, size.w, size.h, loc);
                 if n > 0 {
                     let dock_y = (loc.y + size.h as i32 - dock_height as i32) as f64;
                     let dock_h = dock_height as i32;
@@ -2160,104 +2160,119 @@ impl State {
                     // and shows through the 1px gaps between segments. Pushing
                     // it first made it cover everything (black dock bug).
 
-                    for (i, entry) in entries.iter().enumerate() {
-                        // State colors are clearly distinct (this is state
-                        // indication, not per-app differentiation — labels do that).
-                        let color = if entry.focused {
-                            [70u8, 110, 170, 255]  // focused: clearly blue
-                        } else if entry.minimized {
-                            [30u8, 30, 30, 255]    // minimized: near-black
-                        } else {
-                            [70u8, 70, 70, 255]    // active: medium gray
-                        };
-                        let w = if i as u32 == n.saturating_sub(1) {
-                            total_w.saturating_sub(seg_w * (n.saturating_sub(1) as i32))
-                        } else {
-                            seg_w
-                        };
-                        if w <= 2 {
-                            continue;
+                    // Buffer cache: rebuild only when geometry or entry states
+                    // change. Same MemoryRenderBuffer across frames = smithay
+                    // texture cache hit = no per-frame upload (the lag cause).
+                    let sig = (
+                        n,
+                        total_w,
+                        dock_h,
+                        entries.iter().map(|e| {
+                            let label = e.app_id.chars().next()
+                                .or_else(|| e.title.chars().next())
+                                .unwrap_or('?')
+                                .to_ascii_uppercase();
+                            (e.id, e.focused, e.minimized, label)
+                        }).collect::<Vec<_>>(),
+                    );
+                    let rebuild = {
+                        let cached = self.dock_buffers.lock().unwrap();
+                        match &*cached {
+                            Some((old_sig, _)) => *old_sig != sig,
+                            None => true,
                         }
-                        // Inset 1px left/right/top so the base bar shows as
-                        // separators; bottom stays flush with the screen edge.
-                        let seg_x = loc.x as f64 + i as f64 * seg_w as f64 + 1.0;
-                        let seg_w_in = (w - 2) as f64;
-                        let seg_h = (dock_h - 1) as f64;
-
-                        // Background segment.
-                        let mut pix = Vec::with_capacity((seg_w_in as usize * seg_h as usize * 4));
-                        for _ in 0..(seg_w_in as usize * seg_h as usize) {
-                            pix.extend_from_slice(&color);
-                        }
-                        // Stamp the label glyph directly into the segment
-                        // pixels (white on the segment color, fully opaque —
-                        // no alpha overlay, no second render element).
-                        let label = entry.app_id.chars().next()
-                            .or_else(|| entry.title.chars().next())
-                            .unwrap_or('?')
-                            .to_ascii_uppercase();
-                        let rows = FONT_5X7.iter()
-                            .find(|(g, _)| *g == label)
-                            .map(|(_, r)| *r)
-                            .unwrap_or([0; 7]);
-                        // Font scale: largest that fits 5x7 cells in the segment.
-                        let s = ((seg_w_in as usize / 5).min((seg_h as usize - 2) / 7)).clamp(1, 3);
-                        let gw = 5 * s;
-                        let gh = 7 * s;
-                        let sw = seg_w_in as usize;
-                        let sh = seg_h as usize;
-                        let ox = (sw - gw) / 2;
-                        let oy = (sh - gh) / 2;
-                        let mut stamped = 0usize;
-                        for (ry, &bits) in rows.iter().enumerate() {
-                            for rx in 0..5u32 {
-                                if bits & (1 << (4 - rx)) != 0 {
-                                    for sy in 0..s {
-                                        for sx in 0..s {
-                                            let x = ox + rx as usize * s + sx;
-                                            let y = oy + ry * s + sy;
-                                            let idx = (y * sw + x) * 4;
-                                            pix[idx] = 255;
-                                            pix[idx + 1] = 255;
-                                            pix[idx + 2] = 255;
-                                            stamped += 1;
+                    };
+                    if rebuild {
+                        let mut bufs = Vec::with_capacity(entries.len() + 1);
+                        for (i, entry) in entries.iter().enumerate() {
+                            let w = if i as u32 == n.saturating_sub(1) {
+                                total_w.saturating_sub(seg_w * (n.saturating_sub(1) as i32))
+                            } else {
+                                seg_w
+                            };
+                            if w <= 2 {
+                                continue;
+                            }
+                            // Inset 1px left/right/top so the base bar shows as
+                            // separators; bottom stays flush with the screen edge.
+                            let seg_w_in = (w - 2) as usize;
+                            let seg_h = (dock_h - 1) as usize;
+                            let color: [u8; 4] = if entry.focused {
+                                [70u8, 110, 170, 255]  // focused: clearly blue
+                            } else if entry.minimized {
+                                [30u8, 30, 30, 255]    // minimized: near-black
+                            } else {
+                                [70u8, 70, 70, 255]    // active: medium gray
+                            };
+                            let mut pix = Vec::with_capacity(seg_w_in * seg_h * 4);
+                            for _ in 0..(seg_w_in * seg_h) {
+                                pix.extend_from_slice(&color);
+                            }
+                            // Stamp the label glyph directly into the segment
+                            // pixels (white on the segment color, fully opaque).
+                            let label = entry.app_id.chars().next()
+                                .or_else(|| entry.title.chars().next())
+                                .unwrap_or('?')
+                                .to_ascii_uppercase();
+                            let rows = FONT_5X7.iter()
+                                .find(|(g, _)| *g == label)
+                                .map(|(_, r)| *r)
+                                .unwrap_or([0; 7]);
+                            let s = ((seg_w_in / 5).min((seg_h - 2) / 7)).clamp(1, 3);
+                            let gw = 5 * s;
+                            let gh = 7 * s;
+                            let ox = (seg_w_in - gw) / 2;
+                            let oy = (seg_h - gh) / 2;
+                            for (ry, &bits) in rows.iter().enumerate() {
+                                for rx in 0..5u32 {
+                                    if bits & (1 << (4 - rx)) != 0 {
+                                        for sy in 0..s {
+                                            for sx in 0..s {
+                                                let x = ox + rx as usize * s + sx;
+                                                let y = oy + ry * s + sy;
+                                                let idx = (y * seg_w_in + x) * 4;
+                                                pix[idx] = 255;
+                                                pix[idx + 1] = 255;
+                                                pix[idx + 2] = 255;
+                                            }
                                         }
                                     }
                                 }
                             }
+                            bufs.push(MemoryRenderBuffer::from_slice(
+                                &pix, Fourcc::Argb8888, (seg_w_in as i32, seg_h as i32), 1, Transform::Normal, None,
+                            ));
                         }
-                        tracing::info!("dock text: label={:?} app_id={:?} scale={} stamped={}",
-                            label, entry.app_id, s, stamped);
-                        let buf = MemoryRenderBuffer::from_slice(
-                            &pix, Fourcc::Argb8888, (seg_w_in as i32, seg_h as i32), 1, Transform::Normal, None,
-                        );
-                        if let Some(elem) = MemoryRenderBufferRenderElement::from_buffer(
-                            &mut renderer,
-                            Point::from((seg_x, dock_y)),
-                            &buf,
-                            None, None, None, Kind::Unspecified,
-                        ).ok() {
-                            dock_elements.push(EswmRenderElements::Cursor(elem));
+                        // Base bar LAST = bottom z: shows through the 1px gaps
+                        // between segments so they read as separate buttons.
+                        {
+                            let mut pix = Vec::with_capacity(total_w as usize * dock_h as usize * 4);
+                            for _ in 0..(total_w as usize * dock_h as usize) {
+                                pix.extend_from_slice(&[15u8, 15, 15, 255]);
+                            }
+                            bufs.push(MemoryRenderBuffer::from_slice(
+                                &pix, Fourcc::Argb8888, (total_w, dock_h), 1, Transform::Normal, None,
+                            ));
                         }
+                        *self.dock_buffers.lock().unwrap() = Some((sig, bufs));
                     }
-
-                    // Base bar LAST = bottom z: shows through the 1px gaps
-                    // between segments so they read as separate buttons.
-                    {
-                        let mut pix = Vec::with_capacity(total_w as usize * dock_h as usize * 4);
-                        for _ in 0..(total_w as usize * dock_h as usize) {
-                            pix.extend_from_slice(&[15u8, 15, 15, 255]);
-                        }
-                        let buf = MemoryRenderBuffer::from_slice(
-                            &pix, Fourcc::Argb8888, (total_w, dock_h), 1, Transform::Normal, None,
-                        );
-                        if let Some(elem) = MemoryRenderBufferRenderElement::from_buffer(
-                            &mut renderer,
-                            Point::from((loc.x as f64, dock_y)),
-                            &buf,
-                            None, None, None, Kind::Unspecified,
-                        ).ok() {
-                            dock_elements.push(EswmRenderElements::Cursor(elem));
+                    let dock_buffers = self.dock_buffers.lock().unwrap();
+                    if let Some((_, bufs)) = dock_buffers.as_ref() {
+                        for (i, buf) in bufs.iter().enumerate() {
+                            let pos = if i < entries.len() {
+                                let seg_x = loc.x as f64 + i as f64 * seg_w as f64 + 1.0;
+                                Point::from((seg_x, dock_y))
+                            } else {
+                                Point::from((loc.x as f64, dock_y))
+                            };
+                            if let Some(elem) = MemoryRenderBufferRenderElement::from_buffer(
+                                &mut renderer,
+                                pos,
+                                buf,
+                                None, None, None, Kind::Unspecified,
+                            ).ok() {
+                                dock_elements.push(EswmRenderElements::Cursor(elem));
+                            }
                         }
                     }
                 }
@@ -2296,7 +2311,7 @@ impl State {
             None => return,
         };
 
-        tracing::info!("render debug: output.current_location={:?} output.current_transform={:?} output.current_scale={:?} output.current_mode={:?}",
+        tracing::debug!("render debug: output.current_location={:?} output.current_transform={:?} output.current_scale={:?} output.current_mode={:?}",
             output.current_location(), output.current_transform(), output.current_scale(), output.current_mode());
         let _ = mode_size;
 

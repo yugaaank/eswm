@@ -160,7 +160,7 @@ pub fn placed_windows(state: &mut State) -> Vec<(WlSurface, i32, i32, wm::Window
             }
             let target_rect = window.target_rect;
             let focused = window.focused;
-            tracing::info!("render window id={id:?} rect={:?} focused={}", target_rect, focused);
+            tracing::debug!("render window id={id:?} rect={:?} focused={}", target_rect, focused);
             placed.push((
                 surface.wl_surface().clone(),
                 target_rect.x,
@@ -384,6 +384,11 @@ struct State {
     // Dock entries (active + minimized windows on the active workspace), rebuilt
     // each frame by apply_layout and exposed to frontends via es.dock.entries().
     pub dock_entries: Arc<std::sync::Mutex<Vec<wm::DockEntry>>>,
+    // Cached dock render buffers, keyed by a signature of geometry + entry
+    // states. Reusing the same MemoryRenderBuffer across frames lets smithay
+    // cache the GPU texture; rebuilding buffers every frame uploaded ~230KB+
+    // per frame and made the compositor lag.
+    pub dock_buffers: std::sync::Mutex<Option<((u32, i32, i32, Vec<(u64, bool, bool, char)>), Vec<smithay::backend::renderer::element::memory::MemoryRenderBuffer>)>>,
     // M4: real DRM backend data; None in nested (winit) mode
     udev: Option<udev::UdevData>,
     // M4: calloop scheduling handle (timers, idle); None in nested mode
@@ -518,6 +523,7 @@ fn new_state(
         lua_keybinds: Arc::new(std::sync::Mutex::new(Vec::new())),
         decoration: Arc::new(std::sync::Mutex::new(wm::DecorationConfig::standard())),
         dock_entries: Arc::new(std::sync::Mutex::new(Vec::new())),
+        dock_buffers: std::sync::Mutex::new(None),
     }
 }
 
@@ -678,9 +684,19 @@ pub fn spawn_on_socket(program: &str, args: &[&str]) {
         .append(true)
         .open(&log_path);
     let prog_name = program.to_owned();
+    // Expand leading ~ (command is run via execve, no shell to do it).
+    let expand_tilde = |p: &str| -> String {
+        if p == "~" || p.starts_with("~/") {
+            std::env::var("HOME").map(|h| format!("{h}{}", &p[1..])).unwrap_or_else(|_| p.to_owned())
+        } else {
+            p.to_owned()
+        }
+    };
+    let prog = expand_tilde(program);
+    let expanded_args: Vec<String> = args.iter().map(|a| expand_tilde(a)).collect();
     match unsafe {
-        let mut cmd = Command::new(&prog_name);
-        cmd.args(args)
+        let mut cmd = Command::new(&prog);
+        cmd.args(&expanded_args)
             .env("WAYLAND_DISPLAY", socket_name())
             // session terminal for launchers (fuzzel wraps Terminal=true apps)
             .env("TERMINAL", "kitty")
