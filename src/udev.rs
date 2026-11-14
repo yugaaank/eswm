@@ -1815,7 +1815,7 @@ impl State {
                 // Borders pushed first → lowest index → drawn last → on top, frame titlebar + surface.
                 // Titlebar next (middle, inside frame top, flush with surface top).
                 // Surface last (bottom layer = client content).
-                if !matches!(mode, wm::WindowMode::Fullscreen | wm::WindowMode::Maximized) {
+                if !matches!(mode, wm::WindowMode::Fullscreen) {
                     let color = if *focused { &color_focused } else { &color_unfocused };
                     let px = [color[0], color[1], color[2], color[3]];
                     let edge_w = rect.width as u32 + 2 * border_size;
@@ -1943,7 +1943,7 @@ impl State {
                 // Borders pushed first → index 0 → drawn last → on top (capture titlebar edges).
                 elements.extend(border_elements);
                 // Titlebar strip (middle layer: on top of surface, under borders).
-                if titlebar_height > 0 && !matches!(mode, wm::WindowMode::Fullscreen | wm::WindowMode::Maximized) {
+                if titlebar_height > 0 && !matches!(mode, wm::WindowMode::Fullscreen) {
                     let tb_w = rect.width as u32;
                     let tb_h = titlebar_height;
                     let tb_px = if *focused { titlebar_color_focused } else { titlebar_color_unfocused };

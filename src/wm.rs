@@ -717,8 +717,10 @@ impl WindowManager {
     }
 
     /// Toggle a window's mapped state (minimize/restore).
-    /// When minimizing the focused window, focus moves to another mapped window.
-    /// When restoring a window, it receives focus.
+    /// When minimizing the focused window, focus stays on it so `toggle_minimize`
+    /// (e.g. `Super+M`) toggles the same window back. `cycle_focus` skips
+    /// unmapped windows so the invisible window won't interrupt focus cycling.
+    /// When restoring a non-focused minimized window, it receives focus.
     pub fn toggle_minimize(&mut self, id: WindowId) -> bool {
         let (output, workspace, was_focused, was_mapped) = {
             let Some(window) = self.windows.get(&id) else {
@@ -737,38 +739,10 @@ impl WindowManager {
         }
 
         if was_focused && was_mapped {
-            // Minimizing the focused window: move focus to another mapped window.
-            let next: Option<WindowId> = self
-                .workspaces
-                .get(&workspace)
-                .and_then(|ws| {
-                    ws.windows.iter().copied().find_map(|other_id| {
-                        if other_id != id {
-                            self.windows
-                                .get(&other_id)
-                                .filter(|w| w.mapped)
-                                .map(|w| w.id)
-                        } else {
-                            None
-                        }
-                    })
-                });
-            if let Some(ws) = self.workspaces.get_mut(&workspace) {
-                match next {
-                    Some(next_id) => {
-                        ws.focused = Some(next_id);
-                        if let Some(w) = self.windows.get_mut(&next_id) {
-                            w.focused = true;
-                        }
-                    }
-                    None => {
-                        ws.focused = None;
-                        self.clear_focus_on_output(output);
-                    }
-                }
-            }
+            // Minimizing the focused window: keep focus on it (invisible now).
+            // Super+M again restores it since focused_id() still returns it.
         } else if !was_focused && !was_mapped {
-            // Restoring a window: give it focus.
+            // Restoring a non-focused minimized window: give it focus.
             self.clear_focus_on_output(output);
             if let Some(ws) = self.workspaces.get_mut(&workspace) {
                 ws.focused = Some(id);
@@ -777,6 +751,8 @@ impl WindowManager {
                 }
             }
         }
+        // was_focused && !was_mapped: restoring a focused minimized window —
+        // focus stays on it, nothing to do.
 
         self.arrange_output(output);
         true
