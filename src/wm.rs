@@ -118,7 +118,7 @@ pub struct WindowManager {
     /// Tiling work area, excluding exclusive layer-surface zones (waybar, panels).
     /// None = use full output geometry.
     pub work_area: Option<Rect>,
-    /// App-id/class → workspace/mode rules, matched at window creation.
+    /// App-id/class -> workspace/mode rules, matched at window creation.
     rules: Vec<WindowRule>,
 }
 
@@ -1360,5 +1360,20 @@ mod tests {
         assert_eq!(manager.focused_id(), Some(second));
         assert!(manager.cycle_focus(1));
         assert_eq!(manager.focused_id(), Some(first));
+    }
+
+    #[test]
+    fn toggle_maximized_saves_and_restores_rect() {
+        let (mut manager, output) = manager();
+        let window = manager.add_window(output, "kitty", "one").unwrap();
+        let before = manager.window(window).unwrap().target_rect;
+
+        assert!(manager.toggle_maximized(window));
+        assert_eq!(manager.window(window).unwrap().mode, WindowMode::Maximized);
+
+        assert!(manager.toggle_maximized(window));
+        let w = manager.window(window).unwrap();
+        assert_eq!(w.mode, WindowMode::Floating);
+        assert_eq!(w.target_rect, before);
     }
 }
