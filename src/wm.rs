@@ -88,6 +88,13 @@ pub struct WindowManager {
     border_color_focused: [u8; 4],
     /// Unfocused border color (RGBA).
     border_color_unfocused: [u8; 4],
+    /// Focused titlebar strip color (RGBA). Used when titlebar_height > 0.
+    titlebar_color_focused: [u8; 4],
+    /// Unfocused titlebar strip color (RGBA). Used when titlebar_height > 0.
+    titlebar_color_unfocused: [u8; 4],
+    /// Titlebar height (px). Extends the hit-test area upward past the window frame
+    /// so clicks on the titlebar register as hitting the window.
+    titlebar_height: u32,
     /// Tiling work area, excluding exclusive layer-surface zones (waybar, panels).
     /// None = use full output geometry.
     pub work_area: Option<Rect>,
@@ -123,6 +130,10 @@ pub struct DecorationConfig {
     /// Titlebar height (px). eswm draws a titlebar strip with buttons at the
     /// top of each window when > 0; clients draw below it.
     pub titlebar_height: u32,
+    /// Titlebar strip focused color (RGBA). Used when titlebar_height > 0.
+    pub titlebar_color_focused: [u8; 4],
+    /// Titlebar strip unfocused color (RGBA). Used when titlebar_height > 0.
+    pub titlebar_color_unfocused: [u8; 4],
     /// Default layout mode for newly spawned windows:
     /// Hyprland = tiled by default, Windows = floating by default.
     pub layout_mode: LayoutMode,
@@ -138,6 +149,8 @@ impl DecorationConfig {
             border_color_unfocused: [60, 60, 60, 255],
             corner_radius: 0,
             titlebar_height: 0,
+            titlebar_color_focused: [200, 200, 200, 255],
+            titlebar_color_unfocused: [60, 60, 60, 255],
             layout_mode: LayoutMode::Hyprland,
         }
     }
@@ -153,6 +166,9 @@ impl WindowManager {
             border_size: 2,
             border_color_focused: [200, 200, 200, 255],
             border_color_unfocused: [60, 60, 60, 255],
+            titlebar_color_focused: [200, 200, 200, 255],
+            titlebar_color_unfocused: [60, 60, 60, 255],
+            titlebar_height: 0,
             ..Self::default()
         }
     }
@@ -408,6 +424,27 @@ impl WindowManager {
         self.border_color_unfocused
     }
 
+    pub fn set_titlebar_colors(&mut self, focused: [u8; 4], unfocused: [u8; 4]) {
+        self.titlebar_color_focused = focused;
+        self.titlebar_color_unfocused = unfocused;
+    }
+
+    pub fn titlebar_color_focused(&self) -> [u8; 4] {
+        self.titlebar_color_focused
+    }
+
+    pub fn titlebar_color_unfocused(&self) -> [u8; 4] {
+        self.titlebar_color_unfocused
+    }
+
+    pub fn set_titlebar_height(&mut self, height: u32) {
+        self.titlebar_height = height;
+    }
+
+    pub fn titlebar_height(&self) -> u32 {
+        self.titlebar_height
+    }
+
     pub fn add_window_rule(&mut self, rule: WindowRule) {
         self.rules.push(rule);
     }
@@ -454,22 +491,36 @@ impl WindowManager {
     }
 
     /// Highest-most mapped window of the active workspace at pos (newest first).
+    /// Iterates in render order — the focused window first, then the rest
+    /// newest-first — so a click on an overlap hits the topmost rendered window.
     pub fn window_at(&self, pos: (f64, f64), border_size: u32) -> Option<WindowId> {
         let primary = self.primary_output_id()?;
         let output_state = self.outputs.get(&primary)?;
         let workspace = self.workspaces.get(&output_state.active_workspace)?;
         let bs = border_size as i32;
+        let focused = workspace.focused;
+        let mut ordered: Vec<WindowId> = Vec::new();
+        if let Some(f) = focused {
+            ordered.push(f);
+        }
         for id in workspace.windows.iter().rev() {
-            let Some(window) = self.windows.get(id) else { continue };
+            if focused.map_or(true, |f| *id != f) {
+                ordered.push(*id);
+            }
+        }
+        for id in ordered {
+            let Some(window) = self.windows.get(&id) else { continue };
             if !window.mapped {
                 continue;
             }
             // Hit test against target_rect expanded by border size (border is part of window)
+            // and titlebar height (titlebar sits above the client surface).
+            let tb = self.titlebar_height as i32;
             let r = Rect {
                 x: window.target_rect.x - bs,
-                y: window.target_rect.y - bs,
+                y: window.target_rect.y - bs - tb,
                 width: window.target_rect.width.saturating_add(2 * border_size),
-                height: window.target_rect.height.saturating_add(2 * border_size),
+                height: window.target_rect.height.saturating_add(2 * border_size + tb as u32),
             };
             if r.width == 0 || r.height == 0 {
                 continue;
@@ -480,7 +531,7 @@ impl WindowManager {
                 && pos.1 < r.y as f64 + r.height as f64;
 
             if inside {
-                return Some(*id);
+                return Some(id);
             }
         }
         None
@@ -1092,4 +1143,23 @@ mod tests {
         assert_eq!(manager.window(id).unwrap().mode, WindowMode::Tiled); // default Hyprland mode
     }
 
+    #[test]
+    fn focusing_floating_window_keeps_stack_order_for_cycling() {
+        let (mut manager, output) = manager();
+        let first = manager.add_window(output, "kitty", "one").unwrap();
+        let second = manager.add_window(output, "kitty", "two").unwrap();
+        manager.set_mode(first, WindowMode::Floating);
+        manager.set_mode(second, WindowMode::Floating);
+        assert_eq!(manager.workspace(1).unwrap().windows, vec![first, second]);
+        // focusing a floating window focuses it without reordering the stack,
+        // so focus cycling keeps a stable order over all windows.
+        assert!(manager.focus_window(first));
+        assert_eq!(manager.focused_id(), Some(first));
+        assert_eq!(manager.workspace(1).unwrap().windows, vec![first, second]);
+        // cycle_focus visits floating windows too.
+        assert!(manager.cycle_focus(1));
+        assert_eq!(manager.focused_id(), Some(second));
+        assert!(manager.cycle_focus(1));
+        assert_eq!(manager.focused_id(), Some(first));
+    }
 }

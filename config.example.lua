@@ -30,31 +30,19 @@ es.bind("Super+Alt+Right", "focus_workspace_next")
 
 -- Window mode toggles
 es.bind("Super+Space", "toggle_window_mode")
-es.bind("Super+Shift+Space", "toggle_layout_mode")
-es.bind("Super+f", "toggle_fullscreen")
-es.bind("Super+m", "toggle_maximized")
+es.bind("Super+Shift+Space", "toggle_window_mode")
 
--- Launcher
-es.bind("Super+Alt+Space", "spawn_fuzzel")
+-- Quit eswm
+es.bind("Super+Alt+Backspace", "quit")
 
--- Quit
-es.bind("Ctrl+Alt+Backspace", "quit")
-
--- VT switching
-for i = 1, 12 do
-    es.bind("Ctrl+Alt+vt" .. i, "change_vt", i)
-end
-
--- Run arbitrary commands on keypress: es.bind_cmd("modifiers+key", "command")
-es.bind_cmd("Super+r", "rofi -show drun")
-es.bind_cmd("Super+e", "emacsclient -c")
-
--- Window decorations (border size/gaps/colors, corner radius)
+-- Window decorations (border size/gaps/colors, corner radius, titlebar)
 es.dsp.set_border_size(2)
 es.dsp.set_outer_gap(10)
 es.dsp.set_inner_gap(10)
 es.dsp.set_border_color_focused(0, 200, 0, 255)   -- green
 es.dsp.set_border_color_unfocused(80, 80, 80, 255) -- gray
+es.dsp.set_titlebar_color_focused(40, 40, 60, 255)   -- dark slate when focused
+es.dsp.set_titlebar_color_unfocused(30, 30, 30, 255) -- dark gray when unfocused
 es.dsp.set_corner_radius(0)                        -- stored; renderer clipping TBD
 es.dsp.set_titlebar_height(0)                      -- 0 = no titlebar; eswm-drawn titlebar when > 0
 es.dsp.set_layout_mode("tiling")                   -- "tiling" or "floating"; default mode for new windows

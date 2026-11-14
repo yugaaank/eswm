@@ -217,6 +217,26 @@ pub fn register_api(
     })?;
     dsp_table.set("set_border_color_unfocused", dsp_set_border_color_unfocused)?;
 
+    // es.dsp.set_titlebar_color_focused(r, g, b, a) -> focused titlebar color (RGBA 0-255)
+    let dsp_set_titlebar_color_focused = lua.create_function({
+        let decoration = decoration.clone();
+        move |_, (r, g, b, a): (u8, u8, u8, u8)| -> Result<(), mlua::Error> {
+            decoration.lock().unwrap().titlebar_color_focused = [r, g, b, a];
+            Ok(())
+        }
+    })?;
+    dsp_table.set("set_titlebar_color_focused", dsp_set_titlebar_color_focused)?;
+
+    // es.dsp.set_titlebar_color_unfocused(r, g, b, a) -> unfocused titlebar color (RGBA 0-255)
+    let dsp_set_titlebar_color_unfocused = lua.create_function({
+        let decoration = decoration.clone();
+        move |_, (r, g, b, a): (u8, u8, u8, u8)| -> Result<(), mlua::Error> {
+            decoration.lock().unwrap().titlebar_color_unfocused = [r, g, b, a];
+            Ok(())
+        }
+    })?;
+    dsp_table.set("set_titlebar_color_unfocused", dsp_set_titlebar_color_unfocused)?;
+
     // Borrow dsp_table for es.set; dsp_table is still valid because we set exec_cmd first
     es.set("dsp", &dsp_table)?;
 

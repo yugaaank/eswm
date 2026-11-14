@@ -1005,28 +1005,24 @@ impl State {
                             let window = self.wm.window(id).unwrap();
                             let rect = window.target_rect;
                             let tb = titlebar_height as f64;
-                            let in_titlebar = location.y >= rect.y as f64 && location.y < rect.y as f64 + tb;
+                            // Titlebar is drawn above the client surface: y in [rect.y - tb, rect.y)
+                            let in_titlebar = location.y >= rect.y as f64 - tb && location.y < rect.y as f64
+                                && location.x >= rect.x as f64 && location.x < rect.x as f64 + rect.width as f64;
                             if in_titlebar {
-                                let bw = self.wm.border_size() as f64;
-                                let tb_w = rect.width as f64 + 2.0 * bw;
                                 let btn_size = (tb - 2.0).max(0.0);
                                 let btn_gap = 4.0;
-                                let btn_area_start = rect.x as f64 + tb_w - (btn_size + btn_gap);
-                                let btn_area_end = rect.x as f64 + tb_w;
-                                if location.x >= btn_area_start && location.x <= btn_area_end {
-                                    // On a button: rightmost = close, middle = maximize, left = minimize
-                                    let offset_from_right = (rect.x as f64 + tb_w) - location.x;
-                                    if offset_from_right < btn_size + btn_gap {
-                                        // Close button
-                                        self.wm.remove_window(id);
-                                    } else if offset_from_right < 2.0 * (btn_size + btn_gap) {
-                                        // Maximize button
-                                        self.wm.toggle_maximized(id);
-                                    } else {
-                                        // Minimize button: hide window
-                                        if let Some(w) = self.wm.window_mut(id) {
-                                            w.mapped = false;
-                                        }
+                                // Buttons are right-aligned at rect.x + rect.width.
+                                let offset_from_right = (rect.x as f64 + rect.width as f64) - location.x;
+                                if offset_from_right < btn_size + btn_gap {
+                                    // Close button (rightmost)
+                                    self.wm.remove_window(id);
+                                } else if offset_from_right < 2.0 * (btn_size + btn_gap) {
+                                    // Maximize button
+                                    self.wm.toggle_maximized(id);
+                                } else if offset_from_right < 3.0 * (btn_size + btn_gap) {
+                                    // Minimize button: hide window
+                                    if let Some(w) = self.wm.window_mut(id) {
+                                        w.mapped = false;
                                     }
                                 } else if window.mode == wm::WindowMode::Floating {
                                     // Titlebar drag: start move on floating window
@@ -1785,41 +1781,43 @@ impl State {
         let border_size = self.wm.border_size();
         let color_focused = self.wm.border_color_focused();
         let color_unfocused = self.wm.border_color_unfocused();
+        let titlebar_color_focused = self.wm.titlebar_color_focused();
+        let titlebar_color_unfocused = self.wm.titlebar_color_unfocused();
         let dec = self.decoration.lock().unwrap();
         let corner_radius = dec.corner_radius;
         let titlebar_height = dec.titlebar_height;
         drop(dec);
-        if border_size > 0 {
+        // Titlebar height and border size are independent: a titlebar can be
+        // drawn even when the border is disabled (border_size == 0). The titlebar
+        // strip overlaps the top of the client surface by design (the client
+        // fills target_rect; its top zone is hidden behind the titlebar).
+        if border_size > 0 || titlebar_height > 0 {
             let bp = border_size as f64;
-            let mut border_elements: Vec<EswmRenderElements<UdevRenderer>> = Vec::new();
             for (ws, x, y, id, focused, rect) in &placed {
                 let mode = self.wm.window(*id).map(|w| w.mode).unwrap_or(wm::WindowMode::Tiled);
-                // Always render the window surface tree
-                let tree_elements = render_elements_from_surface_tree(
-                    &mut renderer,
-                    ws,
-                    (*x, *y),
-                    1.0,
-                    1.0,
-                    Kind::Unspecified,
-                );
-                elements.extend(
-                    tree_elements
-                        .into_iter()
-                        .map(EswmRenderElements::Surface),
-                );
-                // Borders only when not fullscreen/maximized (Hyprland behavior)
+                // Smithay draws input[0] last (on top), so the focused window
+                // (first in `placed`) paints on top overall. Within each window
+                // the order is [borders, titlebar, surface]: borders pushed
+                // first (index 0 → drawn last → on top, frame the window),
+                // titlebar next (middle, drawn above the window frame, no
+                // overlap with client content), surface pushed last (drawn
+                // first → bottom layer = client content).
+                let mut border_elements: Vec<EswmRenderElements<UdevRenderer>> = Vec::new();
+                // Border frame extends upward by titlebar_height so borders capture the titlebar.
+                let wx = rect.x as f64 - bp;
+                let wy = rect.y as f64 - bp - titlebar_height as f64;
+                let w = rect.width as f64 + 2.0 * bp;
+                let h = rect.height as f64 + 2.0 * bp + titlebar_height as f64;
+                // Borders pushed first → lowest index → drawn last → on top, frame titlebar + surface.
+                // Titlebar next (middle, inside frame top, flush with surface top).
+                // Surface last (bottom layer = client content).
                 if !matches!(mode, wm::WindowMode::Fullscreen | wm::WindowMode::Maximized) {
                     let color = if *focused { &color_focused } else { &color_unfocused };
                     let px = [color[0], color[1], color[2], color[3]];
-                    let wx = rect.x as f64 - bp;
-                    let wy = rect.y as f64 - bp;
-                    let w = rect.width as f64 + 2.0 * bp;
-                    let h = rect.height as f64 + 2.0 * bp;
                     let edge_w = rect.width as u32 + 2 * border_size;
                     let edge_h = border_size;
                     let side_w = border_size;
-                    let side_h = rect.height as u32;
+                    let side_h = (rect.height as f64 + titlebar_height as f64 + bp) as u32;
                     let mut make_edge = |ew: u32, eh: u32, pos: (f64, f64)| {
                         let mut pix = Vec::with_capacity((ew * eh * 4) as usize);
                         for _ in 0..eh {
@@ -1848,7 +1846,7 @@ impl State {
                             edge_h,
                             (wx + cr, wy),
                         ) {
-                            border_elements.push(elem);
+                            elements.push(elem);
                         }
                         // bottom edge
                         if let Some(elem) = make_edge(
@@ -1856,7 +1854,7 @@ impl State {
                             edge_h,
                             (wx + cr, wy + h - bp),
                         ) {
-                            border_elements.push(elem);
+                            elements.push(elem);
                         }
                         // left edge
                         if let Some(elem) = make_edge(
@@ -1913,75 +1911,103 @@ impl State {
                     } else {
                         // Square corners (original behavior)
                         // top edge
-                        if let Some(elem) = make_edge(edge_w, edge_h, (wx, wy)) {
+                        if let Some(elem) = make_edge(
+                            edge_w, edge_h, (wx, wy),
+                        ) {
                             border_elements.push(elem);
                         }
                         // bottom edge
-                        if let Some(elem) = make_edge(edge_w, edge_h, (wx, wy + h - bp)) {
+                        if let Some(elem) = make_edge(
+                            edge_w, edge_h, (wx, wy + h - bp),
+                        ) {
                             border_elements.push(elem);
                         }
                         // left edge
-                        if let Some(elem) = make_edge(side_w, side_h, (wx, wy)) {
+                        if let Some(elem) = make_edge(
+                            side_w, side_h, (wx, wy),
+                        ) {
                             border_elements.push(elem);
                         }
                         // right edge
-                        if let Some(elem) = make_edge(side_w, side_h, (wx + w - bp, wy)) {
+                        if let Some(elem) = make_edge(
+                            side_w, side_h, (wx + w - bp, wy),
+                        ) {
                             border_elements.push(elem);
                         }
                     }
-                    // Titlebar strip with buttons (eswm-drawn server-side decoration)
-                    if titlebar_height > 0 && !matches!(mode, wm::WindowMode::Fullscreen | wm::WindowMode::Maximized) {
-                        let tb = titlebar_height as f64;
-                        let tb_w = rect.width as u32 + 2 * border_size;
-                        let tb_h = titlebar_height;
-                        let tb_px = [color[0], color[1], color[2], color[3]];
-                        // Titlebar background strip
-                        let mut tb_pix = Vec::with_capacity((tb_w * tb_h * 4) as usize);
-                        for _ in 0..(tb_w * tb_h) {
-                            tb_pix.extend_from_slice(&tb_px);
+                }
+                // Borders pushed first → index 0 → drawn last → on top (capture titlebar edges).
+                elements.extend(border_elements);
+                // Titlebar strip (middle layer: on top of surface, under borders).
+                if titlebar_height > 0 && !matches!(mode, wm::WindowMode::Fullscreen | wm::WindowMode::Maximized) {
+                    let tb_w = rect.width as u32;
+                    let tb_h = titlebar_height;
+                    let tb_px = if *focused { titlebar_color_focused } else { titlebar_color_unfocused };
+                    let tb_px = [tb_px[0], tb_px[1], tb_px[2], tb_px[3]];
+                    // Button elements collected first so they draw on top of
+                    // the titlebar background (smithay draws index 0 last).
+                    let mut button_elements: Vec<EswmRenderElements<UdevRenderer>> = Vec::new();
+                    let btn_size = tb_h.saturating_sub(2);
+                    let btn_gap = 4u32;
+                    let mut btn_x = (rect.x as f64 + rect.width as f64) - (btn_size + btn_gap) as f64;
+                    // Helper: draw a solid-color square button at (bx, by)
+                    let mut draw_button = |bx: f64, by: f64, bcol: [u8; 4], bsize: u32| {
+                        let mut bpix = Vec::with_capacity((bsize * bsize * 4) as usize);
+                        for _ in 0..(bsize * bsize) {
+                            bpix.extend_from_slice(&bcol);
                         }
-                        let tb_buf = MemoryRenderBuffer::from_slice(
-                            &tb_pix, Fourcc::Argb8888, (tb_w as i32, tb_h as i32), 1, Transform::Normal, None,
+                        let buf = MemoryRenderBuffer::from_slice(
+                            &bpix, Fourcc::Argb8888, (bsize as i32, bsize as i32), 1, Transform::Normal, None,
                         );
                         if let Some(elem) = MemoryRenderBufferRenderElement::from_buffer(
                             &mut renderer,
-                            Point::from((wx, wy)),
-                            &tb_buf,
+                            Point::from((bx, by)),
+                            &buf,
                             None, None, None, Kind::Unspecified,
                         ).ok() {
-                            border_elements.push(EswmRenderElements::Cursor(elem));
+                            button_elements.push(EswmRenderElements::Cursor(elem));
                         }
-                        // Buttons on the right side of the titlebar
-                        let btn_size = tb_h.saturating_sub(2);
-                        let btn_gap = 4u32;
-                        let mut btn_x = (wx + w - bp as f64) - (btn_size + btn_gap) as f64;
-                        // Helper: draw a solid-color square button at (bx, by)
-                        let mut draw_button = |bx: f64, by: f64, bcol: [u8; 4], bsize: u32| {
-                            let mut bpix = Vec::with_capacity((bsize * bsize * 4) as usize);
-                            for _ in 0..(bsize * bsize) {
-                                bpix.extend_from_slice(&bcol);
-                            }
-                            let buf = MemoryRenderBuffer::from_slice(
-                                &bpix, Fourcc::Argb8888, (bsize as i32, bsize as i32), 1, Transform::Normal, None,
-                            );
-                            if let Some(elem) = MemoryRenderBufferRenderElement::from_buffer(
-                                &mut renderer,
-                                Point::from((bx, by)),
-                                &buf,
-                                None, None, None, Kind::Unspecified,
-                            ).ok() {
-                                border_elements.push(EswmRenderElements::Cursor(elem));
-                            }
-                        };
-                        draw_button(btn_x, wy + 1.0, [255, 0, 0, 255], btn_size); // close
-                        btn_x -= btn_size as f64 + btn_gap as f64;
-                        draw_button(btn_x, wy + 1.0, [200, 200, 0, 255], btn_size); // maximize
-                        btn_x -= btn_size as f64 + btn_gap as f64;
-                        draw_button(btn_x, wy + 1.0, [100, 100, 100, 255], btn_size); // minimize
+                    };
+                    draw_button(btn_x, rect.y as f64 - titlebar_height as f64 + 1.0, [255, 0, 0, 255], btn_size); // close
+                    btn_x -= btn_size as f64 + btn_gap as f64;
+                    draw_button(btn_x, rect.y as f64 - titlebar_height as f64 + 1.0, [200, 200, 0, 255], btn_size); // maximize
+                    btn_x -= btn_size as f64 + btn_gap as f64;
+                    draw_button(btn_x, rect.y as f64 - titlebar_height as f64 + 1.0, [100, 100, 100, 255], btn_size); // minimize
+                    // Titlebar background buffer
+                    let mut tb_pix = Vec::with_capacity((tb_w * tb_h * 4) as usize);
+                    for _ in 0..(tb_w * tb_h) {
+                        tb_pix.extend_from_slice(&tb_px);
+                    }
+                    let tb_buf = MemoryRenderBuffer::from_slice(
+                        &tb_pix, Fourcc::Argb8888, (tb_w as i32, tb_h as i32), 1, Transform::Normal, None,
+                    );
+                    // Borders pushed earlier are at low index (on top). Buttons next,
+                    // then titlebar background last (below buttons, above surface).
+                    elements.extend(button_elements);
+                    if let Some(elem) = MemoryRenderBufferRenderElement::from_buffer(
+                        &mut renderer,
+                        Point::from((rect.x as f64, rect.y as f64 - titlebar_height as f64)),
+                        &tb_buf,
+                        None, None, None, Kind::Unspecified,
+                    ).ok() {
+                        elements.push(EswmRenderElements::Cursor(elem));
                     }
                 }
+                // Always render the window surface tree (bottom layer).
+                let tree_elements = render_elements_from_surface_tree(
+                    &mut renderer,
+                    ws,
+                    (*x, *y),
+                    1.0,
+                    1.0,
+                    Kind::Unspecified,
+                );
+                elements.extend(
+                    tree_elements
+                        .into_iter()
+                        .map(EswmRenderElements::Surface),
+                );
             }
-            elements.extend(border_elements);
         } else {
             for (ws, x, y, _, _, rect) in &placed {
                 let tree_elements = render_elements_from_surface_tree(
@@ -1999,6 +2025,7 @@ impl State {
                 );
             }
         }
+
         elements.extend(layer_elements_below);
 
         // shortcut: with no clients AND no cursor the damage tracker marks the

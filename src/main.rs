@@ -136,43 +136,52 @@ pub fn window_id_of(surface: &WlSurface) -> Option<wm::WindowId> {
 // (surface, x, y, id, focused, rect)
 pub fn placed_windows(state: &mut State) -> Vec<(WlSurface, i32, i32, wm::WindowId, bool, wm::Rect)> {
     crate::apply_layout(state);
-    state
-        .xdg_shell_state
-        .toplevel_surfaces()
-        .iter()
-        .filter_map(|surface| {
-            let id = window_id_of(surface.wl_surface())?;
-            let window = state.wm.window(id)?;
-            let active = state
-                .wm
-                .output(window.output)
-                .map(|o| o.active_workspace == window.workspace)
-                .unwrap_or(false);
-            if !active || !window.mapped || window.target_rect.width == 0 {
-                tracing::info!(
-                    "skip render surface id={id:?} active={active} mapped={} width={}",
-                    window.mapped,
-                    window.target_rect.width
-                );
-                return None;
+    // Render windows in stack order (workspace.windows order) so that a floating
+    // window brought to the front on focus/click renders above the others.
+    // smithay draws render elements back-to-front, so the first element here
+    // paints on top; the focused window is moved first so it renders on top.
+    let mut placed: Vec<(WlSurface, i32, i32, wm::WindowId, bool, wm::Rect)> = Vec::new();
+    for workspace in state.wm.workspaces() {
+        let Some(output) = state.wm.output(workspace.output) else {
+            continue;
+        };
+        if output.active_workspace != workspace.id {
+            continue;
+        }
+        for &id in &workspace.windows {
+            let Some(surface) = toplevel_for_window(state, id) else {
+                continue;
+            };
+            let Some(window) = state.wm.window(id) else {
+                continue;
+            };
+            if !window.mapped || window.target_rect.width == 0 {
+                continue;
             }
             let target_rect = window.target_rect;
             let focused = window.focused;
-            // Render the surface buffer straight into the tiling rect so content
-            // fills the border space. With server-side decoration on, clients draw
-            // content edge-to-edge; an xdg geometry offset (set for CSD shadows/
-            // padding) only shifts content away from the border, leaving a gap.
             tracing::info!("render window id={id:?} rect={:?} focused={}", target_rect, focused);
-            Some((
+            placed.push((
                 surface.wl_surface().clone(),
                 target_rect.x,
                 target_rect.y,
                 id,
                 focused,
                 target_rect,
-            ))
-        })
-        .collect()
+            ));
+        }
+    }
+    // The focused window paints on top of the stack (smithay draws the first
+    // element last). workspace.windows order is intentionally left untouched so
+    // that focus cycling (Super+arrow) visits every window, including floating
+    // ones, in a stable order.
+    if let Some(pos) = placed.iter().position(|(_, _, _, _, focused, _)| *focused) {
+        if pos != 0 {
+            let focused_win = placed.remove(pos);
+            placed.insert(0, focused_win);
+        }
+    }
+    placed
 }
 
 fn toplevel_for_window(state: &State, id: wm::WindowId) -> Option<ToplevelSurface> {
@@ -559,12 +568,17 @@ fn apply_decoration_to_wm(state: &mut State) {
     let border_size = d.border_size;
     let color_focused = d.border_color_focused;
     let color_unfocused = d.border_color_unfocused;
+    let titlebar_color_focused = d.titlebar_color_focused;
+    let titlebar_color_unfocused = d.titlebar_color_unfocused;
+    let titlebar_height = d.titlebar_height;
     let layout_mode = d.layout_mode;
     drop(d);
     state.wm.set_outer(outer);
     state.wm.set_inner(inner);
     state.wm.set_border_size(border_size);
     state.wm.set_border_colors(color_focused, color_unfocused);
+    state.wm.set_titlebar_colors(titlebar_color_focused, titlebar_color_unfocused);
+    state.wm.set_titlebar_height(titlebar_height);
     state.wm.set_layout_mode(layout_mode);
 }
 
