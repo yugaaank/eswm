@@ -69,7 +69,21 @@ pub struct Output {
     pub active_workspace: WorkspaceId,
 }
 
+/// A single entry in the dock: one window on the active workspace, either
+/// active (mapped/visible) or minimized (unmapped). This is the data model
+/// that frontends consume via `es.dock.entries()` — eswm itself renders a
+/// default dock from it, but an external frontend can build its own UI.
+#[derive(Clone, Debug)]
+pub struct DockEntry {
+    pub id: WindowId,
+    pub app_id: String,
+    pub title: String,
+    /// true when the window is minimized (mapped == false)
+    pub minimized: bool,
+    pub focused: bool,
+}
 
+/// One blank line kept for visual separation between structs.
 
 #[derive(Default)]
 pub struct WindowManager {
@@ -98,6 +112,9 @@ pub struct WindowManager {
     /// Titlebar height (px). Extends the hit-test area upward past the window frame
     /// so clicks on the titlebar register as hitting the window.
     titlebar_height: u32,
+    /// Dock bar height (px). eswm draws a simple dock bar at the bottom of the
+    /// output when > 0; reserved from the work area so tiled windows stay clear.
+    dock_height: u32,
     /// Tiling work area, excluding exclusive layer-surface zones (waybar, panels).
     /// None = use full output geometry.
     pub work_area: Option<Rect>,
@@ -137,6 +154,9 @@ pub struct DecorationConfig {
     pub titlebar_color_focused: [u8; 4],
     /// Titlebar strip unfocused color (RGBA). Used when titlebar_height > 0.
     pub titlebar_color_unfocused: [u8; 4],
+    /// Dock bar height (px). eswm draws a simple dock bar at the bottom of the
+    /// output when > 0; reserved from the work area so tiled windows stay clear.
+    pub dock_height: u32,
     /// Default layout mode for newly spawned windows:
     /// Hyprland = tiled by default, Windows = floating by default.
     pub layout_mode: LayoutMode,
@@ -154,6 +174,7 @@ impl DecorationConfig {
             titlebar_height: 0,
             titlebar_color_focused: [200, 200, 200, 255],
             titlebar_color_unfocused: [60, 60, 60, 255],
+            dock_height: 0,
             layout_mode: LayoutMode::Hyprland,
         }
     }
@@ -172,6 +193,7 @@ impl WindowManager {
             titlebar_color_focused: [200, 200, 200, 255],
             titlebar_color_unfocused: [60, 60, 60, 255],
             titlebar_height: 0,
+            dock_height: 0,
             ..Self::default()
         }
     }
@@ -446,6 +468,47 @@ impl WindowManager {
 
     pub fn titlebar_height(&self) -> u32 {
         self.titlebar_height
+    }
+
+    pub fn set_dock_height(&mut self, height: u32) {
+        self.dock_height = height;
+    }
+
+    pub fn dock_height(&self) -> u32 {
+        self.dock_height
+    }
+
+    /// Dock entries for the active workspace of the primary output: every
+    /// window on that workspace, active (mapped) first then minimized
+    /// (unmapped), focused window first. This is the data model frontends
+    /// consume via `es.dock.entries()`.
+    pub fn dock_entries(&self) -> Vec<DockEntry> {
+        let Some(primary) = self.primary_output_id() else {
+            return Vec::new();
+        };
+        let Some(output_state) = self.outputs.get(&primary) else {
+            return Vec::new();
+        };
+        let Some(workspace) = self.workspaces.get(&output_state.active_workspace) else {
+            return Vec::new();
+        };
+        let focused = workspace.focused;
+        let mut entries: Vec<DockEntry> = workspace
+            .windows
+            .iter()
+            .filter_map(|id| self.windows.get(id).map(|w| (id, w)))
+            .filter(|(_, w)| w.output == primary)
+            .map(|(id, w)| DockEntry {
+                id: *id,
+                app_id: w.app_id.clone(),
+                title: w.title.clone(),
+                minimized: !w.mapped,
+                focused: focused == Some(*id),
+            })
+            .collect();
+        // Stable creation order (workspace.windows order) so the focused
+        // highlight MOVES between segments instead of reordering them.
+        entries
     }
 
     pub fn add_window_rule(&mut self, rule: WindowRule) {
@@ -780,6 +843,34 @@ impl WindowManager {
         // focus stays on it, nothing to do.
 
         self.arrange_output(output);
+        true
+    }
+
+    /// Focus a window, restoring it from minimized state first if needed.
+    /// Left-click on a dock entry should bring a minimized window back up.
+    pub fn focus_window_or_restore(&mut self, id: WindowId) -> bool {
+        let Some(window) = self.windows.get(&id) else {
+            return false;
+        };
+        let output = window.output;
+        let workspace = window.workspace;
+        let was_mapped = window.mapped;
+
+        // Restore from minimized state if needed.
+        if !was_mapped {
+            if let Some(w) = self.windows.get_mut(&id) {
+                w.mapped = true;
+            }
+        }
+
+        self.focus_window(id);
+
+        // If we restored a non-focused minimized window, focus_window already
+        // set workspace.focused and w.focused = true. arrange_output so the
+        // restored window gets a target_rect / configure.
+        if !was_mapped {
+            self.arrange_output(output);
+        }
         true
     }
 

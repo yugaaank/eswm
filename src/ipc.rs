@@ -65,6 +65,9 @@ pub struct Snapshot {
     pub cursor_pos: (i32, i32),
     pub keyboard_layout: String,
     pub keyboard_rules: String,
+    /// Dock entries: active + minimized windows on the primary workspace.
+    /// Populated each frame from `wm.dock_entries()`.
+    pub dock_entries: Vec<crate::wm::DockEntry>,
 }
 
 /// Commands for the compositor main loop.
@@ -76,6 +79,10 @@ pub enum CompCmd {
     GotoWorkspace(i32),
     /// `hyprctl dispatch [pin] closewindow <addr>`
     CloseWindow(String),
+    /// eswm dock: focus / restore the window with this id (activate dock entry)
+    FocusWindow(u64),
+    /// eswm dock: toggle minimized (mapped) state of the window with this id
+    ToggleMinimize(u64),
     /// anything eswm sends before we implement it
     Unsupported(String),
 }
@@ -116,6 +123,14 @@ pub fn apply_cmd(state: &mut State, ipc: &Ipc, cmd: CompCmd) {
             // not store them. Use the native control socket instead:
             // window.close {id}
         }
+        CompCmd::FocusWindow(id) => {
+            state.wm.focus_window(id);
+            crate::apply_layout(state);
+        }
+        CompCmd::ToggleMinimize(id) => {
+            state.wm.toggle_minimize(id);
+            crate::apply_layout(state);
+        }
         CompCmd::Unsupported(_) => {}
     }
 }
@@ -148,6 +163,7 @@ pub fn refresh_snapshot(state: &crate::State, size: (i32, i32)) {
         });
     }
     let focused = clients.first().map(|c| c.address.clone());
+    let dock_entries = state.wm.dock_entries();
     let snap = Snapshot {
         clients,
         monitor: (size.0, size.1, 1.0, 60.0),
@@ -157,6 +173,7 @@ pub fn refresh_snapshot(state: &crate::State, size: (i32, i32)) {
         cursor_pos: (0, 0),
         keyboard_layout: "English (US)".into(),
         keyboard_rules: String::new(),
+        dock_entries,
     };
     *ipc.snapshot.lock().unwrap() = snap;
 }
@@ -310,6 +327,35 @@ pub fn handle_request(request: &str, snap: &Arc<Mutex<Snapshot>>, cmd_tx: &flume
             format!("{x},{y}")
         }
         (true, _, "version") => version_json().to_string(),
+        // eswm dock: JSON array of {id, app_id, title, minimized, focused}
+        (true, _, "dock") => {
+            let entries: Vec<serde_json::Value> = snap
+                .dock_entries
+                .iter()
+                .map(|e| {
+                    serde_json::json!({
+                        "id": e.id,
+                        "app_id": e.app_id,
+                        "title": e.title,
+                        "minimized": e.minimized,
+                        "focused": e.focused,
+                    })
+                })
+                .collect();
+            serde_json::to_string(&entries).unwrap()
+        }
+        // eswm dock: focus / restore window by id
+        (false, _, "dockfocus") => {
+            let id: u64 = args.trim().parse().unwrap_or(0);
+            let _ = cmd_tx.send(CompCmd::FocusWindow(id));
+            "ok".to_string()
+        }
+        // eswm dock: toggle minimized state by id
+        (false, _, "docktoggle") => {
+            let id: u64 = args.trim().parse().unwrap_or(0);
+            let _ = cmd_tx.send(CompCmd::ToggleMinimize(id));
+            "ok".to_string()
+        }
         (false, _, "reload") => {
             let _ = cmd_tx.send(CompCmd::Reload);
             "ok".to_string()

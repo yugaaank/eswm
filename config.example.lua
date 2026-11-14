@@ -46,4 +46,11 @@ es.dsp.set_titlebar_color_focused(40, 40, 60, 255)   -- dark slate when focused
 es.dsp.set_titlebar_color_unfocused(30, 30, 30, 255) -- dark gray when unfocused
 es.dsp.set_corner_radius(0)                        -- stored; renderer clipping TBD
 es.dsp.set_titlebar_height(0)                      -- 0 = no titlebar; eswm-drawn titlebar when > 0
+es.dsp.set_dock_height(0)                          -- 0 = no dock; bottom dock bar when > 0
 es.dsp.set_layout_mode("tiling")                   -- "tiling" or "floating"; default mode for new windows
+
+-- Dock (managed by eswm, rendered server-side):
+--   es.dock.entries() -> [{id, app_id, title, minimized, focused}]
+--   es.dock.activate(id)   -> focus/restore a docked window
+--   es.dock.toggle_minimize(id) -> minimize/restore a docked window
+-- Click in the dock bar: left-click focuses, right-click toggles minimize.

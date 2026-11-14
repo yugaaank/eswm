@@ -78,6 +78,7 @@ use smithay::{
 };
 use tracing::{debug, error, info, warn};
 
+
 use smithay_drm_extras::drm_scanner::{DrmScanEvent, DrmScanner};
 
 use crate::{send_frames_surface_tree, State, wm, ipc, lua_state};
@@ -495,6 +496,7 @@ if let Err(e) = crate::lua_state::register_api(
     &cmd_tx,
     state.lua_keybinds.clone(),
     state.decoration.clone(),
+    state.dock_entries.clone(),
 ) {
     tracing::warn!("Lua API registration failed: {e}");
 }
@@ -1038,6 +1040,59 @@ impl State {
                                         orig_rect: rect,
                                         button,
                                     });
+                                }
+                            }
+                        }
+                    }
+                    // Dock bar click-to-focus / toggle-minimize (bottom strip of primary output).
+                    let dec = self.decoration.lock().unwrap();
+                    let dock_height = dec.dock_height;
+                    let dock = self.primary_output.as_ref().and_then(|o| {
+                        let loc = o.current_location();
+                        let size = o.current_mode().map(|m| m.size)?;
+                        Some((
+                            loc.x as f64,
+                            loc.y as f64,
+                            size.w as f64,
+                            size.h as f64,
+                        ))
+                    });
+                    drop(dec);
+                    if dock_height > 0 {
+                        if let Some((gx, gy, gw, gh)) = dock {
+                            if location.y >= gy + gh - dock_height as f64
+                                && location.y < gy + gh
+                                && location.x >= gx
+                                && location.x < gx + gw
+                            {
+                                let entries = self.wm.dock_entries();
+                                let n = entries.len();
+                                if n > 0 {
+                                    let seg_w = gw / n as f64;
+                                    let idx = ((location.x - gx) / seg_w).floor() as usize;
+                                    let idx = idx.min(n.saturating_sub(1));
+                                    if let Some(entry) = entries.get(idx) {
+                                        if button == BTN_LEFT {
+                                            // Left click: focus, restoring from minimized if needed.
+                                            self.wm.focus_window_or_restore(entry.id);
+                                        } else if button == BTN_RIGHT {
+                                            // Right click: toggle minimize.
+                                            self.wm.toggle_minimize(entry.id);
+                                        }
+                                        // Skip normal click-to-focus on windows behind the dock.
+                                        let pointer = self.seat.get_pointer().unwrap();
+                                        pointer.button(
+                                            self,
+                                            &ButtonEvent {
+                                                button,
+                                                state: button_state.try_into().unwrap(),
+                                                serial: SCOUNTER.next_serial(),
+                                                time: event.time_msec(),
+                                            },
+                                        );
+                                        pointer.frame(self);
+                                        return;
+                                    }
                                 }
                             }
                         }
@@ -2029,6 +2084,187 @@ impl State {
                 );
             }
         }
+
+        // Dock bar at bottom of output (DRM primary path). Click-to-focus /
+        // toggle-minimize handled in udev input handler.
+        // Rendered into dock_elements and spliced to the FRONT of `elements`
+        // afterwards: smithay draws index 0 last (on top), so windows pushed
+        // earlier must not cover the dock strip.
+        let mut dock_elements: Vec<EswmRenderElements<UdevRenderer<'_>>> = Vec::new();
+
+        /// Embedded 5x7 bitmap font for dock labels (no external crate, no panic risk).
+        /// Each glyph is 5 columns x 7 rows, 1 bit per pixel, MSB-first bytes.
+        const FONT_5X7: &[(char, [u8; 7])] = &[
+            ('A', [0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001]),
+            ('B', [0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110]),
+            ('C', [0b01110, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b01110]),
+            ('D', [0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110]),
+            ('E', [0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111]),
+            ('F', [0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000]),
+            ('G', [0b01110, 0b10000, 0b10000, 0b10011, 0b10101, 0b10001, 0b01110]),
+            ('H', [0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001]),
+            ('I', [0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b11111]),
+            ('J', [0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b10100, 0b01110]),
+            ('K', [0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001]),
+            ('L', [0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111]),
+            ('M', [0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001]),
+            ('N', [0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001]),
+            ('O', [0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110]),
+            ('P', [0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000]),
+            ('Q', [0b01110, 0b10001, 0b10001, 0b10001, 0b10101, 0b11010, 0b01110]),
+            ('R', [0b11110, 0b10001, 0b10001, 0b11110, 0b11000, 0b10100, 0b10010]),
+            ('S', [0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b10001, 0b01110]),
+            ('T', [0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100]),
+            ('U', [0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110]),
+            ('V', [0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b00100]),
+            ('W', [0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b11011, 0b10001]),
+            ('X', [0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001]),
+            ('Y', [0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100]),
+            ('Z', [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111]),
+            ('0', [0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110]),
+            ('1', [0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110]),
+            ('2', [0b01110, 0b10001, 0b00001, 0b00110, 0b01000, 0b10000, 0b11111]),
+            ('3', [0b01110, 0b10001, 0b00001, 0b00110, 0b00001, 0b10001, 0b01110]),
+            ('4', [0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010]),
+            ('5', [0b11111, 0b10000, 0b10000, 0b11110, 0b00001, 0b10001, 0b01110]),
+            ('6', [0b01110, 0b10000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110]),
+            ('7', [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000]),
+            ('8', [0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110]),
+            ('9', [0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b10001, 0b01110]),
+            (' ', [0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000]),
+            ('.', [0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00011]),
+            (':', [0b00000, 0b00000, 0b00011, 0b00000, 0b00011, 0b00000, 0b00000]),
+            ('-', [0b00000, 0b00000, 0b00000, 0b01110, 0b00000, 0b00000, 0b00000]),
+            ('/', [0b00000, 0b00000, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000]),
+            ('?', [0b01110, 0b10001, 0b00001, 0b00110, 0b00100, 0b00000, 0b00100]),
+        ];
+
+        let dec = self.decoration.lock().unwrap();
+        let dock_height = dec.dock_height;
+        drop(dec);
+        tracing::info!("dock debug: dock_height={} mode_size={:?} entries={}", dock_height, mode_size.map(|s| (s.w, s.h)), self.wm.dock_entries().len());
+        if dock_height > 0 {
+            if let Some(size) = mode_size {
+                let loc = output.current_location();
+                let entries = self.wm.dock_entries();
+                let n = entries.len() as u32;
+                tracing::info!("dock debug: drawing dock at y={} h={} n={} size={}x{} loc={:?}", loc.y + size.h as i32 - dock_height as i32, dock_height, n, size.w, size.h, loc);
+                if n > 0 {
+                    let dock_y = (loc.y + size.h as i32 - dock_height as i32) as f64;
+                    let dock_h = dock_height as i32;
+                    let total_w = size.w as i32;
+                    let seg_w = total_w / n as i32;
+
+                    // Z-order (smithay: earlier index = on top): segments are
+                    // pushed first, the base bar LAST so it sits at the BOTTOM
+                    // and shows through the 1px gaps between segments. Pushing
+                    // it first made it cover everything (black dock bug).
+
+                    for (i, entry) in entries.iter().enumerate() {
+                        // State colors are clearly distinct (this is state
+                        // indication, not per-app differentiation — labels do that).
+                        let color = if entry.focused {
+                            [70u8, 110, 170, 255]  // focused: clearly blue
+                        } else if entry.minimized {
+                            [30u8, 30, 30, 255]    // minimized: near-black
+                        } else {
+                            [70u8, 70, 70, 255]    // active: medium gray
+                        };
+                        let w = if i as u32 == n.saturating_sub(1) {
+                            total_w.saturating_sub(seg_w * (n.saturating_sub(1) as i32))
+                        } else {
+                            seg_w
+                        };
+                        if w <= 2 {
+                            continue;
+                        }
+                        // Inset 1px left/right/top so the base bar shows as
+                        // separators; bottom stays flush with the screen edge.
+                        let seg_x = loc.x as f64 + i as f64 * seg_w as f64 + 1.0;
+                        let seg_w_in = (w - 2) as f64;
+                        let seg_h = (dock_h - 1) as f64;
+
+                        // Background segment.
+                        let mut pix = Vec::with_capacity((seg_w_in as usize * seg_h as usize * 4));
+                        for _ in 0..(seg_w_in as usize * seg_h as usize) {
+                            pix.extend_from_slice(&color);
+                        }
+                        // Stamp the label glyph directly into the segment
+                        // pixels (white on the segment color, fully opaque —
+                        // no alpha overlay, no second render element).
+                        let label = entry.app_id.chars().next()
+                            .or_else(|| entry.title.chars().next())
+                            .unwrap_or('?')
+                            .to_ascii_uppercase();
+                        let rows = FONT_5X7.iter()
+                            .find(|(g, _)| *g == label)
+                            .map(|(_, r)| *r)
+                            .unwrap_or([0; 7]);
+                        // Font scale: largest that fits 5x7 cells in the segment.
+                        let s = ((seg_w_in as usize / 5).min((seg_h as usize - 2) / 7)).clamp(1, 3);
+                        let gw = 5 * s;
+                        let gh = 7 * s;
+                        let sw = seg_w_in as usize;
+                        let sh = seg_h as usize;
+                        let ox = (sw - gw) / 2;
+                        let oy = (sh - gh) / 2;
+                        let mut stamped = 0usize;
+                        for (ry, &bits) in rows.iter().enumerate() {
+                            for rx in 0..5u32 {
+                                if bits & (1 << (4 - rx)) != 0 {
+                                    for sy in 0..s {
+                                        for sx in 0..s {
+                                            let x = ox + rx as usize * s + sx;
+                                            let y = oy + ry * s + sy;
+                                            let idx = (y * sw + x) * 4;
+                                            pix[idx] = 255;
+                                            pix[idx + 1] = 255;
+                                            pix[idx + 2] = 255;
+                                            stamped += 1;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        tracing::info!("dock text: label={:?} app_id={:?} scale={} stamped={}",
+                            label, entry.app_id, s, stamped);
+                        let buf = MemoryRenderBuffer::from_slice(
+                            &pix, Fourcc::Argb8888, (seg_w_in as i32, seg_h as i32), 1, Transform::Normal, None,
+                        );
+                        if let Some(elem) = MemoryRenderBufferRenderElement::from_buffer(
+                            &mut renderer,
+                            Point::from((seg_x, dock_y)),
+                            &buf,
+                            None, None, None, Kind::Unspecified,
+                        ).ok() {
+                            dock_elements.push(EswmRenderElements::Cursor(elem));
+                        }
+                    }
+
+                    // Base bar LAST = bottom z: shows through the 1px gaps
+                    // between segments so they read as separate buttons.
+                    {
+                        let mut pix = Vec::with_capacity(total_w as usize * dock_h as usize * 4);
+                        for _ in 0..(total_w as usize * dock_h as usize) {
+                            pix.extend_from_slice(&[15u8, 15, 15, 255]);
+                        }
+                        let buf = MemoryRenderBuffer::from_slice(
+                            &pix, Fourcc::Argb8888, (total_w, dock_h), 1, Transform::Normal, None,
+                        );
+                        if let Some(elem) = MemoryRenderBufferRenderElement::from_buffer(
+                            &mut renderer,
+                            Point::from((loc.x as f64, dock_y)),
+                            &buf,
+                            None, None, None, Kind::Unspecified,
+                        ).ok() {
+                            dock_elements.push(EswmRenderElements::Cursor(elem));
+                        }
+                    }
+                }
+            }
+        }
+        // Dock on top of windows: index 0 renders last (on top).
+        elements.splice(0..0, dock_elements);
 
         elements.extend(layer_elements_below);
 

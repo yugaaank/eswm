@@ -277,13 +277,15 @@ impl State {
             }
         }
         map.arrange();
-        // Insent tiled windows from exclusive layer-surface zones (waybar, panels).
+        // Insent tiled windows from exclusive layer-surface zones (waybar, panels)
+        // and from the bottom dock bar (if dock_height > 0).
         let work_area = map.non_exclusive_zone();
+        let dock_h = self.wm.dock_height();
         let wa = wm::Rect {
             x: work_area.loc.x,
             y: work_area.loc.y,
             width: work_area.size.w.max(0) as u32,
-            height: work_area.size.h.max(0) as u32,
+            height: (work_area.size.h.max(0) as u32).saturating_sub(dock_h),
         };
         if self.wm.work_area != Some(wa) {
             self.wm.work_area = Some(wa);
@@ -379,6 +381,9 @@ struct State {
     pub lua_keybinds: Arc<std::sync::Mutex<Vec<lua_state::Keybind>>>,
     // Window decoration values mutated by Lua es.dsp.set_* and synced to wm each frame.
     pub decoration: Arc<std::sync::Mutex<wm::DecorationConfig>>,
+    // Dock entries (active + minimized windows on the active workspace), rebuilt
+    // each frame by apply_layout and exposed to frontends via es.dock.entries().
+    pub dock_entries: Arc<std::sync::Mutex<Vec<wm::DockEntry>>>,
     // M4: real DRM backend data; None in nested (winit) mode
     udev: Option<udev::UdevData>,
     // M4: calloop scheduling handle (timers, idle); None in nested mode
@@ -512,6 +517,7 @@ fn new_state(
         layer_wrappers: Vec::new(),
         lua_keybinds: Arc::new(std::sync::Mutex::new(Vec::new())),
         decoration: Arc::new(std::sync::Mutex::new(wm::DecorationConfig::standard())),
+        dock_entries: Arc::new(std::sync::Mutex::new(Vec::new())),
     }
 }
 
@@ -534,6 +540,7 @@ fn init_ipc_and_lua(state: &mut State) {
         &cmd_tx,
         state.lua_keybinds.clone(),
         state.decoration.clone(),
+        state.dock_entries.clone(),
     ) {
         tracing::warn!("Lua API registration failed (mlua/lua5.1-dev may be missing): {e}");
     }
@@ -571,6 +578,7 @@ fn apply_decoration_to_wm(state: &mut State) {
     let titlebar_color_focused = d.titlebar_color_focused;
     let titlebar_color_unfocused = d.titlebar_color_unfocused;
     let titlebar_height = d.titlebar_height;
+    let dock_height = d.dock_height;
     let layout_mode = d.layout_mode;
     drop(d);
     state.wm.set_outer(outer);
@@ -579,12 +587,17 @@ fn apply_decoration_to_wm(state: &mut State) {
     state.wm.set_border_colors(color_focused, color_unfocused);
     state.wm.set_titlebar_colors(titlebar_color_focused, titlebar_color_unfocused);
     state.wm.set_titlebar_height(titlebar_height);
+    state.wm.set_dock_height(dock_height);
     state.wm.set_layout_mode(layout_mode);
 }
 
 // M5: push target rects to clients as xdg_toplevel size configures, then mark applied.
 pub fn apply_layout(state: &mut State) {
     apply_decoration_to_wm(state);
+    // Refresh the dock entries cache (active + minimized windows on the active
+    // workspace) so frontends can read it via es.dock.entries().
+    let entries = state.wm.dock_entries();
+    *state.dock_entries.lock().unwrap() = entries;
     prune_dead_windows(state);
     let windows = state
         .wm
@@ -864,6 +877,61 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
                 })
                 .collect::<Vec<WaylandSurfaceRenderElement<GlesRenderer>>>();
 
+            // Default dock bar at bottom (eswm-rendered; external frontends use
+            // the es.dock API). Each entry is one segment: focused=light blue,
+            // active=gray, minimized=dim gray. Elements are built before the
+            // frame borrows `renderer` mutably.
+            let dock_h = state.wm.dock_height();
+            let mut dock_elements: Vec<MemoryRenderBufferRenderElement<GlesRenderer>> =
+                Vec::new();
+            if dock_h > 0 {
+                let entries = state.dock_entries.lock().unwrap();
+                let n = entries.len() as u32;
+                if n > 0 {
+                    let dw = size.w as u32;
+                    let entry_w = dw / n;
+                    let dock_y = (size.h as u32).saturating_sub(dock_h);
+                    dock_elements = Vec::with_capacity(n as usize);
+                    for (i, entry) in entries.iter().enumerate() {
+                        let color = if entry.focused {
+                            [200u8, 200, 255, 255]
+                        } else if entry.minimized {
+                            [50u8, 50, 50, 255]
+                        } else {
+                            [100u8, 100, 100, 255]
+                        };
+                        let x = (i as u32) * entry_w;
+                        let w = entry_w;
+                        let mut pixels = Vec::with_capacity((w * dock_h * 4) as usize);
+                        for _ in 0..(w * dock_h) {
+                            pixels.extend_from_slice(&color);
+                        }
+                        let buf = MemoryRenderBuffer::from_slice(
+                            &pixels,
+                            Fourcc::Argb8888,
+                            (w as i32, dock_h as i32),
+                            1,
+                            Transform::Normal,
+                            None,
+                        );
+                        let pos = Point::from((x as f64, dock_y as f64));
+                        if let Ok(elem) =
+                            MemoryRenderBufferRenderElement::from_buffer(
+                                renderer,
+                                pos,
+                                &buf,
+                                None,
+                                None,
+                                None,
+                                Kind::Unspecified,
+                            )
+                        {
+                            dock_elements.push(elem);
+                        }
+                    }
+                }
+            }
+
             let mut frame = renderer
                 .render(&mut framebuffer, size, Transform::Flipped180)
                 .unwrap();
@@ -871,6 +939,7 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
             draw_render_elements(&mut frame, 1.0, &border_elements, &[damage]).unwrap();
             draw_render_elements(&mut frame, 1.0, &toplevel_elements, &[damage]).unwrap();
             draw_render_elements(&mut frame, 1.0, &layer_elements, &[damage]).unwrap();
+            draw_render_elements(&mut frame, 1.0, &dock_elements, &[damage]).unwrap();
             // We rely on the nested compositor to do the sync for us
             let _ = frame.finish().unwrap();
 

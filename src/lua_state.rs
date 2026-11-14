@@ -7,7 +7,7 @@ use std::sync::Arc;
 use flume::Sender;
 use mlua::{Lua, Table};
 
-use crate::wm::{DecorationConfig, LayoutMode};
+use crate::wm::{DecorationConfig, DockEntry, LayoutMode};
 
 /// Initialize a new Lua state with the eswm config API pre-loaded.
 /// Registers `es` table with `bind`, `define_submap`, `dsp`, `config` submodules,
@@ -60,9 +60,10 @@ fn parse_keybind_string(keybind: &str) -> (Vec<String>, String) {
 pub fn register_api(
     lua: &Lua,
     _snapshot: Arc<std::sync::Mutex<crate::ipc::Snapshot>>,
-    _cmd_tx: &Sender<crate::ipc::CompCmd>,
+    cmd_tx: &Sender<crate::ipc::CompCmd>,
     lua_keybinds: Arc<std::sync::Mutex<Vec<Keybind>>>,
     decoration: Arc<std::sync::Mutex<DecorationConfig>>,
+    dock_entries: Arc<std::sync::Mutex<Vec<DockEntry>>>,
 ) -> Result<(), mlua::Error> {
     // Register the `es` table with all submodules
     let es = lua.create_table()?;
@@ -236,6 +237,54 @@ pub fn register_api(
         }
     })?;
     dsp_table.set("set_titlebar_color_unfocused", dsp_set_titlebar_color_unfocused)?;
+
+    // es.dsp.set_dock_height(n) -> dock bar height in px (0 = dock off)
+    let dsp_set_dock_height = lua.create_function({
+        let decoration = decoration.clone();
+        move |_, size: u32| -> Result<(), mlua::Error> {
+            decoration.lock().unwrap().dock_height = size;
+            Ok(())
+        }
+    })?;
+    dsp_table.set("set_dock_height", dsp_set_dock_height)?;
+
+    // es.dock — pluggable dock frontend contract.
+    // entries() -> [{id, app_id, title, minimized, focused}]
+    // activate(id) -> focus that window (sends CompCmd::FocusWindow)
+    // toggle_minimize(id) -> toggle mapped/minimized state (sends CompCmd::ToggleMinimize)
+    // The WM owns dock state; entries are computed each frame by the renderer
+    // into the dock_entries cache. An external frontend can call entries() to
+    // build its own dock UI and activate()/toggle_minimize() to drive windows.
+    let dock = lua.create_table()?;
+    let dock_entries_cache = dock_entries.clone();
+    let dock_entries_fn = lua.create_function(move |lua, _: ()| -> Result<Table, mlua::Error> {
+        let entries = dock_entries_cache.lock().unwrap();
+        let list = lua.create_table()?;
+        for (i, entry) in entries.iter().enumerate() {
+            let t = lua.create_table()?;
+            t.set("id", entry.id)?;
+            t.set("app_id", entry.app_id.clone())?;
+            t.set("title", entry.title.clone())?;
+            t.set("minimized", entry.minimized)?;
+            t.set("focused", entry.focused)?;
+            list.set(i + 1, t)?;
+        }
+        Ok(list)
+    })?;
+    dock.set("entries", dock_entries_fn)?;
+    let cmd_activate = cmd_tx.clone();
+    let dock_activate = lua.create_function(move |_, id: u64| -> Result<(), mlua::Error> {
+        let _ = cmd_activate.send(crate::ipc::CompCmd::FocusWindow(id));
+        Ok(())
+    })?;
+    dock.set("activate", dock_activate)?;
+    let cmd_toggle = cmd_tx.clone();
+    let dock_toggle = lua.create_function(move |_, id: u64| -> Result<(), mlua::Error> {
+        let _ = cmd_toggle.send(crate::ipc::CompCmd::ToggleMinimize(id));
+        Ok(())
+    })?;
+    dock.set("toggle_minimize", dock_toggle)?;
+    es.set("dock", dock)?;
 
     // Borrow dsp_table for es.set; dsp_table is still valid because we set exec_cmd first
     es.set("dsp", &dsp_table)?;
