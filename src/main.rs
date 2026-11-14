@@ -553,15 +553,19 @@ pub fn apply_layout(state: &mut State) {
     tracing::debug!("apply_layout: {} window(s)", windows.len());
     for (id, window) in windows {
         let target = window.target_rect;
-        let needs_size = window.rect != target && target.width > 0 && target.height > 0;
         let needs_activation = window.activated_sent != Some(window.focused);
-        if !needs_size && !needs_activation {
+        // Always (re)send the target size so clients size their buffer to fill
+        // the border rect instead of drawing their preferred-size content small
+        // inside it. Resending configure is cheap and matches Hyprland/pinnacle
+        // behaviour; the client acks and attaches a matching buffer.
+        let target_valid = target.width > 0 && target.height > 0;
+        if !target_valid && !needs_activation {
             continue;
         }
         if let Some(toplevel) = toplevel_for_window(state, id) {
             tracing::debug!("configuring window id={id:?} -> {}x{} at {},{}", target.width, target.height, target.x, target.y);
             toplevel.with_pending_state(|st| {
-                if needs_size {
+                if target_valid {
                     st.size = Some((target.width.max(1) as i32, target.height.max(1) as i32).into());
                 }
                 if window.focused {
@@ -571,7 +575,7 @@ pub fn apply_layout(state: &mut State) {
                 }
             });
             toplevel.send_configure();
-            if needs_size {
+            if target_valid && window.rect != target {
                 state.wm.set_rect(id, target);
             }
             state.wm.set_activated_sent(id, window.focused);
