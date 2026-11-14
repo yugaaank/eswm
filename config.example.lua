@@ -48,3 +48,11 @@ end
 -- Run arbitrary commands on keypress: es.bind_cmd("modifiers+key", "command")
 es.bind_cmd("Super+r", "rofi -show drun")
 es.bind_cmd("Super+e", "emacsclient -c")
+
+-- Window decorations (border size/gaps/colors, corner radius)
+es.dsp.set_border_size(2)
+es.dsp.set_outer_gap(10)
+es.dsp.set_inner_gap(10)
+es.dsp.set_border_color_focused(0, 200, 0, 255)   -- green
+es.dsp.set_border_color_unfocused(80, 80, 80, 255) -- gray
+es.dsp.set_corner_radius(0)                        -- stored; renderer clipping TBD

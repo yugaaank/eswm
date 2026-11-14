@@ -368,6 +368,8 @@ struct State {
     lua: Option<mlua::Lua>,
     // Keybinds defined via Lua es.bind(); checked during key event processing
     pub lua_keybinds: Arc<std::sync::Mutex<Vec<lua_state::Keybind>>>,
+    // Window decoration values mutated by Lua es.dsp.set_* and synced to wm each frame.
+    pub decoration: Arc<std::sync::Mutex<wm::DecorationConfig>>,
     // M4: real DRM backend data; None in nested (winit) mode
     udev: Option<udev::UdevData>,
     // M4: calloop scheduling handle (timers, idle); None in nested mode
@@ -500,6 +502,7 @@ fn new_state(
         primary_output: None,
         layer_wrappers: Vec::new(),
         lua_keybinds: Arc::new(std::sync::Mutex::new(Vec::new())),
+        decoration: Arc::new(std::sync::Mutex::new(wm::DecorationConfig::standard())),
     }
 }
 
@@ -516,7 +519,13 @@ fn init_ipc_and_lua(state: &mut State) {
     let snapshot = state.ipc.as_ref().unwrap().snapshot.clone();
     let cmd_tx = state.ipc.as_ref().unwrap().cmd_tx.clone();
     // Register the Hyprland config API (es.bind, es.define_submap, es.dsp.*, es.config{}, is_file_exists, safe_require)
-    if let Err(e) = register_api(&lua, snapshot, &cmd_tx, state.lua_keybinds.clone()) {
+    if let Err(e) = register_api(
+        &lua,
+        snapshot,
+        &cmd_tx,
+        state.lua_keybinds.clone(),
+        state.decoration.clone(),
+    ) {
         tracing::warn!("Lua API registration failed (mlua/lua5.1-dev may be missing): {e}");
     }
     // Store lua in state for _do_file/_do_chunk access; kept alive for the session
@@ -541,8 +550,20 @@ pub fn prune_dead_windows(state: &mut State) -> usize {
     count
 }
 
+// Sync Lua-configured decoration values into the WM so borders/gaps/colors
+// reflect config.lua. Called each frame before arrangement/render.
+fn apply_decoration_to_wm(state: &mut State) {
+    let d = state.decoration.lock().unwrap();
+    state.wm.set_outer(d.outer);
+    state.wm.set_inner(d.inner);
+    state.wm.set_border_size(d.border_size);
+    state.wm.set_border_colors(d.border_color_focused, d.border_color_unfocused);
+    drop(d);
+}
+
 // M5: push target rects to clients as xdg_toplevel size configures, then mark applied.
 pub fn apply_layout(state: &mut State) {
+    apply_decoration_to_wm(state);
     prune_dead_windows(state);
     let windows = state
         .wm

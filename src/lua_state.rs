@@ -7,6 +7,8 @@ use std::sync::Arc;
 use flume::Sender;
 use mlua::{Lua, Table};
 
+use crate::wm::DecorationConfig;
+
 /// Initialize a new Lua state with the eswm config API pre-loaded.
 /// Registers `es` table with `bind`, `define_submap`, `dsp`, `config` submodules,
 /// plus `is_file_exists` and `safe_require` helpers.
@@ -53,11 +55,14 @@ fn parse_keybind_string(keybind: &str) -> (Vec<String>, String) {
 /// `cmd_tx` is a flume sender for CompCmd; these are injected as upvalues.
 /// `lua_keybinds` is shared with the compositor so keybinds defined in Lua
 /// are checked during key event processing.
+/// `decoration` is shared with the WM so `es.dsp.set_*` config calls mutate
+/// live border/gap/color values that the renderer reads each frame.
 pub fn register_api(
     lua: &Lua,
     _snapshot: Arc<std::sync::Mutex<crate::ipc::Snapshot>>,
     _cmd_tx: &Sender<crate::ipc::CompCmd>,
     lua_keybinds: Arc<std::sync::Mutex<Vec<Keybind>>>,
+    decoration: Arc<std::sync::Mutex<DecorationConfig>>,
 ) -> Result<(), mlua::Error> {
     // Register the `es` table with all submodules
     let es = lua.create_table()?;
@@ -126,6 +131,67 @@ pub fn register_api(
         Ok(())
     })?;
     dsp_table.set("exec_cmd", dsp_exec_cmd)?;
+
+    // es.dsp.set_border_size(n) -> sets window border width in px
+    let dsp_set_border_size = lua.create_function({
+        let decoration = decoration.clone();
+        move |_, size: u32| -> Result<(), mlua::Error> {
+            decoration.lock().unwrap().border_size = size;
+            Ok(())
+        }
+    })?;
+    dsp_table.set("set_border_size", dsp_set_border_size)?;
+
+    // es.dsp.set_outer_gap(n) -> sets outer gap in px
+    let dsp_set_outer_gap = lua.create_function({
+        let decoration = decoration.clone();
+        move |_, size: u32| -> Result<(), mlua::Error> {
+            decoration.lock().unwrap().outer = size;
+            Ok(())
+        }
+    })?;
+    dsp_table.set("set_outer_gap", dsp_set_outer_gap)?;
+
+    // es.dsp.set_inner_gap(n) -> sets inner gap in px
+    let dsp_set_inner_gap = lua.create_function({
+        let decoration = decoration.clone();
+        move |_, size: u32| -> Result<(), mlua::Error> {
+            decoration.lock().unwrap().inner = size;
+            Ok(())
+        }
+    })?;
+    dsp_table.set("set_inner_gap", dsp_set_inner_gap)?;
+
+    // es.dsp.set_corner_radius(n) -> sets corner radius in px (stored; renderer clipping TBD)
+    let dsp_set_corner_radius = lua.create_function({
+        let decoration = decoration.clone();
+        move |_, radius: u32| -> Result<(), mlua::Error> {
+            decoration.lock().unwrap().corner_radius = radius;
+            Ok(())
+        }
+    })?;
+    dsp_table.set("set_corner_radius", dsp_set_corner_radius)?;
+
+    // es.dsp.set_border_color_focused(r, g, b, a) -> focused border color (RGBA 0-255)
+    let dsp_set_border_color_focused = lua.create_function({
+        let decoration = decoration.clone();
+        move |_, (r, g, b, a): (u8, u8, u8, u8)| -> Result<(), mlua::Error> {
+            decoration.lock().unwrap().border_color_focused = [r, g, b, a];
+            Ok(())
+        }
+    })?;
+    dsp_table.set("set_border_color_focused", dsp_set_border_color_focused)?;
+
+    // es.dsp.set_border_color_unfocused(r, g, b, a) -> unfocused border color (RGBA 0-255)
+    let dsp_set_border_color_unfocused = lua.create_function({
+        let decoration = decoration.clone();
+        move |_, (r, g, b, a): (u8, u8, u8, u8)| -> Result<(), mlua::Error> {
+            decoration.lock().unwrap().border_color_unfocused = [r, g, b, a];
+            Ok(())
+        }
+    })?;
+    dsp_table.set("set_border_color_unfocused", dsp_set_border_color_unfocused)?;
+
     // Borrow dsp_table for es.set; dsp_table is still valid because we set exec_cmd first
     es.set("dsp", &dsp_table)?;
 

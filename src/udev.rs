@@ -489,7 +489,13 @@ state.ipc = Some(ipc::Ipc::new(sig));
 let lua = crate::lua_state::init().unwrap_or_else(|_| mlua::Lua::new());
 let snapshot = state.ipc.as_ref().unwrap().snapshot.clone();
 let cmd_tx = state.ipc.as_ref().unwrap().cmd_tx.clone();
-if let Err(e) = crate::lua_state::register_api(&lua, snapshot, &cmd_tx, state.lua_keybinds.clone()) {
+if let Err(e) = crate::lua_state::register_api(
+    &lua,
+    snapshot,
+    &cmd_tx,
+    state.lua_keybinds.clone(),
+    state.decoration.clone(),
+) {
     tracing::warn!("Lua API registration failed: {e}");
 }
 state.lua = Some(lua);

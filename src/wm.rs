@@ -103,6 +103,38 @@ pub struct WindowRule {
     pub mode: Option<WindowMode>,
 }
 
+/// Window decoration values shared between the Lua config API and the WM.
+/// Lua mutates these via `es.dsp.set_*`; the renderer reads them each frame.
+#[derive(Clone, Debug, Default)]
+pub struct DecorationConfig {
+    /// Outer gap (px) between tiled windows and the output edge.
+    pub outer: u32,
+    /// Inner gap (px) between adjacent tiled windows.
+    pub inner: u32,
+    /// Border width (px) drawn around each window.
+    pub border_size: u32,
+    /// Focused border color (RGBA).
+    pub border_color_focused: [u8; 4],
+    /// Unfocused border color (RGBA).
+    pub border_color_unfocused: [u8; 4],
+    /// Corner radius (px). Stored and exposed to config; rounded-corner
+    /// clipping in the renderer is a separate rendering task.
+    pub corner_radius: u32,
+}
+
+impl DecorationConfig {
+    pub fn standard() -> Self {
+        Self {
+            outer: 10,
+            inner: 10,
+            border_size: 2,
+            border_color_focused: [0, 200, 0, 255],
+            border_color_unfocused: [80, 80, 80, 255],
+            corner_radius: 0,
+        }
+    }
+}
+
 impl WindowManager {
     pub fn new() -> Self {
         Self {

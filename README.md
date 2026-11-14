@@ -76,6 +76,23 @@ eswm's Wayland socket (detached, `TERMINAL=kitty`, logs to
 
 See `config.example.lua` for a complete example.
 
+### Window decorations
+
+Border size, gaps, border colors, and corner radius are set via `es.dsp`:
+
+```lua
+es.dsp.set_border_size(2)
+es.dsp.set_outer_gap(10)
+es.dsp.set_inner_gap(10)
+es.dsp.set_border_color_focused(0, 200, 0, 255)   -- green
+es.dsp.set_border_color_unfocused(80, 80, 80, 255) -- gray
+es.dsp.set_corner_radius(0)                        -- stored; renderer clipping TBD
+```
+
+Values default to a 2px border, 10px gaps, green focused / gray unfocused
+borders, and no corner rounding. `corner_radius` is stored and exposed to
+config; drawing rounded corners (clip) is a pending renderer task.
+
 ## Build
 
 ```
