@@ -1,7 +1,7 @@
 id: e03
 slug: tiling-layouts-master-dwindle
 title: Tiling Layouts: Master + Dwindle
-status: planned
+status: completed
 wsjf_rank: 2
 bcps_total: 13
 core_value: |
@@ -11,14 +11,14 @@ stories:
     title: Per-output wm mode + tiling layout config
     bcps: 3
     delta: ADDED
-    status: pending
+    status: passing
   - id: e03s02
     title: Dwindle tiling layout algorithm
     bcps: 5
     delta: ADDED
-    status: pending
+    status: passing
   - id: e03s03
     title: Wire dwindle into arrange_output
     bcps: 5
     delta: MODIFIED
-    status: pending
+    status: passing

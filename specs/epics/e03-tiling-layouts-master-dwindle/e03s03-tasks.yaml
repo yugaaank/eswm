@@ -1,14 +1,14 @@
 story_id: e03s03
 title: Wire dwindle into arrange_output
-status: failing
+status: passing
 bcps: 5
 delta: MODIFIED
 tasks:
   - id: e03s03t1
-    description: Modify arrange_output to call dwindle when output LayoutMode is dwindle, master-stack otherwise
+    description: Modify arrange_output to call dwindle when output tiling_layout is dwindle, master-stack otherwise
     verify: cargo test --bin eswm wm::tests
     risk: P1
-    status: failing
+    status: passing
     allure:
       severity: high
       categories: ["unit", "wm"]
@@ -16,7 +16,7 @@ tasks:
     description: Unit test: arrange_output uses dwindle rects when output mode is dwindle
     verify: cargo test --bin eswm wm::tests
     risk: P2
-    status: failing
+    status: passing
     allure:
       severity: normal
       categories: ["unit", "wm"]
@@ -24,7 +24,7 @@ tasks:
     description: Confirm master-stack tests still pass with dwindle wired in
     verify: cargo test --bin eswm wm::tests
     risk: P2
-    status: failing
+    status: passing
     allure:
       severity: normal
       categories: ["unit", "wm"]

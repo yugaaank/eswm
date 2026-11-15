@@ -1045,41 +1045,55 @@ impl WindowManager {
                 .saturating_sub(tb_h as u32)
                 .saturating_sub(2 * bp as u32),
         };
-        let master_width = if tiled.len() == 1 {
-            inner.width
-        } else {
-            ((inner.width as u64 * 3) / 5) as u32
-        };
-        let stack_width = inner.width.saturating_sub(master_width).saturating_sub(inner_gap);
-        self.set_target_rect(
-            tiled[0],
-            Rect {
-                x: inner.x,
-                y: inner.y,
-                width: master_width,
-                height: inner.height,
-            },
-        );
-        // floating windows keep their own geometry; the tiler ignores them
-
-        let stack = &tiled[1..];
-        if !stack.is_empty() {
-            let stack_x = inner.x + master_width as i32 + inner_gap as i32;
-            // Split inner height across stack windows with a gap between each.
-            let stack_h_inner = inner.height.saturating_sub((stack.len() as u32 + 1) * inner_gap);
-            let cell_h = stack_h_inner / stack.len() as u32;
-            for (index, id) in stack.iter().enumerate() {
-                let top =
-                    inner.y + inner_gap as i32 + (index as u32 * (cell_h + inner_gap)) as i32;
+        match output_state.tiling_layout {
+            TilingLayout::Master => {
+                let master_width = if tiled.len() == 1 {
+                    inner.width
+                } else {
+                    ((inner.width as u64 * 3) / 5) as u32
+                };
+                let stack_width = inner.width.saturating_sub(master_width).saturating_sub(inner_gap);
                 self.set_target_rect(
-                    *id,
+                    tiled[0],
                     Rect {
-                        x: stack_x,
-                        y: top,
-                        width: stack_width,
-                        height: cell_h,
+                        x: inner.x,
+                        y: inner.y,
+                        width: master_width,
+                        height: inner.height,
                     },
                 );
+                // floating windows keep their own geometry; the tiler ignores them
+
+                let stack = &tiled[1..];
+                if !stack.is_empty() {
+                    let stack_x = inner.x + master_width as i32 + inner_gap as i32;
+                    // Split inner height across stack windows with a gap between each.
+                    let stack_h_inner = inner.height.saturating_sub((stack.len() as u32 + 1) * inner_gap);
+                    let cell_h = stack_h_inner / stack.len() as u32;
+                    for (index, id) in stack.iter().enumerate() {
+                        let top =
+                            inner.y + inner_gap as i32 + (index as u32 * (cell_h + inner_gap)) as i32;
+                        self.set_target_rect(
+                            *id,
+                            Rect {
+                                x: stack_x,
+                                y: top,
+                                width: stack_width,
+                                height: cell_h,
+                            },
+                        );
+                    }
+                }
+            }
+            TilingLayout::Dwindle => {
+                // Dwindle arranges windows recursively; ignores gaps (windows
+                // fill inner rect exactly). Floating windows keep their own
+                // geometry; the tiler ignores them.
+                let mut assigned: Vec<(WindowId, Rect)> = Vec::new();
+                dwindle(&mut assigned, &tiled, inner);
+                for (id, rect) in assigned {
+                    self.set_target_rect(id, rect);
+                }
             }
         }
     }
@@ -1561,6 +1575,48 @@ mod tests {
         }
         // Windows cover the full output (within rounding)
         assert!(total_area >= 1920 * 1080 - 1000);
+    }
+
+    #[test]
+    fn arrange_output_uses_dwindle_when_tiling_layout_dwindle() {
+        let (mut manager, output) = manager();
+        manager.set_outer(0);
+        manager.set_inner(0);
+        manager.set_border_size(0);
+
+        // Set tiling layout to dwindle on the output
+        if let Some(output_state) = manager.outputs.get_mut(&output) {
+            output_state.tiling_layout = TilingLayout::Dwindle;
+        }
+
+        let w1 = manager.add_window(output, "kitty", "one").unwrap();
+        let w2 = manager.add_window(output, "kitty", "two").unwrap();
+        let w3 = manager.add_window(output, "kitty", "three").unwrap();
+
+        manager.arrange_output(output);
+
+        let r1 = manager.window(w1).unwrap().target_rect;
+        let r2 = manager.window(w2).unwrap().target_rect;
+        let r3 = manager.window(w3).unwrap().target_rect;
+
+        // All windows should have non-zero rects
+        assert_ne!(r1.width, 0);
+        assert_ne!(r2.width, 0);
+        assert_ne!(r3.width, 0);
+
+        // Rects should not overlap
+        for (a, b) in [(&r1, &r2), (&r1, &r3), (&r2, &r3)] {
+            let overlap_x = (a.x.min(b.x + b.width as i32) - a.x.max(b.x)).max(0);
+            let overlap_y = (a.y.min(b.y + b.height as i32) - a.y.max(b.y)).max(0);
+            assert_eq!(overlap_x as u64 * overlap_y as u64, 0, "windows overlap");
+        }
+
+        // Combined area should cover the full output (within rounding)
+        let output_rect = manager.output(output).unwrap().geometry;
+        let total_area = r1.width as u64 * r1.height as u64
+            + r2.width as u64 * r2.height as u64
+            + r3.width as u64 * r3.height as u64;
+        assert!(total_area >= output_rect.width as u64 * output_rect.height as u64 - 1000);
     }
 
     #[test]
