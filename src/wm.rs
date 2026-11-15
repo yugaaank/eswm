@@ -857,7 +857,7 @@ impl WindowManager {
             return false;
         };
         let output = window.output;
-        let workspace = window.workspace;
+        let _workspace = window.workspace;
         let was_mapped = window.mapped;
 
         // Restore from minimized state if needed.

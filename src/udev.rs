@@ -1867,17 +1867,17 @@ impl State {
                 // Smithay draws input[0] last (on top), so the focused window
                 // (first in `placed`) paints on top overall. Within each window
                 // the order is [borders, titlebar, surface]: borders pushed
-                // first (index 0 → drawn last → on top, frame the window),
+                // first (index 0 -> drawn last -> on top, frame the window),
                 // titlebar next (middle, drawn above the window frame, no
                 // overlap with client content), surface pushed last (drawn
-                // first → bottom layer = client content).
+                // first -> bottom layer = client content).
                 let mut border_elements: Vec<EswmRenderElements<UdevRenderer>> = Vec::new();
                 // Border frame extends upward by titlebar_height so borders capture the titlebar.
                 let wx = rect.x as f64 - bp;
                 let wy = rect.y as f64 - bp - titlebar_height as f64;
                 let w = rect.width as f64 + 2.0 * bp;
                 let h = rect.height as f64 + 2.0 * bp + titlebar_height as f64;
-                // Borders pushed first → lowest index → drawn last → on top, frame titlebar + surface.
+                // Borders pushed first -> lowest index -> drawn last -> on top, frame titlebar + surface.
                 // Titlebar next (middle, inside frame top, flush with surface top).
                 // Surface last (bottom layer = client content).
                 if !matches!(mode, wm::WindowMode::Fullscreen) {
@@ -2005,7 +2005,7 @@ impl State {
                         }
                     }
                 }
-                // Borders pushed first → index 0 → drawn last → on top (capture titlebar edges).
+                // Borders pushed first -> index 0 -> drawn last -> on top (capture titlebar edges).
                 elements.extend(border_elements);
                 // Titlebar strip (middle layer: on top of surface, under borders).
                 if titlebar_height > 0 && !matches!(mode, wm::WindowMode::Fullscreen) {
