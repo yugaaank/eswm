@@ -6,30 +6,32 @@ wsjf_rank: 1
 bcps_total: 21
 core_value: |
   eswm provides a stable window-manager state model (windows, workspaces, focus)
-  so Tacit can manage client windows without depending on Hyprland.
+  so Tacit can manage client windows without depending on Hyprland or another
+  compositor. The model separates layout, presentation, visibility, and lifecycle
+  into independent axes, with per-workspace layout state and per-output geometry.
 stories:
   - id: e02s01
-    title: Window state model
+    title: Window state model with independent axes
     bcps: 3
     delta: ADDED
-    status: passing
+    status: completed
   - id: e02s02
-    title: Workspace state model
+    title: Workspace state model with mode/layout/focus history
     bcps: 3
     delta: ADDED
-    status: passing
+    status: completed
   - id: e02s03
-    title: Workspace switching
+    title: Workspace switching and window moving
     bcps: 5
     delta: ADDED
-    status: passing
+    status: completed
   - id: e02s04
-    title: Move window between workspaces
+    title: Close protocol and window lifecycle
     bcps: 5
     delta: ADDED
-    status: passing
+    status: planned
   - id: e02s05
     title: Tiler/floating integration with state model
     bcps: 5
     delta: MODIFIED
-    status: passing
+    status: completed

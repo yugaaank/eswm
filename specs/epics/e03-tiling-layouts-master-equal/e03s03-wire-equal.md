@@ -11,7 +11,7 @@
 1. Modify `arrange_output` to read `output_state.tiling_layout` and call `equal_split` when `Equal`, master-stack otherwise -> verify: `cargo test --bin eswm wm::tests`
 2. Master layout: inner gap only between master column and stack column; no gaps between stack windows -> verify: `cargo test --bin eswm wm::tests`
 3. Equal layout: inner gaps between all cells -> verify: `cargo test --bin eswm wm::tests`
-4. Confirm master-stack tests still pass (`lays_out_master_and_stack`, `gap_insets_tiled_windows`) -> verify: `cargo test --bin eswm wm::tests`
+4. Confirm master-stack tests still pass (`lays_out_master_and_stack`, `gap_insets_tiled_windows`, `gap_between_stack_windows`) -> verify: `cargo test --bin eswm wm::tests`
 
 ## Verification Script (Step-by-Step)
 

@@ -1,38 +1,30 @@
 story_id: e02s04
-title: Move window between workspaces
-status: passing
+title: Close protocol and window lifecycle
+status: planned
 bcps: 5
 delta: ADDED
 tasks:
   - id: e02s04t1
-    description: Bind Super+Shift+1..Super+Shift+N to move focused window to target workspace
-    verify: test -f config.default.lua
+    description: Add Lifecycle (Open/CloseRequested/Closing) to Window; request_close() sets CloseRequested
+    verify: cargo test --bin eswm wm::tests
     risk: P1
-    status: passing
+    status: planned
     allure:
       severity: high
-      categories: ["config", "template"]
+      categories: ["unit", "wm"]
   - id: e02s04t2
-    description: Remove window from source workspace membership, add to target workspace
-    verify: cargo test control_window_move_to_workspace
+    description: Client acknowledges close via destroy handler; timeout forces removal if no ack
+    verify: cargo test --bin eswm wm::tests
     risk: P1
-    status: passing
+    status: planned
     allure:
       severity: high
-      categories: ["unit", "control-plane"]
+      categories: ["unit", "wm"]
   - id: e02s04t3
-    description: Follow window to target workspace or stay on source (configurable), keeping focus sane
-    verify: cargo test workspace_move_keeps_windows_separate
+    description: Close button calls send_close(); let client's destroy remove window; do not remove from WM directly
+    verify: cargo test --bin eswm wm::tests
     risk: P2
-    status: passing
+    status: planned
     allure:
       severity: normal
       categories: ["unit", "wm"]
-  - id: e02s04t4
-    description: Confirm move_window_to_workspace keybind documented in config.default.lua
-    verify: test -f config.default.lua
-    risk: P3
-    status: passing
-    allure:
-      severity: minor
-      categories: ["config", "template"]

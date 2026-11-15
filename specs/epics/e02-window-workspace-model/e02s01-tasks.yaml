@@ -1,30 +1,30 @@
 story_id: e02s01
-title: Window state model
-status: passing
+title: Window state model with independent axes
+status: completed
 bcps: 3
 delta: ADDED
 tasks:
   - id: e02s01t1
-    description: Define Window struct (surface, role, output, workspace, tiled/floating, current/target rectangle, focus, mapped, min/max/fullscreen, app identity, title)
-    verify: cargo test window_state_model
+    description: Split WindowMode into LayoutMode (Tiling/Floating) on workspace, Presentation (Normal/Maximized/Fullscreen), Visibility (Visible/Minimized), Lifecycle (Open/CloseRequested/Closing) on window
+    verify: cargo test --bin eswm wm::tests
     risk: P1
-    status: passing
+    status: completed
     allure:
       severity: high
       categories: ["unit", "wm"]
   - id: e02s01t2
-    description: Track windows on client surface creation and removal
-    verify: cargo test window_tracking
+    description: Add placement_override, float_geometry, pending_geometry, committed_geometry, min_size, max_size, tiling_slot, sticky, always_on_top, decorated, modal, urgent, opacity fields to Window
+    verify: cargo test --bin eswm wm::tests
     risk: P1
-    status: passing
+    status: completed
     allure:
       severity: high
       categories: ["unit", "wm"]
   - id: e02s01t3
-    description: Expose window list query through control plane for tests
-    verify: cargo test window_query
+    description: Add effective_placement(), is_visible(), effective_rect() functions to WindowManager
+    verify: cargo test --bin eswm wm::tests
     risk: P2
-    status: passing
+    status: completed
     allure:
       severity: normal
       categories: ["unit", "wm"]

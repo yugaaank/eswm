@@ -1,21 +1,23 @@
-### Story e02s02: Workspace state model: Implementation Steps
+### Story e02s02: Workspace state model with mode/layout/focus history: Implementation Steps
 
 **type:** feat  
 **risk:** P1  
 **context:** domain  
 
-**Context:** `wm::Workspace` already exists in `src/wm.rs` with id, name, output, windows, focused. `WindowManager::add_workspace`, `focus_workspace`, `ensure_workspace` exist with tests. This story audits the implementation and adds coverage for empty/persistent workspace behavior.
+**Context:** `wm::Workspace` currently has `id`, `name`, `output`, `windows`, `focused`. The review model adds `mode` (Tiling/Floating), `layout` (Master/Dwindle/EqualSplit), `tiling_order` (Vec<WindowId>), `focus_history` (MRU Vec<WindowId>), and per-layout state (`master_ratio`/`master_count`/`master_position`, `dwindle_tree`, `equal_orientation`). All per-layout state is kept simultaneously and never discarded on layout switch.
 
 ## Steps
 
-1. Audit `src/wm.rs` `Workspace` struct and `add_workspace`/`focus_workspace`/`ensure_workspace` against SCOPE_LATEST.yaml -> verify: `cargo test --lib wm::tests`
-2. Add unit test for workspace empty/persistent behavior (workspace with no windows remains) -> verify: `cargo test --lib wm::tests`
-3. Add unit test for `focus_workspace` on non-owned output returns false -> verify: `cargo test --lib wm::tests`
+1. Add `mode: LayoutMode`, `layout: TilingAlgorithm`, `tiling_order: Vec<WindowId>`, `focus_history: Vec<WindowId>` to `Workspace` -> verify: `cargo build`
+2. Add `master_ratio: f32`, `master_count: usize`, `master_position: MasterPos` (Master state), `dwindle_tree: DwindleTree` (Dwindle state), `equal_orientation: EqualOrient` (EqualSplit state) -> verify: `cargo build`
+3. Add default workspace per output on startup; assign created windows to active workspace of their output -> verify: `cargo test --bin eswm wm::tests`
+4. Unit test: focus_history is MRU; focus switch updates MRU -> verify: `cargo test --bin eswm wm::tests`
+5. Unit test: per-layout state preserved across layout switches -> verify: `cargo test --bin eswm wm::tests`
 
 ## Verification Script (Step-by-Step)
 
-1. Run `cargo test --lib wm::tests` and confirm all workspace tests pass.
-2. Confirm `Workspace` has id, name, output, windows, focused fields in `src/wm.rs`.
+1. Run `cargo test --bin eswm wm::tests` and confirm all workspace tests pass.
+2. Confirm `Workspace` has mode, layout, tiling_order, focus_history, and per-layout state fields.
 
 ## Out of scope
 
@@ -24,6 +26,6 @@
 
 ## Risks
 
-- `ensure_workspace` returns false when workspace exists on a different output: documented behavior; tests assert same-output only.
+- `focus_history` must be updated on every focus change; missing an update causes stale MRU.
 
 ---

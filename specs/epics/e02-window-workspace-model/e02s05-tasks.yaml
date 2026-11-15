@@ -1,38 +1,38 @@
 story_id: e02s05
 title: Tiler/floating integration with state model
-status: passing
+status: completed
 bcps: 5
 delta: MODIFIED
 tasks:
   - id: e02s05t1
-    description: Audit arrange_output filters windows to output_state.active_workspace
+    description: Audit arrange_output filters windows to output_state.active_workspace; excluded: minimized, maximized, fullscreen, floating
     verify: cargo test --bin eswm wm::tests
     risk: P2
-    status: passing
+    status: completed
     allure:
       severity: normal
       categories: ["unit", "wm"]
   - id: e02s05t2
-    description: Add unit test: open windows on workspace 1 and 2, arrange workspace 1, assert workspace 2 windows have zero target_rect
-    verify: cargo test arrange_output_only_arranges_active_workspace
+    description: Master layout: gap only between master column and stack column; no gaps between stack windows
+    verify: cargo test --bin eswm wm::tests
     risk: P2
-    status: passing
+    status: completed
     allure:
       severity: normal
       categories: ["unit", "wm"]
   - id: e02s05t3
-    description: Add unit test: floating window on workspace 2 is not included in workspace 1 tiling
-    verify: cargo test floating_window_on_inactive_workspace_not_tiled
+    description: Equal layout: equal-sized cells with inner gaps between all cells; vertical gap includes titlebar_height
+    verify: cargo test --bin eswm wm::tests
     risk: P2
-    status: passing
+    status: completed
     allure:
       severity: normal
       categories: ["unit", "wm"]
   - id: e02s05t4
-    description: Verify placed_windows only returns active-workspace windows (covered by WM arrange_output tests; placed_windows is a pure filter on WM state)
+    description: Layout switching keeps tiling order and each layout's saved state (master ratio, dwindle tree, equal orientation)
     verify: cargo test --bin eswm wm::tests
-    risk: P1
-    status: passing
+    risk: P2
+    status: completed
     allure:
-      severity: high
+      severity: normal
       categories: ["unit", "wm"]

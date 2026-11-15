@@ -1,0 +1,26 @@
+id: e08
+slug: panics-correctness
+title: Panics & Correctness
+status: planned
+wsjf_rank: 7
+bcps_total: 13
+core_value: |
+  Fix panics (dock underflow, floating_target underflow, connector modes, renderer
+  errors) and correctness bugs (close button, dock layering, fullscreen layering,
+  CSD geometry, scale/cursors, input settings).
+stories:
+  - id: e08s01
+    title: Panics: dock underflow, floating_target underflow, connector modes, renderer errors
+    bcps: 5
+    delta: MODIFIED
+    status: pending
+  - id: e08s02
+    title: Correctness: close button, dock layering, fullscreen layering, CSD geometry
+    bcps: 5
+    delta: MODIFIED
+    status: pending
+  - id: e08s03
+    title: Scale, cursors, input settings
+    bcps: 3
+    delta: MODIFIED
+    status: pending

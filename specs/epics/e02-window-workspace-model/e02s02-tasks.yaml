@@ -1,30 +1,30 @@
 story_id: e02s02
-title: Workspace state model
-status: failing
+title: Workspace state model with mode/layout/focus history
+status: completed
 bcps: 3
 delta: ADDED
 tasks:
   - id: e02s02t1
-    description: Define Workspace struct (identity, name, output, window membership, active per output, focus history, empty/persistent behavior)
-    verify: cargo test workspace_state_model
+    description: Add mode (Tiling/Floating), layout (Master/Dwindle/EqualSplit), tiling_order (Vec<WindowId>), focus_history (MRU Vec<WindowId>) to Workspace
+    verify: cargo test --bin eswm wm::tests
     risk: P1
-    status: failing
+    status: completed
     allure:
       severity: high
       categories: ["unit", "wm"]
   - id: e02s02t2
-    description: Create default workspace per output on startup
-    verify: cargo test default_workspace
+    description: Add per-layout state: master_ratio/master_count/master_position, dwindle_tree, equal_orientation to Workspace
+    verify: cargo test --bin eswm wm::tests
     risk: P1
-    status: failing
+    status: completed
     allure:
       severity: high
       categories: ["unit", "wm"]
   - id: e02s02t3
-    description: Assign created windows to the active workspace of their output
-    verify: cargo test workspace_assignment
+    description: Add default workspace per output on startup; assign created windows to active workspace of their output
+    verify: cargo test --bin eswm wm::tests
     risk: P1
-    status: failing
+    status: completed
     allure:
       severity: high
       categories: ["unit", "wm"]

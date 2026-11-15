@@ -1,0 +1,20 @@
+id: e04
+slug: security-ci
+title: Security & CI
+status: planned
+wsjf_rank: 3
+bcps_total: 8
+core_value: |
+  Fix the critical security bug (key presses logged to world-readable file) and
+  make the project build reliably on Arch so CI is green.
+stories:
+  - id: e04s01
+    title: Stop logging key presses; secure log file location and permissions
+    bcps: 3
+    delta: MODIFIED
+    status: pending
+  - id: e04s02
+    title: Fix Arch CI build (smithay-drm-extras / libdisplay-info)
+    bcps: 5
+    delta: ADDED
+    status: pending

@@ -16,10 +16,72 @@ epics:
     slug: tiling-layouts-master-equal
     title: Tiling Layouts: Master + Equal
     wsjf_rank: 2
-    status: planned
+    status: completed
     stories: []
     description: |
       Two tiling layouts per output: master-stack (existing) and equal
       (grid-based equal-sized cells). Per-output TilingLayout field on Output,
       equal wired into arrange_output. Wm mode and tiling layout set via
       es.dsp.set_wm_mode / es.dsp.set_tiling_layout in config.lua.
+  - id: e04
+    slug: security-ci
+    title: Security & CI
+    wsjf_rank: 3
+    status: planned
+    stories: []
+    description: |
+      Fix critical security bug (key presses logged to world-readable file) and
+      make project build reliably on Arch so CI is green. Deferred: none.
+  - id: e05
+    slug: core-loop-rendering
+    title: Core Loop & Rendering
+    wsjf_rank: 4
+    status: planned
+    stories: []
+    description: |
+      Make compositor loop event-driven and damage-aware: calloop sources for
+      clients/display, dirty flag for layout, redraw flag for rendering, test
+      fixture with no display. Deferred: vblank integration, animation scheduler.
+  - id: e06
+    slug: input-focus
+    title: Input, Popups & Focus
+    wsjf_rank: 5
+    status: planned
+    stories: []
+    description: |
+      Implement popups, input regions, layer-surface keyboard focus, and clipboard
+      so Tacit's shell (menus, dropdowns, trays, lock screen) works. Deferred:
+      touch input, clipboard history manager.
+  - id: e07
+    slug: spawn-keybinds
+    title: Spawning & Keybinds
+    wsjf_rank: 6
+    status: planned
+    stories: []
+    description: |
+      Fix spawning (sh -c, XDG_CURRENT_DESKTOP, XDG_STATE_HOME logging, SIGCHLD
+      reaping) and keybind parsing (xkb keysym names, raw sym matching, emergency
+      quit always on). Deferred: journald logging, key autocomplete.
+  - id: e08
+    slug: panics-correctness
+    title: Panics & Correctness
+    wsjf_rank: 7
+    status: planned
+    stories: []
+    description: |
+      Fix panics (dock underflow, floating_target underflow, connector modes,
+      renderer errors) and correctness bugs (close button, dock layering,
+      fullscreen layering, CSD geometry, scale/cursors, input settings). Deferred:
+      fractional scale.
+  - id: e09
+    slug: design-decisions
+    title: Design Decisions (Window Model, Outputs, IPC, Lua)
+    wsjf_rank: 8
+    status: planned
+    stories: []
+    description: |
+      Settle shapes that leak into IPC JSON, Lua API and Tacit backend: window
+      state model (layout + state flags), output model (position/scale/work area/
+      LayerMap per output), IPC protocol (events/subscribe/security), Lua config
+      shape (declarative es.config{}, es.bind with function/action). Deferred:
+      touch keyboard focus, wp_security_context_v1.

@@ -5,20 +5,23 @@ status: completed
 wsjf_rank: 2
 bcps_total: 13
 core_value: |
-  eswm provides two tiling layouts per output: master-stack and equal, so windows are arranged automatically without manual placement.
+  eswm provides two tiling layouts per workspace: master-stack and equal
+  (grid-based equal-sized cells). Per-workspace layout field; layout switching
+  keeps tiling order and each layout's saved state. Wm mode and tiling layout set
+  via es.dsp.set_wm_mode / es.dsp.set_tiling_layout in config.lua.
 stories:
   - id: e03s01
-    title: Per-output wm mode + tiling layout config
+    title: Per-workspace layout mode + config
     bcps: 3
     delta: ADDED
-    status: passing
+    status: completed
   - id: e03s02
     title: Equal tiling layout algorithm
     bcps: 5
     delta: ADDED
-    status: passing
+    status: completed
   - id: e03s03
     title: Wire equal into arrange_output
     bcps: 5
     delta: MODIFIED
-    status: passing
+    status: completed

@@ -1,46 +1,46 @@
 story_id: e02s03
-title: Workspace switching
-status: failing
+title: Workspace switching and window moving
+status: completed
 bcps: 5
 delta: ADDED
 tasks:
   - id: e02s03t1
-    description: Winit keybind processing removed; winit backend deleted (decision: Option B). Workspace switching via DRM keybind path (udev.rs) unchanged.
+    description: Bind Super+1..Super+N to switch active workspace on focused output
     verify: cargo test --lib wm::tests
     risk: P1
-    status: passing
-    allure:
-      severity: high
-      categories: ["refactor", "backend"]
-  - id: e02s03t2
-    description: Control-plane unit tests for workspace.focus, state, workspace.list, output.list, unknown command (replaces backend-dependent integration tests)
-    verify: cargo test control_ state result
-    risk: P1
-    status: passing
-    allure:
-      severity: high
-      categories: ["unit", "control-plane"]
-  - id: e02s03t3
-    description: On switch, move focus to new workspace's focused window (existing WM code, covered by workspace_move_keeps_windows_separate test)
-    verify: cargo test --lib wm::tests
-    risk: P1
-    status: passing
+    status: completed
     allure:
       severity: high
       categories: ["unit", "wm"]
-  - id: e02s03t4
-    description: Hide windows of previously active workspace from rendering/focus (existing placed_windows filter, covered by wm unit tests)
+  - id: e02s03t2
+    description: On switch, move focus to new workspace's focused window (MRU) and re-visible its windows
+    verify: cargo test --lib wm::tests
+    risk: P1
+    status: completed
+    allure:
+      severity: high
+      categories: ["unit", "wm"]
+  - id: e02s03t3
+    description: Hide windows of previously active workspace from rendering/focus
     verify: cargo test --lib wm::tests
     risk: P2
-    status: passing
+    status: completed
     allure:
       severity: normal
       categories: ["unit", "wm"]
-  - id: e02s03t5
-    description: Write default config.lua template with switch_workspace binds at config.default.lua
-    verify: test -f config.default.lua
-    risk: P3
-    status: passing
+  - id: e02s03t4
+    description: Bind Super+Shift+1..Super+Shift+N to move focused window to target workspace
+    verify: cargo test --lib wm::tests
+    risk: P1
+    status: completed
     allure:
-      severity: minor
-      categories: ["config", "template"]
+      severity: high
+      categories: ["unit", "wm"]
+  - id: e02s03t5
+    description: Remove window from source workspace membership, add to target workspace; update output together
+    verify: cargo test --lib wm::tests
+    risk: P1
+    status: completed
+    allure:
+      severity: high
+      categories: ["unit", "wm"]

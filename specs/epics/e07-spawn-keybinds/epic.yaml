@@ -1,0 +1,20 @@
+id: e07
+slug: spawn-keybinds
+title: Spawning & Keybinds
+status: planned
+wsjf_rank: 6
+bcps_total: 8
+core_value: |
+  Fix spawning (sh -c, XDG_CURRENT_DESKTOP, XDG_STATE_HOME logging, SIGCHLD reaping)
+  and keybind parsing (xkb keysym names, raw sym matching, emergency quit).
+stories:
+  - id: e07s01
+    title: Spawning: sh -c, XDG_CURRENT_DESKTOP, XDG_STATE_HOME logs, SIGCHLD
+    bcps: 5
+    delta: MODIFIED
+    status: pending
+  - id: e07s02
+    title: Keybinds: xkb keysym names, raw sym matching, emergency quit always on
+    bcps: 3
+    delta: MODIFIED
+    status: pending
