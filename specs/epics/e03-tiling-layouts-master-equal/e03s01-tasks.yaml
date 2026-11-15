@@ -5,7 +5,7 @@ bcps: 3
 delta: ADDED
 tasks:
   - id: e03s01t1
-    description: Add TilingLayout enum (Master/Dwindle) to wm.rs; add tiling_layout field to Output struct; rename LayoutMode to WmMode (Tiling/Floating)
+    description: Add TilingLayout enum (Master/Equal) to wm.rs; add tiling_layout field to Output struct; rename LayoutMode to WmMode (Tiling/Floating)
     verify: cargo test --bin eswm wm::tests
     risk: P1
     status: passing

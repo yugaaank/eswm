@@ -1052,7 +1052,6 @@ impl WindowManager {
                 } else {
                     ((inner.width as u64 * 3) / 5) as u32
                 };
-                let stack_width = inner.width.saturating_sub(master_width).saturating_sub(inner_gap);
                 self.set_target_rect(
                     tiled[0],
                     Rect {
@@ -1063,35 +1062,48 @@ impl WindowManager {
                     },
                 );
                 // floating windows keep their own geometry; the tiler ignores them
-
+                // Inner gap only between master column and stack column.
+                // Stack windows fill the remaining height without gaps between them.
                 let stack = &tiled[1..];
                 if !stack.is_empty() {
                     let stack_x = inner.x + master_width as i32 + inner_gap as i32;
-                    // Split inner height across stack windows with a gap between each.
-                    let stack_h_inner = inner.height.saturating_sub((stack.len() as u32 + 1) * inner_gap);
-                    let cell_h = stack_h_inner / stack.len() as u32;
+                    let stack_w = inner
+                        .width
+                        .saturating_sub(master_width)
+                        .saturating_sub(inner_gap);
+                    // Inner gap between each stack window (vertical), including
+                    // titlebar height so a lower window's titlebar doesn't
+                    // overlap the window above it.
+                    let gap_v = inner_gap as i32 + tb_h;
+                    let total_gap_v = gap_v * (stack.len() - 1) as i32;
+                    let cell_h = (inner.height as i32 - total_gap_v) / stack.len() as i32;
                     for (index, id) in stack.iter().enumerate() {
-                        let top =
-                            inner.y + inner_gap as i32 + (index as u32 * (cell_h + inner_gap)) as i32;
+                        let top = inner.y + (index as i32 * (cell_h + gap_v));
                         self.set_target_rect(
                             *id,
                             Rect {
                                 x: stack_x,
                                 y: top,
-                                width: stack_width,
-                                height: cell_h,
+                                width: stack_w,
+                                height: cell_h as u32,
                             },
                         );
                     }
                 }
             }
             TilingLayout::Equal => {
-                // Equal arranges windows in equal-sized cells; ignores gaps.
-                // Floating windows keep their own geometry; the tiler ignores them.
-                let mut assigned: Vec<(WindowId, Rect)> = Vec::new();
-                equal_split(&mut assigned, &tiled, inner);
-                for (id, rect) in assigned {
-                    self.set_target_rect(id, rect);
+                // Equal arranges windows in equal-sized cells with inner gaps
+                // between all cells. Floating windows keep their own geometry;
+                // the tiler ignores them.
+                let n = tiled.len();
+                if n == 1 {
+                    self.set_target_rect(tiled[0], inner);
+                } else {
+                    let mut assigned: Vec<(WindowId, Rect)> = Vec::new();
+                    equal_split(&mut assigned, &tiled, inner, inner_gap, tb_h as u32);
+                    for (id, rect) in assigned {
+                        self.set_target_rect(id, rect);
+                    }
                 }
             }
         }
@@ -1165,11 +1177,21 @@ impl WindowManager {
     }
 }
 
-/// Equal tiling layout: divides the rect into N equal-sized cells.
-/// Each window gets the same width and height. Cells are arranged in a grid
-/// that minimizes empty space and keeps cells as square as possible.
+/// Equal tiling layout: divides the rect into N equal-sized cells with gaps
+/// between them. Each window gets the same width and height. Cells are arranged
+/// in a grid that minimizes empty space and keeps cells as square as possible.
 /// All windows receive identical rects — no master window, no shrinking.
-pub fn equal_split(assigned: &mut Vec<(WindowId, Rect)>, window_ids: &[WindowId], rect: Rect) {
+/// `gap` is the inner gap in pixels between adjacent cells.
+/// `titlebar_height` is added to vertical gaps between rows so that a lower
+/// window's titlebar (which extends upward from its target_rect) never overlaps
+/// the window above it.
+pub fn equal_split(
+    assigned: &mut Vec<(WindowId, Rect)>,
+    window_ids: &[WindowId],
+    rect: Rect,
+    gap: u32,
+    titlebar_height: u32,
+) {
     let n = window_ids.len();
     if n == 0 {
         return;
@@ -1178,34 +1200,39 @@ pub fn equal_split(assigned: &mut Vec<(WindowId, Rect)>, window_ids: &[WindowId]
         assigned.push((window_ids[0], rect));
         return;
     }
-    // Find the grid (rows x cols) that fits all windows with the squarest cells.
+    // Find the grid (rows x cols) that fits all windows. Primary: minimize the
+    // larger dimension (avoid 1xN rows when 2x2 fits). Tiebreak: squarest cell
+    // aspect ratio so cells are close to square.
     let mut best_rows = 1;
     let mut best_cols = n;
-    let mut best_score = f64::INFINITY;
+    let mut best_max_dim = n;
+    let mut best_ratio_dev = f64::INFINITY;
+    let screen_ratio = rect.width as f64 / rect.height as f64;
     for rows in 1..=n {
         let cols = (n + rows - 1) / rows; // ceil(n / rows)
-        if rows * cols < n {
-            continue;
-        }
-        let cell_w = rect.width as f64 / cols as f64;
-        let cell_h = rect.height as f64 / rows as f64;
-        let score = (cell_w / cell_h - 1.0).abs(); // want square cells
-        if score < best_score {
-            best_score = score;
+        let max_dim = rows.max(cols);
+        let cell_ratio = screen_ratio * (rows as f64 / cols as f64);
+        let ratio_dev = (cell_ratio - 1.0).abs();
+        if max_dim < best_max_dim || (max_dim == best_max_dim && ratio_dev < best_ratio_dev) {
+            best_max_dim = max_dim;
+            best_ratio_dev = ratio_dev;
             best_rows = rows;
             best_cols = cols;
         }
     }
-    let cell_w = rect.width / best_cols as u32;
-    let cell_h = rect.height / best_rows as u32;
+    // Vertical gap between rows must accommodate titlebars: a lower window's
+    // titlebar extends upward from its target_rect, so it needs tb_h of space.
+    let gap_v = gap + titlebar_height;
+    let cell_w = (rect.width.saturating_sub(gap * (best_cols - 1) as u32)) / best_cols as u32;
+    let cell_h = (rect.height.saturating_sub(gap_v * (best_rows - 1) as u32)) / best_rows as u32;
     for (i, &id) in window_ids.iter().enumerate() {
         let row = i / best_cols;
         let col = i % best_cols;
         assigned.push((
             id,
             Rect {
-                x: rect.x + col as i32 * cell_w as i32,
-                y: rect.y + row as i32 * cell_h as i32,
+                x: rect.x + col as i32 * (cell_w + gap) as i32,
+                y: rect.y + row as i32 * (cell_h + gap_v) as i32,
                 width: cell_w,
                 height: cell_h,
             },
@@ -1372,12 +1399,60 @@ mod tests {
         assert_eq!(m.width, 1137); // inner.width = 1896, 1896*3/5 = 1137
         assert_eq!(m.height, 1056); // 1080 - 20 - 4
 
-        // Stack window should be to the right, inset.
+        // Stack window should be to the right, after inner gap from master.
+        // No gaps between stack windows — they fill full height.
         let s = manager.window(second).unwrap().target_rect;
         assert_eq!(s.x, 12 + 1137 + 10); // inner.x + master_width + inner_gap
-        assert_eq!(s.y, 22); // inner.y + gap
+        assert_eq!(s.y, 12); // inner.y (no gap offset for single stack window)
         assert_eq!(s.width, 749); // 1896 - 1137 - 10
-        assert_eq!(s.height, 1036); // (1056 - 2*10) / 1 = 1036
+        assert_eq!(s.height, 1056); // full inner height
+    }
+
+    #[test]
+    fn gap_between_stack_windows() {
+        let (mut manager, output) = manager();
+        manager.set_outer(10);
+        manager.set_inner(10);
+        let master = manager.add_window(output, "kitty", "one").unwrap();
+        let s1 = manager.add_window(output, "kitty", "two").unwrap();
+        let s2 = manager.add_window(output, "kitty", "three").unwrap();
+        let s3 = manager.add_window(output, "kitty", "four").unwrap();
+
+        manager.arrange_output(output);
+
+        let m = manager.window(master).unwrap().target_rect;
+        assert_eq!(m.x, 12);
+        assert_eq!(m.y, 12);
+        assert_eq!(m.width, 1137); // inner.width = 1896, 1896*3/5 = 1137
+        assert_eq!(m.height, 1056); // full inner height
+
+        // 3 stack windows with inner gaps between them.
+        // inner.height = 1056, gap_v = 10 + 0 = 10 (titlebar_height = 0)
+        // total_gap_v = 10 * 2 = 20
+        // cell_h = (1056 - 20) / 3 = 345
+        // positions: y=12, y=12+355, y=12+710
+        let expected_h = (1056 - 20) / 3;
+        let expected_y1 = 12;
+        let expected_y2 = 12 + expected_h + 10;
+        let expected_y3 = 12 + 2 * (expected_h + 10);
+
+        let w1 = manager.window(s1).unwrap().target_rect;
+        assert_eq!(w1.x, 12 + 1137 + 10);
+        assert_eq!(w1.y, expected_y1);
+        assert_eq!(w1.width, 749);
+        assert_eq!(w1.height, expected_h);
+
+        let w2 = manager.window(s2).unwrap().target_rect;
+        assert_eq!(w2.x, 12 + 1137 + 10);
+        assert_eq!(w2.y, expected_y2 as i32);
+        assert_eq!(w2.width, 749);
+        assert_eq!(w2.height, expected_h);
+
+        let w3 = manager.window(s3).unwrap().target_rect;
+        assert_eq!(w3.x, 12 + 1137 + 10);
+        assert_eq!(w3.y, expected_y3 as i32);
+        assert_eq!(w3.width, 749);
+        assert_eq!(w3.height, expected_h);
     }
 
     #[test]
@@ -1537,7 +1612,7 @@ mod tests {
     fn equal_split_single_window_fills_rect() {
         let rect = Rect { x: 0, y: 0, width: 1920, height: 1080 };
         let mut assigned: Vec<(u64, Rect)> = Vec::new();
-        equal_split(&mut assigned, &[1], rect);
+        equal_split(&mut assigned, &[1], rect, 0, 0);
 
         assert_eq!(assigned.len(), 1);
         assert_eq!(assigned[0].0, 1);
@@ -1548,7 +1623,7 @@ mod tests {
     fn equal_split_two_windows_split_vertically() {
         let rect = Rect { x: 0, y: 0, width: 1920, height: 1080 };
         let mut assigned: Vec<(u64, Rect)> = Vec::new();
-        equal_split(&mut assigned, &[1, 2], rect);
+        equal_split(&mut assigned, &[1, 2], rect, 0, 0);
 
         assert_eq!(assigned.len(), 2);
         assert_eq!(assigned[0].1.x, 0);
@@ -1565,7 +1640,7 @@ mod tests {
     fn equal_split_three_windows_equal_size() {
         let rect = Rect { x: 0, y: 0, width: 1920, height: 1080 };
         let mut assigned: Vec<(u64, Rect)> = Vec::new();
-        equal_split(&mut assigned, &[1, 2, 3], rect);
+        equal_split(&mut assigned, &[1, 2, 3], rect, 0, 0);
 
         assert_eq!(assigned.len(), 3);
         // All windows should have the same width and height
@@ -1576,15 +1651,15 @@ mod tests {
             assert_eq!(r.height, h, "window heights not equal");
         }
         // All rects should be non-overlapping and within bounds
-        let mut total_area = 0;
         for (_, r) in &assigned {
             assert!(r.x >= 0 && r.y >= 0);
             assert!(r.x + r.width as i32 <= 1920);
             assert!(r.y + r.height as i32 <= 1080);
-            total_area += r.width as u64 * r.height as u64;
         }
-        // Windows cover the full output (within rounding)
-        assert!(total_area >= 1920 * 1080 - 1000);
+        // 3 windows in 2x2 grid: one cell empty, windows at (0,0),(960,0),(0,540)
+        assert_eq!(assigned[0].1, Rect { x: 0, y: 0, width: 960, height: 540 });
+        assert_eq!(assigned[1].1, Rect { x: 960, y: 0, width: 960, height: 540 });
+        assert_eq!(assigned[2].1, Rect { x: 0, y: 540, width: 960, height: 540 });
     }
 
     #[test]
@@ -1614,27 +1689,35 @@ mod tests {
         assert_ne!(r2.width, 0);
         assert_ne!(r3.width, 0);
 
+        // All windows should have equal size (2x2 grid, one cell empty)
+        assert_eq!(r1.width, r2.width);
+        assert_eq!(r1.height, r2.height);
+        assert_eq!(r1.width, r3.width);
+        assert_eq!(r1.height, r3.height);
+
         // Rects should not overlap
         for (a, b) in [(&r1, &r2), (&r1, &r3), (&r2, &r3)] {
             let overlap_x = (a.x.min(b.x + b.width as i32) - a.x.max(b.x)).max(0);
             let overlap_y = (a.y.min(b.y + b.height as i32) - a.y.max(b.y)).max(0);
             assert_eq!(overlap_x as u64 * overlap_y as u64, 0, "windows overlap");
         }
-
-        // Combined area should cover the full output (within rounding)
-        let output_rect = manager.output(output).unwrap().geometry;
-        let total_area = r1.width as u64 * r1.height as u64
-            + r2.width as u64 * r2.height as u64
-            + r3.width as u64 * r3.height as u64;
-        assert!(total_area >= output_rect.width as u64 * output_rect.height as u64 - 1000);
     }
 
     #[test]
-    fn equal_split_rects_do_not_overlap() {
+    fn equal_split_rects_do_not_overlap_with_gap() {
         let rect = Rect { x: 0, y: 0, width: 1920, height: 1080 };
         let mut assigned: Vec<(u64, Rect)> = Vec::new();
-        equal_split(&mut assigned, &[1, 2, 3, 4, 5], rect);
+        equal_split(&mut assigned, &[1, 2, 3, 4], rect, 10, 0);
 
+        assert_eq!(assigned.len(), 4);
+        // 2x2 grid with 10px gaps: cell_w=(1920-10)/2=955, cell_h=(1080-10)/2=535
+        // positions: (0,0),(965,0),(0,545),(965,545)
+        assert_eq!(assigned[0].1, Rect { x: 0, y: 0, width: 955, height: 535 });
+        assert_eq!(assigned[1].1, Rect { x: 965, y: 0, width: 955, height: 535 });
+        assert_eq!(assigned[2].1, Rect { x: 0, y: 545, width: 955, height: 535 });
+        assert_eq!(assigned[3].1, Rect { x: 965, y: 545, width: 955, height: 535 });
+
+        // No overlaps
         for i in 0..assigned.len() {
             for j in i + 1..assigned.len() {
                 let a = assigned[i].1;
@@ -1644,5 +1727,37 @@ mod tests {
                 assert_eq!(overlap_x as u64 * overlap_y as u64, 0, "windows {} and {} overlap", assigned[i].0, assigned[j].0);
             }
         }
+    }
+
+    #[test]
+    fn equal_split_titlebar_gap_between_rows() {
+        let rect = Rect { x: 0, y: 0, width: 1920, height: 1080 };
+        let mut assigned: Vec<(u64, Rect)> = Vec::new();
+        // 2 windows side by side, 30px titlebar height, no extra gap
+        equal_split(&mut assigned, &[1, 2], rect, 0, 30);
+
+        assert_eq!(assigned.len(), 2);
+        // 1x2 grid: cell_w=960, cell_h=1080
+        assert_eq!(assigned[0].1, Rect { x: 0, y: 0, width: 960, height: 1080 });
+        assert_eq!(assigned[1].1, Rect { x: 960, y: 0, width: 960, height: 1080 });
+
+        // No titlebar overlap: window 2's titlebar would be at y=1050-1080,
+        // window 1's client area ends at y=1080. No overlap.
+        assert_eq!(assigned[0].1.y + assigned[0].1.height as i32, 1080);
+        assert_eq!(assigned[1].1.y + assigned[1].1.height as i32, 1080);
+    }
+
+    #[test]
+    fn equal_split_titlebar_gap_vertical_stack() {
+        let rect = Rect { x: 0, y: 0, width: 1080, height: 1920 };
+        let mut assigned: Vec<(u64, Rect)> = Vec::new();
+        // 2 windows stacked vertically on a portrait screen, 30px titlebar
+        equal_split(&mut assigned, &[1, 2], rect, 0, 30);
+
+        assert_eq!(assigned.len(), 2);
+        // 2x1 grid: cell_w=1080, cell_h=(1920-30)/2=945
+        assert_eq!(assigned[0].1, Rect { x: 0, y: 0, width: 1080, height: 945 });
+        assert_eq!(assigned[1].1, Rect { x: 0, y: 975, width: 1080, height: 945 });
+        // Window 2's titlebar at y=945-975, window 1's client ends at y=945. No overlap.
     }
 }

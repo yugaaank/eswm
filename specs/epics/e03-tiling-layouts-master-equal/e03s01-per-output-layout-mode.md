@@ -4,12 +4,12 @@
 **risk:** P1  
 **context:** domain  
 
-**Context:** `wm::LayoutMode` existed with `Hyprland`/`Windows` variants but controlled spawn default (tiled vs floating). Renamed to `WmMode` (Tiling/Floating) for clarity. `Output` struct gained `tiling_layout: TilingLayout` field (Master/Dwindle). No keybind for toggling; wm mode and tiling layout are set via `es.dsp.set_wm_mode` / `es.dsp.set_tiling_layout` in `config.lua`, requiring logout/login to change.
+**Context:** `wm::LayoutMode` existed with `Hyprland`/`Windows` variants but controlled spawn default (tiled vs floating). Renamed to `WmMode` (Tiling/Floating) for clarity. `Output` struct gained `tiling_layout: TilingLayout` field (Master/Equal). No keybind for toggling; wm mode and tiling layout are set via `es.dsp.set_wm_mode` / `es.dsp.set_tiling_layout` in `config.lua`, requiring logout/login to change.
 
 ## Steps
 
 1. Rename `LayoutMode` enum to `WmMode` (Tiling/Floating) in `src/wm.rs` -> verify: `cargo build`
-2. Add `TilingLayout` enum (`Master`, `Dwindle`) to `src/wm.rs` -> verify: `cargo build`
+2. Add `TilingLayout` enum (`Master`, `Equal`) to `src/wm.rs` -> verify: `cargo build`
 3. Add `tiling_layout: TilingLayout` field to `Output` struct, default `Master` -> verify: `cargo build`
 4. Add `tiling_layout` field to `DecorationConfig` -> verify: `cargo build`
 5. Add `WindowManager::set_tiling_layout` setting primary output's tiling_layout -> verify: `cargo build`
@@ -28,8 +28,8 @@
 ## Out of scope
 
 - Keybind-based layout toggle (user decided: config-only, logout/login to change)
-- Dwindle layout algorithm (e03s02)
-- Wiring dwindle into `arrange_output` (e03s03)
+- Equal layout algorithm (e03s02)
+- Wiring equal into `arrange_output` (e03s03)
 
 ## Risks
 
