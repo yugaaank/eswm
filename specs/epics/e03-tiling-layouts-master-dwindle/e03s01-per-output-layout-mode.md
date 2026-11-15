@@ -1,95 +1,38 @@
-### Story e03s01: Per-output layout mode + toggle keybind: Implementation Steps
+### Story e03s01: Per-output wm mode + tiling layout config: Implementation Steps
 
 **type:** feat  
 **risk:** P1  
 **context:** domain  
 
-**Context:** `wm::LayoutMode` exists with `Hyprland`/`Windows` variants but controls spawn default (tiled vs floating), not the tiling algorithm. `WindowManager` has a global `layout_mode` field toggled by `toggle_layout_mode` keybind. `Output` struct has no per-output layout field. `arrange_output` always uses master-stack. This story adds a per-output `TilingLayout` enum (Master, Dwindle) on `Output` and makes the layout toggle keybind cycle the focused output's layout.
+**Context:** `wm::LayoutMode` existed with `Hyprland`/`Windows` variants but controlled spawn default (tiled vs floating). Renamed to `WmMode` (Tiling/Floating) for clarity. `Output` struct gained `tiling_layout: TilingLayout` field (Master/Dwindle). No keybind for toggling; wm mode and tiling layout are set via `es.dsp.set_wm_mode` / `es.dsp.set_tiling_layout` in `config.lua`, requiring logout/login to change.
 
 ## Steps
 
-1. Add `TilingLayout` enum (`Master`, `Dwindle`) to `src/wm.rs` -> verify: `cargo build`
-2. Add `tiling_layout: TilingLayout` field to `Output` struct, default `Master`, set in `add_output` -> verify: `cargo build`
-3. Change `WindowManager::toggle_layout_mode` to cycle the focused output's `tiling_layout` between Master and Dwindle, return the new mode -> verify: `cargo test --bin eswm wm::tests`
-4. Update udev.rs `toggle_layout_mode` keybind to call per-output toggle on primary output -> verify: `cargo test --bin eswm wm::tests`
-5. Unit test: toggle_layout_mode switches output between Master and Dwindle -> verify: `cargo test --bin eswm layout_toggle`
-6. Write default `config.default.lua` with `Super+`` = toggle_layout_mode → verify: `test -f config.default.lua`
+1. Rename `LayoutMode` enum to `WmMode` (Tiling/Floating) in `src/wm.rs` -> verify: `cargo build`
+2. Add `TilingLayout` enum (`Master`, `Dwindle`) to `src/wm.rs` -> verify: `cargo build`
+3. Add `tiling_layout: TilingLayout` field to `Output` struct, default `Master` -> verify: `cargo build`
+4. Add `tiling_layout` field to `DecorationConfig` -> verify: `cargo build`
+5. Add `WindowManager::set_tiling_layout` setting primary output's tiling_layout -> verify: `cargo build`
+6. Sync `wm_mode` and `tiling_layout` from `DecorationConfig` to `WindowManager` in `apply_decoration_to_wm` -> verify: `cargo build`
+7. Add `es.dsp.set_wm_mode` and `es.dsp.set_tiling_layout` Lua APIs in `src/lua_state.rs` -> verify: `cargo build`
+8. Rename `toggle_layout_mode` keybind to `toggle_wm_mode` in `src/udev.rs`, then remove it (config-only) -> verify: `cargo test --bin eswm wm::tests`
+9. Update `~/.config/eswm/config.lua`: `set_wm_mode("tiling")`, `set_tiling_layout("master")` -> verify: `test -f ~/.config/eswm/config.lua`
+10. Update `config.default.lua` with renamed keybinds -> verify: `test -f config.default.lua`
 
 ## Verification Script (Step-by-Step)
 
 1. Run `cargo test --bin eswm wm::tests` and confirm all WM tests pass.
-2. Run `cargo test --bin eswm layout_toggle` and confirm the toggle test passes.
-3. Confirm `config.default.lua` exists.
+2. Confirm `~/.config/eswm/config.lua` contains `set_wm_mode` and `set_tiling_layout`.
+3. Confirm no `toggle_wm_mode` or `toggle_layout_mode` keybind exists in `src/udev.rs`.
 
 ## Out of scope
 
+- Keybind-based layout toggle (user decided: config-only, logout/login to change)
 - Dwindle layout algorithm (e03s02)
-- Floating mode as a layout option
-- Lua `es.dsp.set_layout_mode` changes (stays as spawn default)
+- Wiring dwindle into `arrange_output` (e03s03)
 
 ## Risks
 
-- `toggle_layout_mode` is called from udev.rs keybind; changing it from global to per-output could affect existing configs. The keybind name stays the same; only behavior changes to per-output.
-
----
-
-### Story e03s02: Dwindle tiling layout algorithm: Implementation Steps
-
-**type:** feat  
-**risk:** P1  
-**context:** domain  
-
-**Context:** `arrange_output` in `src/wm.rs` implements master-stack (first window gets 3/5 width, rest split remaining height). No dwindle layout exists. This story adds a recursive binary split dwindle algorithm.
-
-## Steps
-
-1. Add `dwindle` function to `src/wm.rs` taking a vec of window ids and a rect, returning assigned rects via recursive binary split (split largest leaf, alternate horizontal/vertical) -> verify: `cargo build`
-2. Unit test: dwindle with 1 window fills the entire rect -> verify: `cargo test --bin eswm dwindle_layout`
-3. Unit test: dwindle with N windows produces non-overlapping rects covering the rect -> verify: `cargo test --bin eswm dwindle_layout`
-4. Unit test: dwindle splits largest leaf first -> verify: `cargo test --bin eswm dwindle_layout`
-
-## Verification Script (Step-by-Step)
-
-1. Run `cargo test --bin eswm dwindle_layout` and confirm all dwindle tests pass.
-2. Confirm no two window rects overlap and union equals the input rect.
-
-## Out of scope
-
-- Wiring dwindle into arrange_output (e03s03)
-- Layout toggle keybind (e03s01)
-
-## Risks
-
-- Dwindle rects must respect gaps/borders like master-stack does; test with outer=0, inner=0 for simplicity.
-
----
-
-### Story e03s03: Wire dwindle into arrange_output: Implementation Steps
-
-**type:** refactor  
-**risk:** P2  
-**context:** domain  
-
-**Context:** `arrange_output` in `src/wm.rs` always uses master-stack tiling. This story modifies it to check the output's `tiling_layout` and call dwindle when set to Dwindle.
-
-## Steps
-
-1. Modify `arrange_output` to read `output_state.tiling_layout` and call dwindle when Dwindle, master-stack otherwise -> verify: `cargo test --bin eswm wm::tests`
-2. Unit test: arrange_output with dwindle mode produces dwindle rects -> verify: `cargo test --bin eswm wm::tests`
-3. Confirm master-stack tests still pass (`lays_out_master_and_stack`, `gap_insets_tiled_windows`) -> verify: `cargo test --bin eswm wm::tests`
-
-## Verification Script (Step-by-Step)
-
-1. Run `cargo test --bin eswm wm::tests` and confirm all 20+ WM tests pass.
-2. Confirm master-stack behavior unchanged for outputs with Master layout.
-
-## Out of scope
-
-- Per-output layout persistence across restarts
-- Lua binding for layout selection (keybind only)
-
-## Risks
-
-- `arrange_output` is called every frame; dwindle must be fast (no allocations in hot path preferred).
+- `set_tiling_layout` sets the layout on the primary output only; multi-output per-output layout via Lua not yet supported.
 
 ---

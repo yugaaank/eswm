@@ -564,7 +564,8 @@ fn apply_decoration_to_wm(state: &mut State) {
     let titlebar_color_unfocused = d.titlebar_color_unfocused;
     let titlebar_height = d.titlebar_height;
     let dock_height = d.dock_height;
-    let layout_mode = d.layout_mode;
+    let wm_mode = d.wm_mode;
+    let tiling_layout = d.tiling_layout;
     drop(d);
     state.wm.set_outer(outer);
     state.wm.set_inner(inner);
@@ -573,7 +574,8 @@ fn apply_decoration_to_wm(state: &mut State) {
     state.wm.set_titlebar_colors(titlebar_color_focused, titlebar_color_unfocused);
     state.wm.set_titlebar_height(titlebar_height);
     state.wm.set_dock_height(dock_height);
-    state.wm.set_layout_mode(layout_mode);
+    state.wm.set_wm_mode(wm_mode);
+    state.wm.set_tiling_layout(tiling_layout);
 }
 
 // M5: push target rects to clients as xdg_toplevel size configures, then mark applied.

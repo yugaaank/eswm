@@ -25,10 +25,18 @@ pub enum WindowMode {
 /// Switching it only affects newly spawned windows; Super+Space still moves
 /// individual windows between tiling and floating.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum LayoutMode {
+pub enum WmMode {
     #[default]
-    Hyprland,
-    Windows,
+    Tiling,
+    Floating,
+}
+
+/// Tiling algorithm used to arrange windows on an output.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TilingLayout {
+    #[default]
+    Master,
+    Dwindle,
 }
 
 #[derive(Clone, Debug)]
@@ -67,6 +75,7 @@ pub struct Output {
     pub name: String,
     pub geometry: Rect,
     pub active_workspace: WorkspaceId,
+    pub tiling_layout: TilingLayout,
 }
 
 /// A single entry in the dock: one window on the active workspace, either
@@ -92,7 +101,7 @@ pub struct WindowManager {
     outputs: BTreeMap<OutputId, Output>,
     workspaces: BTreeMap<WorkspaceId, Workspace>,
     windows: BTreeMap<WindowId, Window>,
-    layout_mode: LayoutMode,
+    wm_mode: WmMode,
     cascade_count: u32,
     /// Outer gap (px) between tiled windows and the output / work-area edge.
     /// Outer gap (px) between tiled windows and the output / work-area edge.
@@ -157,9 +166,11 @@ pub struct DecorationConfig {
     /// Dock bar height (px). eswm draws a simple dock bar at the bottom of the
     /// output when > 0; reserved from the work area so tiled windows stay clear.
     pub dock_height: u32,
-    /// Default layout mode for newly spawned windows:
-    /// Hyprland = tiled by default, Windows = floating by default.
-    pub layout_mode: LayoutMode,
+    /// Default wm mode for newly spawned windows:
+    /// Tiling = tiled by default, Floating = floating by default.
+    pub wm_mode: WmMode,
+    /// Tiling layout algorithm for the output this decoration is applied to.
+    pub tiling_layout: TilingLayout,
 }
 
 impl DecorationConfig {
@@ -175,7 +186,8 @@ impl DecorationConfig {
             titlebar_color_focused: [200, 200, 200, 255],
             titlebar_color_unfocused: [60, 60, 60, 255],
             dock_height: 0,
-            layout_mode: LayoutMode::Hyprland,
+            wm_mode: WmMode::Tiling,
+            tiling_layout: TilingLayout::Master,
         }
     }
 }
@@ -209,6 +221,7 @@ impl WindowManager {
                 name: name.into(),
                 geometry,
                 active_workspace: workspace,
+                tiling_layout: TilingLayout::default(),
             },
         );
         id
@@ -404,12 +417,21 @@ impl WindowManager {
         true
     }
 
-    pub fn layout_mode(&self) -> LayoutMode {
-        self.layout_mode
+    pub fn wm_mode(&self) -> WmMode {
+        self.wm_mode
     }
 
-    pub fn set_layout_mode(&mut self, mode: LayoutMode) {
-        self.layout_mode = mode;
+    pub fn set_wm_mode(&mut self, mode: WmMode) {
+        self.wm_mode = mode;
+    }
+
+    pub fn set_tiling_layout(&mut self, layout: TilingLayout) {
+        let Some(output_id) = self.primary_output_id() else {
+            return;
+        };
+        if let Some(output) = self.outputs.get_mut(&output_id) {
+            output.tiling_layout = layout;
+        }
     }
 
     pub fn set_outer(&mut self, outer: u32) {
@@ -525,15 +547,6 @@ impl WindowManager {
         (None, None)
     }
 
-    pub fn toggle_layout_mode(&mut self) -> LayoutMode {
-        self.layout_mode = match self.layout_mode {
-            LayoutMode::Hyprland => LayoutMode::Windows,
-            LayoutMode::Windows => LayoutMode::Hyprland,
-        };
-        self.layout_mode
-    }
-
-    /// Toggle a single window between tiling and floating, regardless of global mode.
     pub fn toggle_window_mode(&mut self, id: WindowId) -> bool {
         let Some(window) = self.windows.get(&id) else {
             return false;
@@ -638,9 +651,9 @@ impl WindowManager {
                     .map(|o| o.active_workspace)
                     .unwrap_or(1)
             });
-        let mode = rule_mode.unwrap_or_else(|| match self.layout_mode {
-            LayoutMode::Hyprland => WindowMode::Tiled,
-            LayoutMode::Windows => WindowMode::Floating,
+        let mode = rule_mode.unwrap_or_else(|| match self.wm_mode {
+            WmMode::Tiling => WindowMode::Tiled,
+            WmMode::Floating => WindowMode::Floating,
         });
         let id = self.next_window;
         self.next_window += 1;
@@ -1141,7 +1154,7 @@ impl WindowManager {
 
 #[cfg(test)]
 mod tests {
-    use super::{Rect, WindowManager, WindowMode, WindowRule};
+    use super::{Rect, Output, TilingLayout, WindowManager, WindowMode, WindowRule};
 
     fn manager() -> (WindowManager, u64) {
         let mut manager = WindowManager::new();

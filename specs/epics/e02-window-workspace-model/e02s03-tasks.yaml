@@ -5,7 +5,7 @@ bcps: 5
 delta: ADDED
 tasks:
   - id: e02s03t1
-    description: Winit keybind processing removed — winit backend deleted (decision: Option B). Workspace switching via DRM keybind path (udev.rs) unchanged.
+    description: Winit keybind processing removed; winit backend deleted (decision: Option B). Workspace switching via DRM keybind path (udev.rs) unchanged.
     verify: cargo test --lib wm::tests
     risk: P1
     status: passing

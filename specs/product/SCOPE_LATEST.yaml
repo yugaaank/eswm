@@ -1,22 +1,19 @@
 core_value: |
-  eswm provides two tiling layouts per output — master-stack and dwindle — so
-  windows are arranged automatically without manual placement.
+  eswm provides two tiling layouts per output: master-stack and dwindle, so windows are arranged automatically without manual placement.
 
 summary: |
-  e03 adds a per-output layout mode and a dwindle tiling layout on top of the
-  completed window/workspace state model (e02). Each output independently runs
-  master-stack (existing 3/5 split) or dwindle (recursive binary split). A
-  keybind toggles the layout on the focused output. Floating snap behaviour is
-  deferred; this epic covers tiling layouts only.
+  e03 adds a per-output tiling layout and a dwindle tiling layout on top of the completed window/workspace state model (e02). Each output independently runs master-stack (existing 3/5 split) or dwindle (recursive binary split). Wm mode and tiling layout are set via es.dsp.set_wm_mode / es.dsp.set_tiling_layout in config.lua (logout/login to change). Floating snap behaviour is deferred; this epic covers tiling layouts only.
 
 in_scope:
-  - Per-output LayoutMode field on Output: master-stack or dwindle. Maps to future epic e03.
-  - Layout toggle keybind cycling per-output between master-stack and dwindle. Maps to future epic e03.
+  - Per-output TilingLayout field on Output: master-stack or dwindle. Maps to future epic e03.
+  - Wm mode (tiling/floating) set via es.dsp.set_wm_mode in config.lua. Maps to future epic e03.
+  - Tiling layout (master/dwindle) set via es.dsp.set_tiling_layout in config.lua. Maps to future epic e03.
   - Dwindle layout: recursive binary split where each new window splits the largest leaf. Maps to future epic e03.
-  - Wire dwindle into arrange_output when output layout mode is dwindle. Maps to future epic e03.
+  - Wire dwindle into arrange_output when output tiling layout is dwindle. Maps to future epic e03.
   - Unit tests for dwindle layout: non-overlapping rects, full coverage of output, correct splits. Maps to future epic e03.
 
 out_of_scope:
+  - Keybind-based layout toggle: deferred. Wm mode and tiling layout are config-only; logout/login to change.
   - Floating snap zones / Windows 11 snap behaviour: deferred. Not part of tiling layouts.
   - Workspace animations / transitions (Phase 4): deferred.
   - Tacit native control integration (Phase 5): deferred.
@@ -33,13 +30,14 @@ constraints:
 
 success_criteria:
   - Each output independently runs master-stack or dwindle layout.
-  - Layout toggle keybind switches the focused output's layout.
+  - Wm mode settable via es.dsp.set_wm_mode in config.lua.
+  - Tiling layout settable via es.dsp.set_tiling_layout in config.lua.
   - Dwindle arranges windows with non-overlapping rects covering the output work area.
   - Master-stack continues to work unchanged.
   - cargo test passes; preflight green.
 
 references:
-  - notes/roadmap.md — Phase 3 tiling and floating management
-  - specs/product/SCOPE_LATEST.yaml (e02, completed) — window and workspace model
-  - src/wm.rs — existing WindowManager, LayoutMode, arrange_output
-  - src/udev.rs — existing keybind dispatch
+  - notes/roadmap.md: Phase 3 tiling and floating management
+  - specs/product/SCOPE_LATEST.yaml (e02, completed): window and workspace model
+  - src/wm.rs: existing WindowManager, WmMode, arrange_output
+  - src/udev.rs: existing keybind dispatch

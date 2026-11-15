@@ -733,10 +733,6 @@ fn execute_keybind(state: &mut State, kb: &lua_state::Keybind) -> FilterResult<(
             }
             crate::apply_layout(state);
         }
-        "toggle_layout_mode" => {
-            state.wm.toggle_layout_mode();
-            crate::apply_layout(state);
-        }
         "exec_cmd" => {
             if let Some(cmd) = &kb.cmd {
                 let (program, args) = crate::parse_cmd(cmd);

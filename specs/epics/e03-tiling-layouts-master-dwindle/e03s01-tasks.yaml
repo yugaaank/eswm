@@ -1,38 +1,30 @@
 story_id: e03s01
-title: Per-output layout mode + toggle keybind
-status: failing
+title: Per-output wm mode + tiling layout config
+status: passing
 bcps: 3
 delta: ADDED
 tasks:
   - id: e03s01t1
-    description: Add LayoutMode enum variant Dwindle to wm.rs LayoutMode; add layout_mode field to Output struct
+    description: Add TilingLayout enum (Master/Dwindle) to wm.rs; add tiling_layout field to Output struct; rename LayoutMode to WmMode (Tiling/Floating)
     verify: cargo test --bin eswm wm::tests
     risk: P1
-    status: failing
+    status: passing
     allure:
       severity: high
       categories: ["unit", "wm"]
   - id: e03s01t2
-    description: Add toggle_layout_mode keybind dispatch in udev.rs cycling primary output's LayoutMode
+    description: Add es.dsp.set_wm_mode and es.dsp.set_tiling_layout Lua APIs (config-only, no keybind); sync to wm each frame
     verify: cargo test --bin eswm wm::tests
     risk: P1
-    status: failing
+    status: passing
     allure:
       severity: high
       categories: ["unit", "wm"]
   - id: e03s01t3
-    description: Unit test: toggle_layout_mode switches output between master and dwindle
-    verify: cargo test --bin eswm layout_toggle
-    risk: P2
-    status: failing
-    allure:
-      severity: normal
-      categories: ["unit", "wm"]
-  - id: e03s01t4
-    description: Update config.default.lua: Super+` reserved for layout toggle (master <-> dwindle)
-    verify: test -f config.default.lua
+    description: Update ~/.config/eswm/config.lua: set_wm_mode("tiling"), set_tiling_layout("master")
+    verify: test -f ~/.config/eswm/config.lua
     risk: P3
-    status: failing
+    status: passing
     allure:
       severity: minor
       categories: ["config", "template"]

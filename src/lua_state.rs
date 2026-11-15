@@ -7,7 +7,7 @@ use std::sync::Arc;
 use flume::Sender;
 use mlua::{Lua, Table};
 
-use crate::wm::{DecorationConfig, DockEntry, LayoutMode};
+use crate::wm::{DecorationConfig, DockEntry, TilingLayout, WmMode};
 
 /// Initialize a new Lua state with the eswm config API pre-loaded.
 /// Registers `es` table with `bind`, `define_submap`, `dsp`, `config` submodules,
@@ -183,20 +183,35 @@ pub fn register_api(
     })?;
     dsp_table.set("set_titlebar_height", dsp_set_titlebar_height)?;
 
-    // es.dsp.set_layout_mode("tiling"|"floating") -> default mode for new windows
-    let dsp_set_layout_mode = lua.create_function({
+    // es.dsp.set_wm_mode("tiling"|"floating") -> default wm mode for new windows
+    let dsp_set_wm_mode = lua.create_function({
         let decoration = decoration.clone();
         move |_, mode: String| -> Result<(), mlua::Error> {
-            let layout = match mode.as_str() {
-                "tiling" | "tiled" => LayoutMode::Hyprland,
-                "floating" | "float" => LayoutMode::Windows,
-                _ => return Err(mlua::Error::RuntimeError("layout mode must be 'tiling' or 'floating'".into())),
+            let wm_mode = match mode.as_str() {
+                "tiling" | "tiled" => WmMode::Tiling,
+                "floating" | "float" => WmMode::Floating,
+                _ => return Err(mlua::Error::RuntimeError("wm mode must be 'tiling' or 'floating'".into())),
             };
-            decoration.lock().unwrap().layout_mode = layout;
+            decoration.lock().unwrap().wm_mode = wm_mode;
             Ok(())
         }
     })?;
-    dsp_table.set("set_layout_mode", dsp_set_layout_mode)?;
+    dsp_table.set("set_wm_mode", dsp_set_wm_mode)?;
+
+    // es.dsp.set_tiling_layout("master"|"dwindle") -> tiling layout algorithm per output
+    let dsp_set_tiling_layout = lua.create_function({
+        let decoration = decoration.clone();
+        move |_, mode: String| -> Result<(), mlua::Error> {
+            let tiling = match mode.as_str() {
+                "master" => TilingLayout::Master,
+                "dwindle" => TilingLayout::Dwindle,
+                _ => return Err(mlua::Error::RuntimeError("tiling layout must be 'master' or 'dwindle'".into())),
+            };
+            decoration.lock().unwrap().tiling_layout = tiling;
+            Ok(())
+        }
+    })?;
+    dsp_table.set("set_tiling_layout", dsp_set_tiling_layout)?;
 
     // es.dsp.set_border_color_focused(r, g, b, a) -> focused border color (RGBA 0-255)
     let dsp_set_border_color_focused = lua.create_function({

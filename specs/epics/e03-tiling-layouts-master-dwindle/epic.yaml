@@ -5,11 +5,10 @@ status: planned
 wsjf_rank: 2
 bcps_total: 13
 core_value: |
-  eswm provides two tiling layouts per output — master-stack and dwindle — so
-  windows are arranged automatically without manual placement.
+  eswm provides two tiling layouts per output: master-stack and dwindle, so windows are arranged automatically without manual placement.
 stories:
   - id: e03s01
-    title: Per-output layout mode + toggle keybind
+    title: Per-output wm mode + tiling layout config
     bcps: 3
     delta: ADDED
     status: pending
