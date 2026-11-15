@@ -1152,9 +1152,53 @@ impl WindowManager {
     }
 }
 
+/// Dwindle tiling layout: recursive binary split.
+/// Assigns `window_ids` to non-overlapping rects within `rect` by repeatedly
+/// splitting in half. Split direction follows aspect ratio: wider than tall
+/// splits vertically, taller than wide splits horizontally.
+/// The first window in `window_ids` gets the top/left leaf.
+pub fn dwindle(assigned: &mut Vec<(WindowId, Rect)>, window_ids: &[WindowId], rect: Rect) {
+    if window_ids.is_empty() {
+        return;
+    }
+    if window_ids.len() == 1 {
+        assigned.push((window_ids[0], rect));
+        return;
+    }
+    // Split rect in half, recurse on each half.
+    let (left_ids, right_ids) = window_ids.split_at(window_ids.len() / 2);
+    let (left_rect, right_rect) = if rect.width > rect.height {
+        // Vertical split: left | right
+        let mid = rect.width / 2;
+        (
+            Rect { x: rect.x, y: rect.y, width: mid, height: rect.height },
+            Rect {
+                x: rect.x + mid as i32,
+                y: rect.y,
+                width: rect.width - mid,
+                height: rect.height,
+            },
+        )
+    } else {
+        // Horizontal split: top | bottom
+        let mid = rect.height / 2;
+        (
+            Rect { x: rect.x, y: rect.y, width: rect.width, height: mid },
+            Rect {
+                x: rect.x,
+                y: rect.y + mid as i32,
+                width: rect.width,
+                height: rect.height - mid,
+            },
+        )
+    };
+    dwindle(assigned, left_ids, left_rect);
+    dwindle(assigned, right_ids, right_rect);
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Rect, Output, TilingLayout, WindowManager, WindowMode, WindowRule};
+    use super::{Rect, Output, TilingLayout, WindowManager, WindowMode, WindowRule, dwindle};
 
     fn manager() -> (WindowManager, u64) {
         let mut manager = WindowManager::new();
@@ -1470,5 +1514,69 @@ mod tests {
         assert_eq!(manager.window(w1).unwrap().target_rect.width, 1916);
         // w2 is floating on workspace 2 -> not arranged, zero rect
         assert_eq!(manager.window(w2).unwrap().target_rect.width, 0);
+    }
+
+    #[test]
+    fn dwindle_single_window_fills_rect() {
+        let rect = Rect { x: 0, y: 0, width: 1920, height: 1080 };
+        let mut assigned: Vec<(u64, Rect)> = Vec::new();
+        dwindle(&mut assigned, &[1], rect);
+
+        assert_eq!(assigned.len(), 1);
+        assert_eq!(assigned[0].0, 1);
+        assert_eq!(assigned[0].1, Rect { x: 0, y: 0, width: 1920, height: 1080 });
+    }
+
+    #[test]
+    fn dwindle_two_windows_split_vertically() {
+        let rect = Rect { x: 0, y: 0, width: 1920, height: 1080 };
+        let mut assigned: Vec<(u64, Rect)> = Vec::new();
+        dwindle(&mut assigned, &[1, 2], rect);
+
+        assert_eq!(assigned.len(), 2);
+        assert_eq!(assigned[0].1.x, 0);
+        assert_eq!(assigned[0].1.width, 960);
+        assert_eq!(assigned[1].1.x, 960);
+        assert_eq!(assigned[1].1.width, 960);
+        assert_eq!(assigned[0].1.y, 0);
+        assert_eq!(assigned[0].1.height, 1080);
+        assert_eq!(assigned[1].1.y, 0);
+        assert_eq!(assigned[1].1.height, 1080);
+    }
+
+    #[test]
+    fn dwindle_three_windows_splits_largest_leaf() {
+        let rect = Rect { x: 0, y: 0, width: 1920, height: 1080 };
+        let mut assigned: Vec<(u64, Rect)> = Vec::new();
+        dwindle(&mut assigned, &[1, 2, 3], rect);
+
+        assert_eq!(assigned.len(), 3);
+        // All rects should be non-overlapping and within bounds
+        let mut total_area = 0;
+        for (_, r) in &assigned {
+            assert!(r.x >= 0 && r.y >= 0);
+            assert!(r.x + r.width as i32 <= 1920);
+            assert!(r.y + r.height as i32 <= 1080);
+            total_area += r.width as u64 * r.height as u64;
+        }
+        // Windows cover the full output (within rounding)
+        assert!(total_area >= 1920 * 1080 - 1000);
+    }
+
+    #[test]
+    fn dwindle_rects_do_not_overlap() {
+        let rect = Rect { x: 0, y: 0, width: 1920, height: 1080 };
+        let mut assigned: Vec<(u64, Rect)> = Vec::new();
+        dwindle(&mut assigned, &[1, 2, 3, 4, 5], rect);
+
+        for i in 0..assigned.len() {
+            for j in i + 1..assigned.len() {
+                let a = assigned[i].1;
+                let b = assigned[j].1;
+                let overlap_x = (a.x.min(b.x + b.width as i32) - a.x.max(b.x)).max(0);
+                let overlap_y = (a.y.min(b.y + b.height as i32) - a.y.max(b.y)).max(0);
+                assert_eq!(overlap_x as u64 * overlap_y as u64, 0, "windows {} and {} overlap", assigned[i].0, assigned[j].0);
+            }
+        }
     }
 }

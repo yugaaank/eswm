@@ -1,6 +1,6 @@
 story_id: e03s02
 title: Dwindle tiling layout algorithm
-status: failing
+status: passing
 bcps: 5
 delta: ADDED
 tasks:
@@ -8,7 +8,7 @@ tasks:
     description: Implement dwindle recursive binary split function in wm.rs
     verify: cargo test --bin eswm wm::tests
     risk: P1
-    status: failing
+    status: passing
     allure:
       severity: high
       categories: ["unit", "wm"]
@@ -16,7 +16,7 @@ tasks:
     description: Unit test: dwindle arranges N windows across output with non-overlapping rects covering work area
     verify: cargo test --bin eswm dwindle_layout
     risk: P2
-    status: failing
+    status: passing
     allure:
       severity: normal
       categories: ["unit", "wm"]
@@ -24,7 +24,7 @@ tasks:
     description: Unit test: dwindle splits largest leaf first; single window fills output
     verify: cargo test --bin eswm dwindle_layout
     risk: P2
-    status: failing
+    status: passing
     allure:
       severity: normal
       categories: ["unit", "wm"]
