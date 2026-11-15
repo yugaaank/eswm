@@ -4,6 +4,7 @@
 use std::{os::unix::fs::OpenOptionsExt, os::unix::io::OwnedFd, sync::Arc};
 
 mod control;
+mod edid;
 mod ipc;
 mod lua_state;
 mod udev;

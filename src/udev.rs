@@ -1347,15 +1347,28 @@ impl State {
             return;
         }
 
-        let display_info = smithay_drm_extras::display_info::for_connector(drm_device, connector.handle());
-        let make = display_info
-            .as_ref()
-            .and_then(|info| info.make())
-            .unwrap_or_else(|| "Unknown".into());
-        let model = display_info
-            .as_ref()
-            .and_then(|info| info.model())
-            .unwrap_or_else(|| "Unknown".into());
+                                let edid_data = drm_device
+            .get_properties(connector.handle())
+            .ok()
+            .and_then(|props| {
+                props.into_iter().find_map(|(handle, value)| {
+                    let info = drm_device.get_property(handle).ok()?;
+                    if info.name().to_str() == Ok("EDID") {
+                        drm_device.get_property_blob(value).ok()
+                    } else {
+                        None
+                    }
+                })
+            });
+
+        let (make, model) = edid_data.as_deref().map_or_else(
+            || ("Unknown".into(), "Unknown".into()),
+            |edid| {
+                let make = crate::edid::edid_manufacturer_name(edid).unwrap_or_else(|| "Unknown".into());
+                let model = crate::edid::edid_monitor_name(edid).unwrap_or_else(|| "Unknown".into());
+                (make, model)
+            },
+        );
 
         let mode_id = connector
             .modes()
