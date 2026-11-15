@@ -36,7 +36,7 @@ pub enum WmMode {
 pub enum TilingLayout {
     #[default]
     Master,
-    Dwindle,
+    Equal,
 }
 
 #[derive(Clone, Debug)]
@@ -1085,12 +1085,11 @@ impl WindowManager {
                     }
                 }
             }
-            TilingLayout::Dwindle => {
-                // Dwindle arranges windows recursively; ignores gaps (windows
-                // fill inner rect exactly). Floating windows keep their own
-                // geometry; the tiler ignores them.
+            TilingLayout::Equal => {
+                // Equal arranges windows in equal-sized cells; ignores gaps.
+                // Floating windows keep their own geometry; the tiler ignores them.
                 let mut assigned: Vec<(WindowId, Rect)> = Vec::new();
-                dwindle(&mut assigned, &tiled, inner);
+                equal_split(&mut assigned, &tiled, inner);
                 for (id, rect) in assigned {
                     self.set_target_rect(id, rect);
                 }
@@ -1166,53 +1165,57 @@ impl WindowManager {
     }
 }
 
-/// Dwindle tiling layout: recursive binary split.
-/// Assigns `window_ids` to non-overlapping rects within `rect` by repeatedly
-/// splitting in half. Split direction follows aspect ratio: wider than tall
-/// splits vertically, taller than wide splits horizontally.
-/// The first window in `window_ids` gets the top/left leaf.
-pub fn dwindle(assigned: &mut Vec<(WindowId, Rect)>, window_ids: &[WindowId], rect: Rect) {
-    if window_ids.is_empty() {
+/// Equal tiling layout: divides the rect into N equal-sized cells.
+/// Each window gets the same width and height. Cells are arranged in a grid
+/// that minimizes empty space and keeps cells as square as possible.
+/// All windows receive identical rects — no master window, no shrinking.
+pub fn equal_split(assigned: &mut Vec<(WindowId, Rect)>, window_ids: &[WindowId], rect: Rect) {
+    let n = window_ids.len();
+    if n == 0 {
         return;
     }
-    if window_ids.len() == 1 {
+    if n == 1 {
         assigned.push((window_ids[0], rect));
         return;
     }
-    // Split rect in half, recurse on each half.
-    let (left_ids, right_ids) = window_ids.split_at(window_ids.len() / 2);
-    let (left_rect, right_rect) = if rect.width > rect.height {
-        // Vertical split: left | right
-        let mid = rect.width / 2;
-        (
-            Rect { x: rect.x, y: rect.y, width: mid, height: rect.height },
+    // Find the grid (rows x cols) that fits all windows with the squarest cells.
+    let mut best_rows = 1;
+    let mut best_cols = n;
+    let mut best_score = f64::INFINITY;
+    for rows in 1..=n {
+        let cols = (n + rows - 1) / rows; // ceil(n / rows)
+        if rows * cols < n {
+            continue;
+        }
+        let cell_w = rect.width as f64 / cols as f64;
+        let cell_h = rect.height as f64 / rows as f64;
+        let score = (cell_w / cell_h - 1.0).abs(); // want square cells
+        if score < best_score {
+            best_score = score;
+            best_rows = rows;
+            best_cols = cols;
+        }
+    }
+    let cell_w = rect.width / best_cols as u32;
+    let cell_h = rect.height / best_rows as u32;
+    for (i, &id) in window_ids.iter().enumerate() {
+        let row = i / best_cols;
+        let col = i % best_cols;
+        assigned.push((
+            id,
             Rect {
-                x: rect.x + mid as i32,
-                y: rect.y,
-                width: rect.width - mid,
-                height: rect.height,
+                x: rect.x + col as i32 * cell_w as i32,
+                y: rect.y + row as i32 * cell_h as i32,
+                width: cell_w,
+                height: cell_h,
             },
-        )
-    } else {
-        // Horizontal split: top | bottom
-        let mid = rect.height / 2;
-        (
-            Rect { x: rect.x, y: rect.y, width: rect.width, height: mid },
-            Rect {
-                x: rect.x,
-                y: rect.y + mid as i32,
-                width: rect.width,
-                height: rect.height - mid,
-            },
-        )
-    };
-    dwindle(assigned, left_ids, left_rect);
-    dwindle(assigned, right_ids, right_rect);
+        ));
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Rect, Output, TilingLayout, WindowManager, WindowMode, WindowRule, dwindle};
+    use super::{Rect, Output, TilingLayout, WindowManager, WindowMode, WindowRule, equal_split};
 
     fn manager() -> (WindowManager, u64) {
         let mut manager = WindowManager::new();
@@ -1531,10 +1534,10 @@ mod tests {
     }
 
     #[test]
-    fn dwindle_single_window_fills_rect() {
+    fn equal_split_single_window_fills_rect() {
         let rect = Rect { x: 0, y: 0, width: 1920, height: 1080 };
         let mut assigned: Vec<(u64, Rect)> = Vec::new();
-        dwindle(&mut assigned, &[1], rect);
+        equal_split(&mut assigned, &[1], rect);
 
         assert_eq!(assigned.len(), 1);
         assert_eq!(assigned[0].0, 1);
@@ -1542,10 +1545,10 @@ mod tests {
     }
 
     #[test]
-    fn dwindle_two_windows_split_vertically() {
+    fn equal_split_two_windows_split_vertically() {
         let rect = Rect { x: 0, y: 0, width: 1920, height: 1080 };
         let mut assigned: Vec<(u64, Rect)> = Vec::new();
-        dwindle(&mut assigned, &[1, 2], rect);
+        equal_split(&mut assigned, &[1, 2], rect);
 
         assert_eq!(assigned.len(), 2);
         assert_eq!(assigned[0].1.x, 0);
@@ -1559,12 +1562,19 @@ mod tests {
     }
 
     #[test]
-    fn dwindle_three_windows_splits_largest_leaf() {
+    fn equal_split_three_windows_equal_size() {
         let rect = Rect { x: 0, y: 0, width: 1920, height: 1080 };
         let mut assigned: Vec<(u64, Rect)> = Vec::new();
-        dwindle(&mut assigned, &[1, 2, 3], rect);
+        equal_split(&mut assigned, &[1, 2, 3], rect);
 
         assert_eq!(assigned.len(), 3);
+        // All windows should have the same width and height
+        let w = assigned[0].1.width;
+        let h = assigned[0].1.height;
+        for (_, r) in &assigned {
+            assert_eq!(r.width, w, "window widths not equal");
+            assert_eq!(r.height, h, "window heights not equal");
+        }
         // All rects should be non-overlapping and within bounds
         let mut total_area = 0;
         for (_, r) in &assigned {
@@ -1578,15 +1588,15 @@ mod tests {
     }
 
     #[test]
-    fn arrange_output_uses_dwindle_when_tiling_layout_dwindle() {
+    fn arrange_output_uses_equal_when_tiling_layout_equal() {
         let (mut manager, output) = manager();
         manager.set_outer(0);
         manager.set_inner(0);
         manager.set_border_size(0);
 
-        // Set tiling layout to dwindle on the output
+        // Set tiling layout to equal on the output
         if let Some(output_state) = manager.outputs.get_mut(&output) {
-            output_state.tiling_layout = TilingLayout::Dwindle;
+            output_state.tiling_layout = TilingLayout::Equal;
         }
 
         let w1 = manager.add_window(output, "kitty", "one").unwrap();
@@ -1620,10 +1630,10 @@ mod tests {
     }
 
     #[test]
-    fn dwindle_rects_do_not_overlap() {
+    fn equal_split_rects_do_not_overlap() {
         let rect = Rect { x: 0, y: 0, width: 1920, height: 1080 };
         let mut assigned: Vec<(u64, Rect)> = Vec::new();
-        dwindle(&mut assigned, &[1, 2, 3, 4, 5], rect);
+        equal_split(&mut assigned, &[1, 2, 3, 4, 5], rect);
 
         for i in 0..assigned.len() {
             for j in i + 1..assigned.len() {

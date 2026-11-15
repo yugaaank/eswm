@@ -1,11 +1,11 @@
 story_id: e03s02
-title: Dwindle tiling layout algorithm
+title: Equal tiling layout algorithm
 status: passing
 bcps: 5
 delta: ADDED
 tasks:
   - id: e03s02t1
-    description: Implement dwindle recursive binary split function in wm.rs
+    description: Implement equal_split recursive grid function in wm.rs
     verify: cargo test --bin eswm wm::tests
     risk: P1
     status: passing
@@ -13,16 +13,16 @@ tasks:
       severity: high
       categories: ["unit", "wm"]
   - id: e03s02t2
-    description: Unit test: dwindle arranges N windows across output with non-overlapping rects covering work area
-    verify: cargo test --bin eswm dwindle_layout
+    description: Unit test: equal_split arranges N windows with equal-sized rects covering work area
+    verify: cargo test --bin eswm equal_split_layout
     risk: P2
     status: passing
     allure:
       severity: normal
       categories: ["unit", "wm"]
   - id: e03s02t3
-    description: Unit test: dwindle splits largest leaf first; single window fills output
-    verify: cargo test --bin eswm dwindle_layout
+    description: Unit test: equal_split gives every window the same width and height
+    verify: cargo test --bin eswm equal_split_layout
     risk: P2
     status: passing
     allure:

@@ -13,13 +13,13 @@ epics:
       windows. Deferred: animations, tiling polish, Tacit integration,
       Xwayland.
   - id: e03
-    slug: tiling-layouts-master-dwindle
-    title: Tiling Layouts: Master + Dwindle
+    slug: tiling-layouts-master-equal
+    title: Tiling Layouts: Master + Equal
     wsjf_rank: 2
     status: planned
     stories: []
     description: |
-      Two tiling layouts per output: master-stack (existing) and dwindle
-      (recursive binary split). Per-output TilingLayout field on Output,
-      dwindle wired into arrange_output. Wm mode and tiling layout set via
+      Two tiling layouts per output: master-stack (existing) and equal
+      (grid-based equal-sized cells). Per-output TilingLayout field on Output,
+      equal wired into arrange_output. Wm mode and tiling layout set via
       es.dsp.set_wm_mode / es.dsp.set_tiling_layout in config.lua.

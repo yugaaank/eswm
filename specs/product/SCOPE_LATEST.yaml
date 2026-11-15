@@ -1,16 +1,16 @@
 core_value: |
-  eswm provides two tiling layouts per output: master-stack and dwindle, so windows are arranged automatically without manual placement.
+  eswm provides two tiling layouts per output: master-stack and equal, so windows are arranged automatically without manual placement.
 
 summary: |
-  e03 adds a per-output tiling layout and a dwindle tiling layout on top of the completed window/workspace state model (e02). Each output independently runs master-stack (existing 3/5 split) or dwindle (recursive binary split). Wm mode and tiling layout are set via es.dsp.set_wm_mode / es.dsp.set_tiling_layout in config.lua (logout/login to change). Floating snap behaviour is deferred; this epic covers tiling layouts only.
+  e03 adds a per-output tiling layout and an equal tiling layout on top of the completed window/workspace state model (e02). Each output independently runs master-stack (existing 3/5 split) or equal (grid-based equal-sized cells). Wm mode and tiling layout are set via es.dsp.set_wm_mode / es.dsp.set_tiling_layout in config.lua (logout/login to change). Floating snap behaviour is deferred; this epic covers tiling layouts only.
 
 in_scope:
-  - Per-output TilingLayout field on Output: master-stack or dwindle. Maps to future epic e03.
+  - Per-output TilingLayout field on Output: master-stack or equal. Maps to future epic e03.
   - Wm mode (tiling/floating) set via es.dsp.set_wm_mode in config.lua. Maps to future epic e03.
-  - Tiling layout (master/dwindle) set via es.dsp.set_tiling_layout in config.lua. Maps to future epic e03.
-  - Dwindle layout: recursive binary split where each new window splits the largest leaf. Maps to future epic e03.
-  - Wire dwindle into arrange_output when output tiling layout is dwindle. Maps to future epic e03.
-  - Unit tests for dwindle layout: non-overlapping rects, full coverage of output, correct splits. Maps to future epic e03.
+  - Tiling layout (master/equal) set via es.dsp.set_tiling_layout in config.lua. Maps to future epic e03.
+  - Equal layout: grid-based equal-sized cells where every window gets the same rect. Maps to future epic e03.
+  - Wire equal into arrange_output when output tiling layout is equal. Maps to future epic e03.
+  - Unit tests for equal layout: non-overlapping rects, full coverage of output, equal sizes. Maps to future epic e03.
 
 out_of_scope:
   - Keybind-based layout toggle: deferred. Wm mode and tiling layout are config-only; logout/login to change.
@@ -29,10 +29,10 @@ constraints:
   - eswm easy brand: short, grep-unique names; no clever abbreviations.
 
 success_criteria:
-  - Each output independently runs master-stack or dwindle layout.
+  - Each output independently runs master-stack or equal layout.
   - Wm mode settable via es.dsp.set_wm_mode in config.lua.
   - Tiling layout settable via es.dsp.set_tiling_layout in config.lua.
-  - Dwindle arranges windows with non-overlapping rects covering the output work area.
+  - Equal arranges windows with non-overlapping rects covering the output work area.
   - Master-stack continues to work unchanged.
   - cargo test passes; preflight green.
 

@@ -198,14 +198,14 @@ pub fn register_api(
     })?;
     dsp_table.set("set_wm_mode", dsp_set_wm_mode)?;
 
-    // es.dsp.set_tiling_layout("master"|"dwindle") -> tiling layout algorithm per output
+    // es.dsp.set_tiling_layout("master"|"equal") -> tiling layout algorithm per output
     let dsp_set_tiling_layout = lua.create_function({
         let decoration = decoration.clone();
         move |_, mode: String| -> Result<(), mlua::Error> {
             let tiling = match mode.as_str() {
                 "master" => TilingLayout::Master,
-                "dwindle" => TilingLayout::Dwindle,
-                _ => return Err(mlua::Error::RuntimeError("tiling layout must be 'master' or 'dwindle'".into())),
+                "equal" => TilingLayout::Equal,
+                _ => return Err(mlua::Error::RuntimeError("tiling layout must be 'master' or 'equal'".into())),
             };
             decoration.lock().unwrap().tiling_layout = tiling;
             Ok(())
