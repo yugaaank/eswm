@@ -1,7 +1,7 @@
 // M1 skeleton: nested (winit) compositor session with the shell protocol floor.
 // Based on Smithay 0.7's examples/minimal.rs; everything not needed at M1 is left out.
 // M4: adds the real DRM/libinput backend (src/udev.rs), the default runtime.
-use std::{os::unix::io::OwnedFd, sync::Arc};
+use std::{os::unix::fs::OpenOptionsExt, os::unix::io::OwnedFd, sync::Arc};
 
 mod control;
 mod ipc;
@@ -412,11 +412,23 @@ struct State {
 
 fn install_diag_logging() {
     // unconditional file logging + panic capture so TTY runs leave evidence
+    let state_dir = std::env::var("XDG_STATE_HOME").unwrap_or_else(|_| {
+        std::env::var("HOME").unwrap_or_else(|_| ".".to_string()) + "/.local/state"
+    });
+    let log_dir = std::path::Path::new(&state_dir).join("eswm");
+    let _ = std::fs::create_dir_all(&log_dir);
+    let log_path = log_dir.join("eswm.log");
+    let old_path = log_dir.join("eswm.log.old");
+    // Rename previous log instead of truncating, so the log of a crashed session survives
+    if log_path.exists() {
+        let _ = std::fs::rename(&log_path, &old_path);
+    }
     let log = std::fs::OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
-        .open("/tmp/eswm.log");
+        .mode(0o600)
+        .open(&log_path);
     if let Ok(file) = log {
         let filter = tracing_subscriber::EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
@@ -868,5 +880,33 @@ mod tests {
         );
         let value: Value = serde_json::from_str(&response).unwrap();
         assert!(value["error"].as_str().unwrap().contains("cannot move window"));
+    }
+
+    #[test]
+    fn log_file_is_at_xdg_state_home_with_mode_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp_dir = std::env::temp_dir().join(format!("eswm-test-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+        unsafe { std::env::set_var("XDG_STATE_HOME", &tmp_dir) };
+
+        install_diag_logging();
+
+        let log_path = tmp_dir.join("eswm").join("eswm.log");
+        assert!(
+            log_path.exists(),
+            "log file should exist at XDG_STATE_HOME/eswm/eswm.log, got {:?}",
+            log_path
+        );
+
+        let metadata = std::fs::metadata(&log_path).unwrap();
+        let permissions = metadata.permissions();
+        assert_eq!(
+            permissions.mode() & 0o777,
+            0o600,
+            "log file should be mode 0600, got {:o}",
+            permissions.mode() & 0o777
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 }

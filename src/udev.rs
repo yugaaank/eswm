@@ -770,8 +770,6 @@ fn execute_keybind(state: &mut State, kb: &lua_state::Keybind) -> FilterResult<(
 fn process_shortcut(state: &mut State, mods: &ModifiersState, keysym: KeysymHandle) -> FilterResult<()> {
     crate::prune_dead_windows(state);
     let raw = u32::from(keysym.modified_sym());
-    tracing::info!("key press: logo={} ctrl={} alt={} shift={} raw={} (KEY_BackSpace={})",
-        mods.logo, mods.ctrl, mods.alt, mods.shift, raw, xkbcommon::xkb::keysyms::KEY_BackSpace);
 
     // Lua keybinds (from es.bind() in config.lua).
     let lua_kb = {
