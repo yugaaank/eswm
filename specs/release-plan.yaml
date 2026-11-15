@@ -12,3 +12,13 @@ epics:
       and integration with the existing master-stack tiler and floating
       windows. Deferred: animations, tiling polish, Tacit integration,
       Xwayland.
+  - id: e03
+    slug: tiling-layouts-master-dwindle
+    title: Tiling Layouts: Master + Dwindle
+    wsjf_rank: 2
+    status: planned
+    stories: []
+    description: |
+      Two tiling layouts per output: master-stack (existing) and dwindle
+      (recursive binary split). Per-output LayoutMode, layout toggle keybind,
+      dwindle wired into arrange_output.
