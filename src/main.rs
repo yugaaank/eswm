@@ -219,7 +219,8 @@ impl WlrLayerShellHandler for State {
     ) {
         // Create the stable desktop wrapper; on first commit it gets mapped
         // into the output's LayerMap, which sends the real anchored configure.
-        self.layer_wrappers.push(smithay::desktop::LayerSurface::new(surface, namespace));
+        self.layer_wrappers.push(smithay::desktop::LayerSurface::new(surface, namespace.clone()));
+        tracing::info!("layer mapped: ns={namespace:?} layer={:?}", _layer);
     }
 
     fn layer_destroyed(&mut self, surface: LayerSurface) {
@@ -275,7 +276,7 @@ impl State {
         }
         map.arrange();
         for layer in map.layers() {
-            tracing::info!("layer mapped: ns={:?} layer={:?}", layer.namespace(), layer.layer());
+            // Layer mapping was logged at creation time in new_layer_surface
         }
         // Insent tiled windows from exclusive layer-surface zones (waybar, panels)
         // and from the bottom dock bar (if dock_height > 0).

@@ -32,7 +32,7 @@ tasks:
     description: Move "layer mapped" debug line from per-commit to layer creation
     verify: cargo build && cargo test
     risk: P2
-    status: failing
+    status: passing
     allure:
       severity: low
       categories: ["unit"]
@@ -48,7 +48,7 @@ tasks:
     description: Unit test: no key press data appears in any log output at info level
     verify: cargo test
     risk: P1
-    status: failing
+    status: passing
     allure:
       severity: critical
       categories: ["security", "unit"]
