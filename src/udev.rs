@@ -608,6 +608,10 @@ fn now(state: &State) -> u32 {
     state.udev.as_ref().unwrap().start.elapsed().as_millis() as u32
 }
 
+fn render_timer_delay(redraw_needed: bool, frame_duration: Duration) -> Option<Duration> {
+    redraw_needed.then_some(Duration::from_secs_f64(frame_duration.as_secs_f64() * 0.6))
+}
+
 // Parse a list of modifier strings ("logo", "ctrl", "alt", "shift") into a ModifiersState.
 fn parse_mods(mods: &[String]) -> ModifiersState {
     let mut m = ModifiersState::default();
@@ -1703,8 +1707,9 @@ impl State {
         if schedule_render {
             let next_frame_target = clock + frame_duration;
 
-            // split the two vblanks: 0.6 for clients, rest for the compositor (see anvil)
-            let repaint_delay = Duration::from_secs_f64(frame_duration.as_secs_f64() * 0.6f64);
+            let Some(repaint_delay) = render_timer_delay(self.redraw_needed, frame_duration) else {
+                return;
+            };
             // shortcut: no multi-gpu copy check; always schedule with the simple delay
             let timer = Timer::from_duration(repaint_delay);
             self.handle
@@ -1714,6 +1719,11 @@ impl State {
                 .insert_source(
                     timer,
                     move |_, _, data: &mut State| {
+                        if render_timer_delay(data.redraw_needed, frame_duration).is_none() {
+                            return TimeoutAction::Drop;
+                        }
+                        // Consume the request here; otherwise this timer feeds itself.
+                        data.redraw_needed = false;
                         data.render(dev_id, Some(crtc), next_frame_target.as_millis() as u32);
                         TimeoutAction::Drop
                     },
