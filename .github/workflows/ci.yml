@@ -27,10 +27,8 @@ jobs:
             libxkbcommon \
             pkgconf
 
-      - name: Install libseat from AUR
-        run: |
-          git clone https://aur.archlinux.org/libseat.git /tmp/libseat
-          (cd /tmp/libseat && makepkg -si --noconfirm --needed)
+      - name: Install libseat from Arch repos (seatd provides libseat.pc)
+        run: pacman -S --noconfirm seatd
 
       - name: Build
         run: cargo build --release
