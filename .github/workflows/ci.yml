@@ -19,6 +19,7 @@ jobs:
             git \
             rust \
             libdrm \
+            pixman \
             mesa \
             wayland \
             wayland-protocols \
