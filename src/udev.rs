@@ -2478,6 +2478,17 @@ enum DeviceAddError {
 mod tests {
     use super::*;
 
+    #[test]
+    fn idle_frame_skips_render_timer() {
+        assert!(render_timer_delay(false, Duration::from_millis(16)).is_none());
+    }
+
+    #[test]
+    fn active_frame_schedules_render_timer() {
+        let delay = render_timer_delay(true, Duration::from_millis(16));
+        assert_eq!(delay, Some(Duration::from_secs_f64(16.0 * 0.6 / 1000.0)));
+    }
+
     /// Super+Alt+Backspace must match the config's "quit" keybind exactly.
     #[test]
     fn quit_keybind_matches_super_alt_backspace() {
