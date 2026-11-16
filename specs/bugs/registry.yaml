@@ -1,3 +1,31 @@
+bug-2026-11-16t17:30:00:
+  id: bug-2026-11-16t17:30:00
+  title: Idle CPU at ~55% due to unthrottled frame callbacks
+  severity: low
+  status: open
+  reported_by: operator_observation
+  fixed_in: ""
+  fixed_date: ""
+  files:
+    - src/main.rs
+    - src/udev.rs
+  description: |
+    eswm idle CPU is ~55% (one core pegged, rising over time) and RSS is ~286 MB growing,
+    vs Hyprland's 1.9% / 84 MB flat. Memory is stable (VmHWM == RSS). It is not a leak. It is
+    a hot loop keeping one core busy and accumulating resident pages.
+    A client like waybar that requests a frame callback after each commit enters a
+    commit/frame-callback loop: client commits, eswm renders and sends a frame callback,
+    client commits again, repeat at ~60 Hz. Each iteration sets redraw_needed = true, so
+    the render loop never idles.
+  fix_plan: |
+    1. Add last_frame_callback_ms to State, initialized to 0.
+    2. In frame_callbacks, compare time against last_frame_callback_ms; if elapsed < 33 ms,
+       return early without sending callbacks. Update last_frame_callback_ms = time when
+       sending.
+    3. Verify idle CPU drops toward Hyprland levels (~0-2%).
+  verify: |
+    cargo test; cargo build; measure idle CPU on bare TTY with waybar running.
+
 e001-key-logging:
   id: e001
   title: Key presses (including passwords) logged to world-readable /tmp/eswm.log

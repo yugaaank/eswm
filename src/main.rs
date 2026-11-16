@@ -420,6 +420,10 @@ struct State {
     // e05s04t1: set to true when anything changes that requires a re-render;
     // consumed by the render loop to skip idle page-flips.
     redraw_needed: bool,
+    // e05s04t3: last time (ms) frame callbacks were sent; throttles frame
+    // callbacks so a client in a commit/frame-callback loop can't spin the
+    // render loop at refresh rate.
+    last_frame_callback_ms: u32,
 }
 
 fn install_diag_logging() {
@@ -553,6 +557,7 @@ fn new_state(
         dock_entries: Arc::new(std::sync::Mutex::new(Vec::new())),
         dock_buffers: std::sync::Mutex::new(None),
         redraw_needed: true,
+        last_frame_callback_ms: 0,
     }
 }
 

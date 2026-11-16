@@ -2409,6 +2409,13 @@ impl State {
     where
         I: Iterator<Item = &'a WlSurface>,
     {
+        // e05s04t3: throttle frame callbacks to ~30 fps max. A client in a
+        // commit/frame-callback loop can't spin the render loop at refresh rate.
+        let elapsed = time.saturating_sub(self.last_frame_callback_ms);
+        if elapsed < 33 {
+            return;
+        }
+        self.last_frame_callback_ms = time;
         for surface in surfaces {
             send_frames_surface_tree(surface, time);
         }
