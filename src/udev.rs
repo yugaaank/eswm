@@ -64,7 +64,8 @@ use smithay::{
     reexports::{
         calloop::{
             timer::{TimeoutAction, Timer},
-            EventLoop, RegistrationToken,
+            EventLoop, Interest, Mode, PostAction, RegistrationToken,
+            generic::Generic,
         },
         drm::control::{connector, crtc, Device, ModeTypeFlags},
         input::{DeviceCapability, Libinput},
@@ -502,6 +503,26 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         })
         .unwrap();
 
+    // Client fds must be in the poll set, or commits sit unprocessed until some
+    // unrelated event (a vblank or cursor motion) wakes the loop — the desktop
+    // then looks frozen until the mouse moves. Hyprland gets this free from
+    // wl_display_run; anvil registers the display as a calloop Generic. Same trick.
+    event_loop
+        .handle()
+        .insert_source(
+            Generic::new(display, Interest::READ, Mode::Level),
+            |_, display, data: &mut State| {
+                // SAFETY: the display lives for the whole event loop; this is
+                // the same pattern anvil uses (NoIoDrop::get_mut is unsafe by design).
+                let display = unsafe { display.get_mut() };
+                if let Err(e) = display.dispatch_clients(data) {
+                    tracing::warn!("failed to dispatch wayland clients: {e}");
+                }
+                Ok(PostAction::Continue)
+            },
+        )
+        .expect("failed to register wayland display source");
+
     match crate::control::Control::start(&crate::socket_name()) {
         Ok(control) => state.control = Some(control),
         Err(err) => tracing::warn!("control socket disabled: {err}"),
@@ -572,9 +593,8 @@ state.ipc = ipc_opt;
 
         match event_loop.dispatch(None, &mut state) {
             Ok(()) => {
-                if let Err(e) = display.dispatch_clients(&mut state) {
-                    tracing::warn!("failed to dispatch wayland clients: {e}");
-                }
+                // client dispatch happens in the display-source callback; only
+                // flush our outgoing events here.
                 display_handle.flush_clients()?;
                 // e05s04t1: skip idle page-flips — only render when something
                 // changed since the last frame (commit, cursor motion, layout).
