@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          pacman -Sy --noconfirm \
+            base-devel \
+            rust \
+            cargo \
+            libdrm \
+            mesa \
+            wayland \
+            wayland-protocols \
+            libseat \
+            libinput \
+            libxcursor \
+            libxkbcommon \
+            pkgconf
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Clippy
+        run: cargo clippy --all-targets
+
+      - name: Test
+        run: cargo test
