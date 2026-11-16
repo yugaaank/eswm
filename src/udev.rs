@@ -2499,6 +2499,25 @@ mod tests {
         assert_eq!(delay, Some(Duration::from_secs_f64(16.0 * 0.6 / 1000.0)));
     }
 
+    // BUG-2026-11-17T00:30:00 — at most one frame in flight per output.
+    // Measured 147 renders/s on a 60 Hz panel before this gate existed.
+    #[test]
+    fn should_render_truth_table() {
+        assert!(!should_render(false, false), "idle, nothing in flight");
+        assert!(should_render(true, false), "pending redraw, free to paint");
+        assert!(!should_render(true, true), "pending redraw but a flip is in flight");
+        assert!(!should_render(false, true), "flip in flight, nothing pending");
+    }
+
+    #[test]
+    fn deferred_redraw_keeps_pending_flag() {
+        // (render_now, keep_pending)
+        assert_eq!(next_redraw_state(true, true), (false, true), "defer, keep the request");
+        assert_eq!(next_redraw_state(true, false), (true, false), "paint, consume the request");
+        assert_eq!(next_redraw_state(false, false), (false, false), "nothing to do");
+        assert_eq!(next_redraw_state(false, true), (false, false), "flip in flight, nothing pending");
+    }
+
     /// Super+Alt+Backspace must match the config's "quit" keybind exactly.
     #[test]
     fn quit_keybind_matches_super_alt_backspace() {
