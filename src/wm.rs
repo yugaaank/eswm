@@ -129,6 +129,8 @@ pub struct WindowManager {
     pub work_area: Option<Rect>,
     /// App-id/class -> workspace/mode rules, matched at window creation.
     rules: Vec<WindowRule>,
+    /// Set when any state changes; arrange_output lays out only when dirty.
+    dirty: bool,
 }
 
 /// A window rule: match a window's app_id and assign a workspace and/or mode.
@@ -206,6 +208,7 @@ impl WindowManager {
             titlebar_color_unfocused: [60, 60, 60, 255],
             titlebar_height: 0,
             dock_height: 0,
+            dirty: true,
             ..Self::default()
         }
     }
@@ -224,6 +227,7 @@ impl WindowManager {
                 tiling_layout: TilingLayout::default(),
             },
         );
+        self.dirty = true;
         id
     }
 
@@ -241,6 +245,7 @@ impl WindowManager {
     /// Drop an output (unplug / device removal). Its workspaces and windows move
     /// to the first surviving output; with no outputs left they are dropped.
     pub fn remove_output(&mut self, id: OutputId) -> bool {
+        self.dirty = true;
         if self.outputs.remove(&id).is_none() {
             return false;
         }
@@ -339,6 +344,7 @@ impl WindowManager {
     pub fn set_rect(&mut self, id: WindowId, rect: Rect) -> bool {
         if let Some(window) = self.windows.get_mut(&id) {
             window.rect = rect;
+            self.dirty = true;
             return true;
         }
         false
@@ -347,12 +353,14 @@ impl WindowManager {
     pub fn set_xdg_offset(&mut self, id: WindowId, offset: (i32, i32)) {
         if let Some(window) = self.windows.get_mut(&id) {
             window.xdg_offset = offset;
+            self.dirty = true;
         }
     }
 
     pub fn set_activated_sent(&mut self, id: WindowId, sent: bool) {
         if let Some(window) = self.windows.get_mut(&id) {
             window.activated_sent = Some(sent);
+            self.dirty = true;
         }
     }
 
@@ -360,6 +368,7 @@ impl WindowManager {
         if let Some(window) = self.windows.get_mut(&id) {
             window.app_id = app_id;
             window.title = title;
+            self.dirty = true;
             return true;
         }
         false
@@ -406,6 +415,7 @@ impl WindowManager {
             return false;
         };
         output_state.active_workspace = workspace;
+        self.dirty = true;
         self.clear_focus_on_output(output);
         if let Some(window) = self
             .workspaces
@@ -423,6 +433,7 @@ impl WindowManager {
 
     pub fn set_wm_mode(&mut self, mode: WmMode) {
         self.wm_mode = mode;
+        self.dirty = true;
     }
 
     pub fn set_tiling_layout(&mut self, layout: TilingLayout) {
@@ -431,11 +442,13 @@ impl WindowManager {
         };
         if let Some(output) = self.outputs.get_mut(&output_id) {
             output.tiling_layout = layout;
+            self.dirty = true;
         }
     }
 
     pub fn set_outer(&mut self, outer: u32) {
         self.outer = outer;
+        self.dirty = true;
     }
 
     pub fn outer(&self) -> u32 {
@@ -444,6 +457,7 @@ impl WindowManager {
 
     pub fn set_inner(&mut self, inner: u32) {
         self.inner = inner;
+        self.dirty = true;
     }
 
     pub fn inner(&self) -> u32 {
@@ -452,6 +466,7 @@ impl WindowManager {
 
     pub fn set_border_size(&mut self, size: u32) {
         self.border_size = size;
+        self.dirty = true;
     }
 
     pub fn border_size(&self) -> u32 {
@@ -474,6 +489,7 @@ impl WindowManager {
     pub fn set_titlebar_colors(&mut self, focused: [u8; 4], unfocused: [u8; 4]) {
         self.titlebar_color_focused = focused;
         self.titlebar_color_unfocused = unfocused;
+        self.dirty = true;
     }
 
     pub fn titlebar_color_focused(&self) -> [u8; 4] {
@@ -486,6 +502,7 @@ impl WindowManager {
 
     pub fn set_titlebar_height(&mut self, height: u32) {
         self.titlebar_height = height;
+        self.dirty = true;
     }
 
     pub fn titlebar_height(&self) -> u32 {
@@ -494,6 +511,7 @@ impl WindowManager {
 
     pub fn set_dock_height(&mut self, height: u32) {
         self.dock_height = height;
+        self.dirty = true;
     }
 
     pub fn dock_height(&self) -> u32 {
@@ -682,6 +700,7 @@ impl WindowManager {
                 xdg_offset: (0, 0),
             },
         );
+        self.dirty = true;
         if let Some(target) = self.workspaces.get_mut(&workspace) {
             target.windows.push(id);
         } else {
@@ -695,6 +714,7 @@ impl WindowManager {
 
     pub fn remove_window(&mut self, id: WindowId) -> Option<Window> {
         let window = self.windows.remove(&id)?;
+        self.dirty = true;
         if let Some(workspace) = self.workspaces.get_mut(&window.workspace) {
             workspace.windows.retain(|window_id| *window_id != id);
             if workspace.focused == Some(id) {
@@ -773,6 +793,7 @@ impl WindowManager {
         {
             self.focus_window(focused);
         }
+        self.dirty = true;
         self.arrange_output(window.output);
         true
     }
@@ -808,6 +829,7 @@ impl WindowManager {
                         w.rect = saved;
                     }
                 }
+                self.dirty = true;
                 self.arrange_output(output);
                 true
             }
@@ -859,6 +881,7 @@ impl WindowManager {
         // was_focused && !was_mapped: restoring a focused minimized window —
         // focus stays on it, nothing to do.
 
+        self.dirty = true;
         self.arrange_output(output);
         true
     }
@@ -886,6 +909,7 @@ impl WindowManager {
         // set workspace.focused and w.focused = true. arrange_output so the
         // restored window gets a target_rect / configure.
         if !was_mapped {
+            self.dirty = true;
             self.arrange_output(output);
         }
         true
@@ -911,6 +935,7 @@ impl WindowManager {
             return false;
         };
         state.windows.swap(i, j);
+        self.dirty = true;
         self.arrange_output(output);
         true
     }
@@ -940,6 +965,7 @@ impl WindowManager {
             return false;
         }
         workspace.windows.swap(index, other);
+        self.dirty = true;
         self.arrange_output(output);
         true
     }
@@ -968,12 +994,17 @@ impl WindowManager {
             return false;
         };
         window.mode = mode;
+        self.dirty = true;
         let output = window.output;
         self.arrange_output(output);
         true
     }
 
     pub fn arrange_output(&mut self, output: OutputId) {
+        if !self.dirty {
+            return;
+        }
+        self.dirty = false;
         let Some(output_state) = self.outputs.get(&output).cloned() else {
             return;
         };

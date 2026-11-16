@@ -137,7 +137,6 @@ pub fn window_id_of(surface: &WlSurface) -> Option<wm::WindowId> {
 // mapped windows at their wm target_rect.
 // (surface, x, y, id, focused, rect)
 pub fn placed_windows(state: &mut State) -> Vec<(WlSurface, i32, i32, wm::WindowId, bool, wm::Rect)> {
-    crate::apply_layout(state);
     // Render windows in stack order (workspace.windows order) so that a floating
     // window brought to the front on focus/click renders above the others.
     // smithay draws render elements back-to-front, so the first element here
@@ -635,7 +634,7 @@ pub fn apply_layout(state: &mut State) {
                     st.states.unset(xdg_toplevel::State::Activated);
                 }
             });
-            toplevel.send_configure();
+            toplevel.send_pending_configure();
             if rect_changed {
                 state.wm.set_rect(id, target);
             }

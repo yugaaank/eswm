@@ -1,6 +1,6 @@
 active_flow: e05-core-loop-rendering
 bug_cycle: {}
-active_story: e05s03
+active_story: e05s04
 handoff:
   next_skill: execute-plan
 decisions:
@@ -10,3 +10,6 @@ decisions:
   - story: e05s02
     note: "Generic source on display poll fd (t2) not implemented — State doesn't hold Display, so &mut Display isn't available in calloop callbacks. Same goal achieved via event_loop.dispatch(None) + post-dispatch display.dispatch_clients(). Spin loop eliminated: CPU should drop from ~89% to near idle."
     added: "ListeningSocketSource for client acceptance, None dispatch timeout, error logging + exit(1) on loop error"
+  - story: e05s03
+    note: "Dirty flag added to WindowManager; set on every state-changing method (add_output, remove_output, add_window, remove_window, set_rect, set_activated_sent, set_window_meta, set_wm_mode, set_tiling_layout, set_outer, set_inner, set_border_size, set_titlebar_colors, set_titlebar_height, set_dock_height, set_mode, set_xdg_offset, focus_workspace, swap_focused, toggle_maximized, toggle_minimize, focus_window_or_restore, swap_windows, move_window_to_workspace). arrange_output returns early when !dirty, then consumes dirty flag. placed_windows no longer calls apply_layout (reads only). apply_layout uses send_pending_configure instead of send_configure. All 56 tests pass."
+    added: "dirty flag on WindowManager; send_pending_configure in apply_layout"
