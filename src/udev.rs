@@ -590,10 +590,15 @@ state.ipc = ipc_opt;
                     .copied()
                     .collect();
                 let t = now(&state);
+                let mut painted_all = true;
                 for node in nodes {
-                    state.render(node, None, t);
+                    painted_all &= state.render(node, None, t);
                 }
-                state.redraw_needed = false;
+                // Keep redraw_needed when a frame was deferred (output busy):
+                // the vblank completion will schedule the paint instead.
+                if painted_all {
+                    state.redraw_needed = false;
+                }
             }
             Err(e) => {
                 tracing::error!("event loop error: {e}");
@@ -610,6 +615,25 @@ fn now(state: &State) -> u32 {
 
 fn render_timer_delay(redraw_needed: bool, frame_duration: Duration) -> Option<Duration> {
     redraw_needed.then_some(Duration::from_secs_f64(frame_duration.as_secs_f64() * 0.6))
+}
+
+// One frame in flight per output. Rendering while a flip is pending just
+// queues work the panel cannot present — that was the 147fps stutter bug.
+// Pattern cross-checked against Hyprland's m_pendingFrame and cosmic-comp's
+// QueueState::WaitingForVBlank { redraw_needed }.
+fn should_render(redraw_needed: bool, frame_in_flight: bool) -> bool {
+    redraw_needed && !frame_in_flight
+}
+
+// (render_now, keep_pending): a deferred redraw must survive the in-flight
+// window, otherwise the commit is silently dropped (Hyprland learned this the
+// hard way — see its "pending damage must keep the frame alive" comment).
+fn next_redraw_state(redraw_needed: bool, frame_in_flight: bool) -> (bool, bool) {
+    if should_render(redraw_needed, frame_in_flight) {
+        (true, false)
+    } else {
+        (false, redraw_needed && frame_in_flight)
+    }
 }
 
 // Parse a list of modifier strings ("logo", "ctrl", "alt", "shift") into a ModifiersState.
@@ -1476,6 +1500,7 @@ impl State {
             damage_tracker: OutputDamageTracker::from_output(&output),
             last_presentation_time: None,
             vblank_throttle_timer: None,
+            frame_in_flight: false,
         };
 
         device.surfaces.insert(crtc, surface);
@@ -1572,6 +1597,8 @@ impl State {
         };
 
         let (last_presentation_time, timer_token) = if let Some(surface) = device_backend.surfaces.get_mut(&crtc) {
+            // The vblank landed: this crtc is free to accept another frame.
+            surface.frame_in_flight = false;
             (surface.last_presentation_time, surface.vblank_throttle_timer)
         } else {
             error!("trying to finish frame on non-existent crtc {crtc:?}");
@@ -1722,9 +1749,11 @@ impl State {
                         if render_timer_delay(data.redraw_needed, frame_duration).is_none() {
                             return TimeoutAction::Drop;
                         }
-                        // Consume the request here; otherwise this timer feeds itself.
-                        data.redraw_needed = false;
-                        data.render(dev_id, Some(crtc), next_frame_target.as_millis() as u32);
+                        // Only consume the request once the frame actually hit the
+                        // scanout; a deferred paint must stay queued.
+                        if data.render(dev_id, Some(crtc), next_frame_target.as_millis() as u32) {
+                            data.redraw_needed = false;
+                        }
                         TimeoutAction::Drop
                     },
                 )
@@ -1732,14 +1761,14 @@ impl State {
         }
     }
 
-    fn render(&mut self, node: DrmNode, crtc: Option<crtc::Handle>, _frame_target_ms: u32) {
+    fn render(&mut self, node: DrmNode, crtc: Option<crtc::Handle>, _frame_target_ms: u32) -> bool {
         // DRM is suspended when the user VT-switched away; rendering here only
         // yields DeviceInactive warnings and CPU burn
         if self.udev.as_ref().map(|u| u.paused).unwrap_or(true) {
-            return;
+            return false;
         }
         if let Some(crtc) = crtc {
-            self.render_surface(node, crtc);
+            self.render_surface(node, crtc)
         } else {
             let crtcs: Vec<_> = self
                 .udev
@@ -1749,13 +1778,28 @@ impl State {
                 .get(&node)
                 .map(|b| b.surfaces.keys().copied().collect())
                 .unwrap_or_default();
+            let mut painted = true;
             for crtc in crtcs {
-                self.render_surface(node, crtc);
+                painted &= self.render_surface(node, crtc);
             }
+            painted
         }
     }
 
-    fn render_surface(&mut self, node: DrmNode, crtc: crtc::Handle) {
+    fn render_surface(&mut self, node: DrmNode, crtc: crtc::Handle) -> bool {
+        // The snake cannot eat its own tail: one flip in flight per crtc.
+        // Rendering while the previous frame is still heading for the panel
+        // is what produced 147 fps worth of stutter on a 60 Hz screen.
+        let in_flight = self
+            .udev
+            .as_ref()
+            .and_then(|u| u.backends.get(&node))
+            .and_then(|b| b.surfaces.get(&crtc))
+            .map(|s| s.frame_in_flight)
+            .unwrap_or(true);
+        if !should_render(true, in_flight) {
+            return false;
+        }
         // Real tiling (M5): placement logic is shared with the winit loop (placed_windows).
         let placed = crate::placed_windows(self);
         // e05s04t3: collect surfaces that will be drawn this frame, so frame
@@ -1780,11 +1824,11 @@ impl State {
             let udev = self.udev.as_ref().unwrap();
             let device_backend = match udev.backends.get(&node) {
                 Some(b) => b,
-                None => return,
+                None => return false,
             };
             let surface = match device_backend.surfaces.get(&crtc) {
                 Some(s) => s,
-                None => return,
+                None => return false,
             };
             let render_node = surface.render_node.unwrap_or(udev.primary_gpu);
             (
@@ -2309,11 +2353,11 @@ impl State {
 
         let device_backend = match udev.backends.get_mut(&node) {
             Some(b) => b,
-            None => return,
+            None => return false,
         };
         let surface = match device_backend.surfaces.get_mut(&crtc) {
             Some(s) => s,
-            None => return,
+            None => return false,
         };
 
         tracing::debug!("render debug: output.current_location={:?} output.current_transform={:?} output.current_scale={:?} output.current_mode={:?}",
@@ -2338,6 +2382,7 @@ impl State {
             });
 
         let mut sent_callbacks = false;
+        let mut queued_ok = false;
         let reschedule = match result {
             Ok((_is_empty, _states)) => {
                 sent_callbacks = true;
@@ -2350,11 +2395,21 @@ impl State {
                 // froze the screen when the last window died — cursor-only frames
                 // report is_empty (cursor elements are damage-ignored), so no
                 // flip happened and the scanout kept the killed window's buffer.
-                if let Err(err) = surface.drm_output.queue_frame(None::<OutputPresentationFeedback>) {
-                    debug!("queue_frame: {err:?}");
+                let queued = match surface.drm_output.queue_frame(None::<OutputPresentationFeedback>) {
+                    Ok(()) => {
+                        surface.frame_in_flight = true;
+                        true
+                    }
+                    Err(err) => {
+                        debug!("queue_frame: {err:?}");
+                        false
+                    }
+                };
+                if queued {
+                    tracing::debug!("render: {} elements, queued (placed={})", elements.len(), placed.len());
                 }
-                tracing::debug!("render: {} elements, queued (placed={})", elements.len(), placed.len());
-                false
+                queued_ok = queued;
+                !queued
             }
             Err(err) => {
                 debug!("error during rendering: {err:#?}");
@@ -2411,6 +2466,8 @@ impl State {
                 )
                 .expect("failed to schedule damage test timer");
         }
+
+        queued_ok
     }
 
     // e05s04t3: send frame callbacks only to surfaces drawn this frame, with
@@ -2450,6 +2507,8 @@ struct SurfaceData {
     damage_tracker: OutputDamageTracker,
     last_presentation_time: Option<Duration>,
     vblank_throttle_timer: Option<RegistrationToken>,
+    /// True between queue_frame and the matching vblank (see frame_finish).
+    frame_in_flight: bool,
 }
 
 impl Drop for SurfaceData {
