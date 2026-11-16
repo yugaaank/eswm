@@ -67,13 +67,14 @@ use smithay::{
         input::{DeviceCapability, Libinput},
         rustix::fs::OFlags,
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
-        wayland_server::{backend::GlobalId, protocol::wl_surface, Display, DisplayHandle, ListeningSocket},
+        wayland_server::{backend::GlobalId, protocol::wl_surface, Display, DisplayHandle},
     },
     utils::{
         DeviceFd, Logical, Physical, Point, Rectangle, Scale, Size, Time, Transform,
     },    wayland::{
         dmabuf::{DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
         presentation::Refresh,
+        socket::ListeningSocketSource,
     },
 };
 use tracing::{debug, error, info, warn};
@@ -482,8 +483,20 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         })
         .unwrap();
 
-    let listener = ListeningSocket::bind(&crate::socket_name())?;
-    println!("listening on {:#?}", listener.socket_name());
+    let listening_socket = ListeningSocketSource::with_name(&crate::socket_name())?;
+    println!("listening on {:#?}", listening_socket.socket_name());
+    event_loop
+        .handle()
+        .insert_source(listening_socket, move |stream, _, data: &mut State| {
+            match data
+                .dh
+                .insert_client(stream, Arc::new(crate::ClientState::default()))
+            {
+                Ok(_) => {}
+                Err(e) => tracing::warn!("failed to insert wayland client: {e}"),
+            }
+        })
+        .unwrap();
 
     match crate::control::Control::start(&crate::socket_name()) {
         Ok(control) => state.control = Some(control),
@@ -532,16 +545,8 @@ if lua_config_path.exists() {
     }
 }
 
-    let mut clients = Vec::new();
 
     while !state.udev.as_ref().unwrap().quit.load(Ordering::SeqCst) {
-        if let Some(stream) = listener.accept()? {
-            let client = display
-                .handle()
-                .insert_client(stream, Arc::new(crate::ClientState::default()))?;
-            clients.push(client);
-        }
-
         crate::control::drain(&mut state);
 // Drain IPC commands (hyprctl compat)
 let cmds: Vec<crate::ipc::CompCmd> = if let Some(ipc) = &state.ipc {
@@ -561,9 +566,11 @@ if let Some(ref ipc) = ipc_opt {
 }
 state.ipc = ipc_opt;
 
-        match event_loop.dispatch(Some(Duration::from_millis(16)), &mut state) {
+        match event_loop.dispatch(None, &mut state) {
             Ok(()) => {
-                display.dispatch_clients(&mut state)?;
+                if let Err(e) = display.dispatch_clients(&mut state) {
+                    tracing::warn!("failed to dispatch wayland clients: {e}");
+                }
                 display_handle.flush_clients()?;
                 // Render every iteration like the winit path: smithay only reports
                 // non-empty damage when elements exist, so commit-triggered redraws
@@ -581,7 +588,10 @@ state.ipc = ipc_opt;
                     state.render(node, None, t);
                 }
             }
-            Err(_) => break,
+            Err(e) => {
+                tracing::error!("event loop error: {e}");
+                std::process::exit(1);
+            }
         }
     }
     Ok(())

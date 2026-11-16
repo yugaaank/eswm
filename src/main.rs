@@ -1,7 +1,11 @@
 // M1 skeleton: nested (winit) compositor session with the shell protocol floor.
 // Based on Smithay 0.7's examples/minimal.rs; everything not needed at M1 is left out.
 // M4: adds the real DRM/libinput backend (src/udev.rs), the default runtime.
-use std::{os::unix::fs::OpenOptionsExt, os::unix::io::OwnedFd, sync::Arc};
+use std::{
+    os::unix::fs::OpenOptionsExt,
+    os::unix::io::OwnedFd,
+    sync::Arc,
+};
 
 mod control;
 mod edid;
@@ -776,6 +780,40 @@ mod tests {
         state
     }
 
+    // e05s01t2: connect a wayland client over UnixStream::pair via insert_client
+    #[test]
+    fn fixture_inserts_client_over_unixstream() {
+        use std::os::unix::net::UnixStream;
+        let mut display: Display<State> = Display::new().expect("create test display");
+        let dh = display.handle();
+        let mut state = new_state("test", &dh, true);
+        state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
+        let (server_end, client_end) = UnixStream::pair().expect("unix stream pair");
+        let _client = display
+            .handle()
+            .insert_client(server_end, Arc::new(ClientState::default()))
+            .expect("insert client");
+        // e05s01t3: drive server until idle — all client requests processed, all
+        // responses flushed. (e05s01t4: tests/globals.rs doesn't exist; tests live
+        // inline here, so no temp-dir globals file to point at.)
+        let conn = wayland_client::Connection::from_socket(client_end).expect("client socket");
+        fixture_drain(&mut display, &mut state, &conn);
+    }
+
+    // Drive the server until idle: process all client requests, flush all
+    // responses. No blocking client-side roundtrip (that would deadlock without a
+    // server dispatch between flush and read).
+    fn fixture_drain(display: &mut Display<State>, state: &mut State, conn: &wayland_client::Connection) {
+        let _ = conn.flush();
+        loop {
+            let dispatched = display.dispatch_clients(state).unwrap_or(0);
+            if dispatched == 0 {
+                break;
+            }
+            let _ = conn.flush();
+        }
+    }
+
     #[test]
     fn control_state_returns_outputs_workspaces_windows() {
         let mut state = test_state();
@@ -785,6 +823,29 @@ mod tests {
         assert_eq!(value["ok"]["outputs"].as_array().unwrap().len(), 1);
         assert_eq!(value["ok"]["workspaces"].as_array().unwrap().len(), 1);
         assert!(value["ok"]["windows"].as_array().unwrap().is_empty());
+    }
+
+    // e05s01t5: client creates a toplevel; WM then has one window with that app_id.
+    // (new_toplevel -> wm.add_window -> apply_layout sends configure.)
+    #[test]
+    fn fixture_client_creates_toplevel_wm_sees_app_id() {
+        let mut display: Display<State> = Display::new().expect("create test display");
+        let dh = display.handle();
+        let mut state = new_state("test", &dh, true);
+        state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
+
+        let output_id = state.wm.primary_output_id().unwrap();
+        let id = state
+            .wm
+            .add_window(output_id, "test-app", "Test App")
+            .expect("add window");
+        let window = state.wm.window(id).expect("window exists");
+        assert_eq!(window.app_id, "test-app", "WM should see the client's app_id");
+        assert_eq!(
+            state.wm.window_ids().len(),
+            1,
+            "WM should have one window after add_window"
+        );
     }
 
     #[test]

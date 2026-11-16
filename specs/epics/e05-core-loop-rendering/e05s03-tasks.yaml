@@ -1,0 +1,38 @@
+story_id: e05s03
+title: Configure only when something changed (dirty flag)
+status: pending
+bcps: 3
+delta: ADDED
+tasks:
+  - id: e05s03t1
+    description: Give WindowManager a dirty flag; every change (add, remove, mode, focus, output, work area) sets it
+    verify: cargo build
+    risk: P3
+    status: pending
+    allure:
+      severity: normal
+      categories: ["unit", "core-loop"]
+  - id: e05s03t2
+    description: Lay out only when dirty; clear the flag there
+    verify: cargo build
+    risk: P3
+    status: pending
+    allure:
+      severity: normal
+      categories: ["unit", "core-loop"]
+  - id: e05s03t3
+    description: placed_windows only reads; does not trigger layout
+    verify: cargo build && cargo test
+    risk: P3
+    status: pending
+    allure:
+      severity: normal
+      categories: ["unit", "core-loop"]
+  - id: e05s03t4
+    description: In apply_layout, set size and states with toplevel.with_pending_state(...), then call send_pending_configure()
+    verify: cargo build && cargo test
+    risk: P3
+    status: pending
+    allure:
+      severity: normal
+      categories: ["unit", "core-loop"]

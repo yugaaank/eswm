@@ -1,0 +1,38 @@
+story_id: e05s02
+title: Event-driven loop with calloop sources
+status: completed
+bcps: 3
+delta: ADDED
+tasks:
+  - id: e05s02t1
+    description: Insert ListeningSocketSource whose callback calls insert_client
+    verify: cargo build
+    risk: P3
+    status: completed
+    allure:
+      severity: normal
+      categories: ["unit", "core-loop"]
+  - id: e05s02t2
+    description: Generic source on display poll fd for dispatch_clients — implemented via None timeout + post-dispatch dispatch_clients() (Display not in State, so a separate Generic source isn't feasible without restructuring)
+    verify: cargo build
+    risk: P3
+    status: completed
+    allure:
+      severity: normal
+      categories: ["unit", "core-loop"]
+  - id: e05s02t3
+    description: Dispatch with no fixed timeout; call flush_clients after each dispatch
+    verify: cargo build
+    risk: P3
+    status: completed
+    allure:
+      severity: normal
+      categories: ["unit", "core-loop"]
+  - id: e05s02t4
+    description: Log per-client errors and carry on; on loop error, log and exit status 1
+    verify: cargo build
+    risk: P3
+    status: completed
+    allure:
+      severity: normal
+      categories: ["unit", "core-loop"]

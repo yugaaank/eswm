@@ -27,7 +27,7 @@ epics:
     slug: security-ci
     title: Security & CI
     wsjf_rank: 3
-    status: planned
+    status: completed
     stories: []
     description: |
       Fix critical security bug (key presses logged to world-readable file) and

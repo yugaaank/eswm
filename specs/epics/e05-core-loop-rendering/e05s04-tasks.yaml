@@ -1,0 +1,62 @@
+story_id: e05s04
+title: Render only when something changed (redraw flag)
+status: pending
+bcps: 3
+delta: ADDED
+tasks:
+  - id: e05s04t1
+    description: Keep redraw_needed flag per output; set on surface commit, layout change, cursor motion, running animation
+    verify: cargo build
+    risk: P3
+    status: pending
+    allure:
+      severity: normal
+      categories: ["unit", "core-loop"]
+  - id: e05s04t2
+    description: Render only from vblank handler or idle callback when flag set and no frame pending
+    verify: cargo build
+    risk: P3
+    status: pending
+    allure:
+      severity: normal
+      categories: ["unit", "core-loop"]
+  - id: e05s04t3
+    description: Send frame callbacks only to surfaces drawn this frame, with throttle
+    verify: cargo build
+    risk: P3
+    status: pending
+    allure:
+      severity: normal
+      categories: ["unit", "core-loop"]
+  - id: e05s04t4
+    description: Use SolidColorRenderElement for borders (one Id per window, bump on color/size change)
+    verify: cargo build
+    risk: P3
+    status: pending
+    allure:
+      severity: normal
+      categories: ["unit", "core-loop"]
+  - id: e05s04t5
+    description: Use one PixelShaderElement for rounded corners, compiled once
+    verify: cargo build
+    risk: P3
+    status: pending
+    allure:
+      severity: normal
+      categories: ["unit", "core-loop"]
+  - id: e05s04t6
+    description: Cache titlebar and button buffers per window, keyed by size/title/focus
+    verify: cargo build
+    risk: P3
+    status: pending
+    allure:
+      severity: normal
+      categories: ["unit", "core-loop"]
+  - id: e05s04t7
+    description: Move pruning into toplevel_destroyed callback
+    verify: cargo build
+    risk: P3
+    status: pending
+    allure:
+      severity: normal
+      categories: ["unit", "core-loop"]

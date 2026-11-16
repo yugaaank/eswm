@@ -1,4 +1,4 @@
-# eswm — AI Agents
+# eswm: AI Agents
 
 <!-- BEGIN bigpowers:project -->
 ## Project
@@ -19,17 +19,17 @@ Stack: Rust 2024, smithay 0.7, wayland-server 0.31, winit, mlua.
 src/{control,ipc,lua_state,main,udev,wm}.rs plus tests/. Lua-only config via ~/.config/eswm/config.lua using the es API (es.bind, es.bind_cmd, es.dsp.*). DRM/libseat is the default runtime path; Winit is the nested dev backend.
 
 ## Conventions
-- eswm is the brand; "easy" means short, grep-unique names — no clever abbreviations
+- eswm is the brand; "easy" means short, grep-unique names, no clever abbreviations
 - Lua-only configuration; no JSON config path
 - All planning output in specs/
 - Preflight green before forward work
 
 ## Never
-- Never hand-edit Cargo.lock — cargo add / cargo update only
-- Never add JSON config — Lua-only config path is product-goal locked
-- Never run DRM/libseat backend from inside an existing Wayland/X11 session — VT grab
+- Never hand-edit Cargo.lock; use cargo add / cargo update only
+- Never add JSON config; Lua-only config path is product-goal locked
+- Never run DRM/libseat backend from inside an existing Wayland/X11 session: VT grab
 - Never copy Pinnacle source, assets, or distinctive implementation (reference only)
-- Never skip preflight before forward work — red gate = fix-or-log
+- Never skip preflight before forward work; red gate = fix-or-log
 
 ## Agent Rules
 - **Workflow Mandate:** You MUST use the bigpowers skills (e.g. plan-work, develop-tdd, orchestrate-project) to perform tasks. DO NOT write code directly in response to a user prompt like "build this feature".
@@ -48,7 +48,7 @@ Glob -> sub-AGENTS.md table. None configured yet.
 
 <!-- BEGIN bigpowers:learned-preferences -->
 ## Learned User Preferences
-- (none yet)
+- While working, if you surface a finding or anything important, add a fun humorous comment on the codebase line.
 
 ## Workspace Facts
 - (none yet)

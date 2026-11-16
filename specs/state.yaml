@@ -1,7 +1,12 @@
-active_flow: fix_bug
-bug_cycle:
-  current_step: 5
-  completed_steps: [1, 2, 3, 4]
-  bug_id: e001-key-logging
+active_flow: e05-core-loop-rendering
+bug_cycle: {}
+active_story: e05s03
 handoff:
-  next_skill: release-branch
+  next_skill: execute-plan
+decisions:
+  - story: e05s01
+    note: "tests/globals.rs does not exist; tests live inline in src/main.rs. UnixStream pair + insert_client works, but libwayland-server's wl_event_loop_dispatch(timeout=0) does not poll the client fd in tests, so e05s01t5 tests wm.add_window directly instead of full wayland-client protocol."
+    added: "tests::fixture_inserts_client_over_unixstream, tests::fixture_client_creates_toplevel_wm_sees_app_id"
+  - story: e05s02
+    note: "Generic source on display poll fd (t2) not implemented — State doesn't hold Display, so &mut Display isn't available in calloop callbacks. Same goal achieved via event_loop.dispatch(None) + post-dispatch display.dispatch_clients(). Spin loop eliminated: CPU should drop from ~89% to near idle."
+    added: "ListeningSocketSource for client acceptance, None dispatch timeout, error logging + exit(1) on loop error"
