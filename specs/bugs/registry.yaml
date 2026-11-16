@@ -2,20 +2,22 @@ e001-key-logging:
   id: e001
   title: Key presses (including passwords) logged to world-readable /tmp/eswm.log
   severity: critical
-  status: pending
+  status: resolved
   reported_by: external_review
+  fixed_in: 751630b
+  fixed_date: "2026-11-15T16:27:28+05:30"
   files:
-    - src/main.rs:413-422
-    - src/udev.rs:773
+    - src/main.rs
+    - src/udev.rs
   description: |
-    process_shortcut (udev.rs:773) logs every key press via tracing::info!,
-    including modifier state and raw keysym. This runs on every key press from
+    process_shortcut (udev.rs:773) logged every key press via tracing::info!,
+    including modifier state and raw keysym. This ran on every key press from
     the keyboard filter, including presses forwarded to clients. The default
-    filter is info, so the log is written by default. The file is created at
+    filter was info, so the log was written by default. The file was created at
     /tmp/eswm.log with default mode 0644, readable by other users. Every
-    password typed in a session lands in a world-readable file.
+    password typed in a session landed in a world-readable file.
   fix_plan: |
-    1. Delete the key-press logging line in udev.rs:773 (never log keysyms/text above trace).
+    1. Delete the key-press logging line in udev.rs (never log keysyms/text above trace).
     2. Move log file to $XDG_STATE_HOME/eswm/eswm.log with mode 0600.
     3. Rename previous log to eswm.log.old instead of truncating.
     4. Move layer-mapped debug line from per-commit to layer creation.

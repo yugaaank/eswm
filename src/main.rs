@@ -610,12 +610,13 @@ pub fn apply_layout(state: &mut State) {
     for (id, window) in windows {
         let target = window.target_rect;
         let needs_activation = window.activated_sent != Some(window.focused);
-        // Always (re)send the target size so clients size their buffer to fill
-        // the border rect instead of drawing their preferred-size content small
-        // inside it. Resending configure is cheap and matches Hyprland/pinnacle
-        // behaviour; the client acks and attaches a matching buffer.
         let target_valid = target.width > 0 && target.height > 0;
-        if !target_valid && !needs_activation {
+        // Only send configure when geometry or activation actually changed.
+        // Sending configure every frame makes clients re-commit buffers every
+        // frame, which triggers damage tracking and constant re-rendering —
+        // the primary cause of rendering lag when windows are open.
+        let rect_changed = target_valid && window.rect != target;
+        if !rect_changed && !needs_activation {
             continue;
         }
         if let Some(toplevel) = toplevel_for_window(state, id) {
@@ -631,7 +632,7 @@ pub fn apply_layout(state: &mut State) {
                 }
             });
             toplevel.send_configure();
-            if target_valid && window.rect != target {
+            if rect_changed {
                 state.wm.set_rect(id, target);
             }
             state.wm.set_activated_sent(id, window.focused);

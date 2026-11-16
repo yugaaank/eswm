@@ -82,6 +82,7 @@ use tracing::{debug, error, info, warn};
 use smithay_drm_extras::drm_scanner::{DrmScanEvent, DrmScanner};
 
 use crate::{send_frames_surface_tree, State, wm, ipc, lua_state};
+use crate::wm::Rect;
 
 type UdevRenderer<'a> = MultiRenderer<
     'a,
@@ -141,6 +142,12 @@ pub struct UdevData {
     cursor_buffer: Option<(MemoryRenderBuffer, (f64, f64))>, // (buffer, hotspot)
     border_focused: Option<MemoryRenderBuffer>,
     border_unfocused: Option<MemoryRenderBuffer>,
+    /// Cache of border render buffers keyed by (window_id, rect, color, corner_radius)
+    /// to avoid reallocating per-frame buffers for static windows.
+    border_buffer_cache: HashMap<(u64, Rect, [u8; 4], u32), Vec<MemoryRenderBuffer>>,
+    /// Cache of titlebar background render buffers keyed by (window_id, rect, color, titlebar_height)
+    /// to avoid reallocating per-frame buffers for static windows.
+    titlebar_buffer_cache: HashMap<(u64, Rect, [u8; 4], u32), MemoryRenderBuffer>,
     pub pointer_location: Point<f64, Logical>,
     /// Modifiers seen on the last key event (used to detect Super for drags)
     last_mods: ModifiersState,
@@ -252,6 +259,8 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         cursor_buffer: None,
         border_focused: None,
         border_unfocused: None,
+        border_buffer_cache: HashMap::new(),
+        titlebar_buffer_cache: HashMap::new(),
         pointer_location: (0.0, 0.0).into(),
         last_mods: ModifiersState::default(),
         pointer_focus: None,
@@ -1894,120 +1903,130 @@ impl State {
                     let edge_h = border_size;
                     let side_w = border_size;
                     let side_h = (rect.height as f64 + titlebar_height as f64 + bp) as u32;
-                    let mut make_edge = |ew: u32, eh: u32, pos: (f64, f64)| {
-                        let mut pix = Vec::with_capacity((ew * eh * 4) as usize);
-                        for _ in 0..eh {
-                            for _ in 0..ew {
-                                pix.extend_from_slice(&px);
+                    // Cache key: (window_id, rect, color, corner_radius)
+                    let cache_key = (*id, *rect, px, corner_radius);
+                    let is_rounded = corner_radius > 0 && corner_radius * 2 <= rect.width && corner_radius * 2 <= rect.height;
+
+                    // Extract or create cached MemoryRenderBuffer objects
+                    // Do this in a limited scope to avoid borrow conflicts with renderer
+                    let (edge_buf, side_buf, corner_buf) = {
+                        let cache = udev.border_buffer_cache.entry(cache_key).or_insert_with(Vec::new);
+                        if cache.is_empty() {
+                            // First frame: create MemoryRenderBuffer objects for each unique border segment
+                            // Top/bottom edges (same dimensions)
+                            let mut epix = Vec::with_capacity((edge_w * edge_h * 4) as usize);
+                            for _ in 0..edge_h {
+                                for _ in 0..edge_w {
+                                    epix.extend_from_slice(&px);
+                                }
+                            }
+                            let ep = MemoryRenderBuffer::from_slice(
+                                &epix, Fourcc::Argb8888, (edge_w as i32, edge_h as i32), 1, Transform::Normal, None,
+                            );
+                            // Left/right edges (same dimensions)
+                            let mut spix = Vec::with_capacity((side_w * side_h * 4) as usize);
+                            for _ in 0..side_h {
+                                for _ in 0..side_w {
+                                    spix.extend_from_slice(&px);
+                                }
+                            }
+                            let sp = MemoryRenderBuffer::from_slice(
+                                &spix, Fourcc::Argb8888, (side_w as i32, side_h as i32), 1, Transform::Normal, None,
+                            );
+                            cache.push(ep);
+                            cache.push(sp);
+                            if is_rounded {
+                                let cr = corner_radius as f64;
+                                let d = corner_radius * 2;
+                                let mut cpix = Vec::with_capacity((d * d * 4) as usize);
+                                for cy in 0..d {
+                                    for cx in 0..d {
+                                        let dx = cx as f64 - cr;
+                                        let dy = cy as f64 - cr;
+                                        if dx * dx + dy * dy <= cr * cr {
+                                            cpix.extend_from_slice(&px);
+                                        } else {
+                                            cpix.extend_from_slice(&[0, 0, 0, 0]);
+                                        }
+                                    }
+                                }
+                                let cp = MemoryRenderBuffer::from_slice(
+                                    &cpix, Fourcc::Argb8888, (d as i32, d as i32), 1, Transform::Normal, None,
+                                );
+                                cache.push(cp);
                             }
                         }
-                        let buf = MemoryRenderBuffer::from_slice(
-                            &pix, Fourcc::Argb8888, (ew as i32, eh as i32), 1, Transform::Normal, None,
-                        );
-                        MemoryRenderBufferRenderElement::from_buffer(
-                            &mut renderer,
-                            Point::from(pos),
-                            &buf,
-                            None, None, None, Kind::Unspecified,
-                        ).ok().map(EswmRenderElements::Cursor)
+                        let ep = cache[0].clone();
+                        let sp = cache[1].clone();
+                        let cp = if is_rounded { Some(cache[2].clone()) } else { None };
+                        (ep, sp, cp)
                     };
 
-                    if corner_radius > 0 && corner_radius * 2 <= rect.width && corner_radius * 2 <= rect.height {
+                    macro_rules! make_edge {
+                        ($renderer:expr, $ew:expr, $eh:expr, $pos:expr, $buf:expr) => {{
+                            MemoryRenderBufferRenderElement::from_buffer(
+                                $renderer,
+                                Point::from($pos),
+                                &$buf,
+                                None, None, None, Kind::Unspecified,
+                            ).ok().map(EswmRenderElements::Cursor)
+                        }};
+                    }
+
+                    if is_rounded {
                         // Rounded corners: shorten edges by corner_radius at each end,
                         // fill corners with circles centered at the outer corners.
                         let cr = corner_radius as f64;
+                        let top_edge_w = edge_w.saturating_sub(2 * corner_radius);
+                        let side_edge_h = side_h.saturating_sub(2 * corner_radius);
+                        let corner_d = corner_radius * 2;
+
                         // top edge
-                        if let Some(elem) = make_edge(
-                            edge_w.saturating_sub(2 * corner_radius),
-                            edge_h,
-                            (wx + cr, wy),
-                        ) {
+                        if let Some(elem) = make_edge!(&mut renderer, top_edge_w, edge_h, (wx + cr, wy), edge_buf) {
                             elements.push(elem);
                         }
                         // bottom edge
-                        if let Some(elem) = make_edge(
-                            edge_w.saturating_sub(2 * corner_radius),
-                            edge_h,
-                            (wx + cr, wy + h - bp),
-                        ) {
+                        if let Some(elem) = make_edge!(&mut renderer, top_edge_w, edge_h, (wx + cr, wy + h - bp), edge_buf) {
                             elements.push(elem);
                         }
                         // left edge
-                        if let Some(elem) = make_edge(
-                            side_w,
-                            side_h.saturating_sub(2 * corner_radius),
-                            (wx, wy + cr),
-                        ) {
+                        if let Some(elem) = make_edge!(&mut renderer, side_w, side_edge_h, (wx, wy + cr), side_buf) {
                             border_elements.push(elem);
                         }
                         // right edge
-                        if let Some(elem) = make_edge(
-                            side_w,
-                            side_h.saturating_sub(2 * corner_radius),
-                            (wx + w - bp, wy + cr),
-                        ) {
+                        if let Some(elem) = make_edge!(&mut renderer, side_w, side_edge_h, (wx + w - bp, wy + cr), side_buf) {
                             border_elements.push(elem);
                         }
-                        // corner circles at the outer corners of the border rect
+                        // corner circles
                         let circle_positions = [
-                            (wx, wy),                                        // top-left
-                            (wx + w - (corner_radius * 2) as f64, wy),       // top-right
-                            (wx, wy + h - (corner_radius * 2) as f64),       // bottom-left
-                            (wx + w - (corner_radius * 2) as f64,            // bottom-right
-                             wy + h - (corner_radius * 2) as f64),
+                            (wx, wy),
+                            (wx + w - corner_d as f64, wy),
+                            (wx, wy + h - corner_d as f64),
+                            (wx + w - corner_d as f64, wy + h - corner_d as f64),
                         ];
                         for pos in circle_positions {
-                            // Re-import the buffer at each position (render_element is position-bound).
-                            let d = corner_radius * 2;
-                            let r = corner_radius as f64;
-                            let mut pix = Vec::with_capacity((d * d * 4) as usize);
-                            for cy in 0..d {
-                                for cx in 0..d {
-                                    let dx = cx as f64 - r;
-                                    let dy = cy as f64 - r;
-                                    if dx * dx + dy * dy <= r * r {
-                                        pix.extend_from_slice(&px);
-                                    } else {
-                                        pix.extend_from_slice(&[0, 0, 0, 0]);
-                                    }
+                            if let Some(cb) = &corner_buf {
+                                if let Some(elem) = make_edge!(&mut renderer, corner_d, corner_d, pos, cb) {
+                                    border_elements.push(elem);
                                 }
-                            }
-                            let buf = MemoryRenderBuffer::from_slice(
-                                &pix, Fourcc::Argb8888, (d as i32, d as i32), 1, Transform::Normal, None,
-                            );
-                            if let Some(elem) = MemoryRenderBufferRenderElement::from_buffer(
-                                &mut renderer,
-                                Point::from(pos),
-                                &buf,
-                                None, None, None, Kind::Unspecified,
-                            ).ok() {
-                                border_elements.push(EswmRenderElements::Cursor(elem));
                             }
                         }
                     } else {
                         // Square corners (original behavior)
                         // top edge
-                        if let Some(elem) = make_edge(
-                            edge_w, edge_h, (wx, wy),
-                        ) {
+                        if let Some(elem) = make_edge!(&mut renderer, edge_w, edge_h, (wx, wy), edge_buf) {
                             border_elements.push(elem);
                         }
                         // bottom edge
-                        if let Some(elem) = make_edge(
-                            edge_w, edge_h, (wx, wy + h - bp),
-                        ) {
+                        if let Some(elem) = make_edge!(&mut renderer, edge_w, edge_h, (wx, wy + h - bp), edge_buf) {
                             border_elements.push(elem);
                         }
                         // left edge
-                        if let Some(elem) = make_edge(
-                            side_w, side_h, (wx, wy),
-                        ) {
+                        if let Some(elem) = make_edge!(&mut renderer, side_w, side_h, (wx, wy), side_buf) {
                             border_elements.push(elem);
                         }
                         // right edge
-                        if let Some(elem) = make_edge(
-                            side_w, side_h, (wx + w - bp, wy),
-                        ) {
+                        if let Some(elem) = make_edge!(&mut renderer, side_w, side_h, (wx + w - bp, wy), side_buf) {
                             border_elements.push(elem);
                         }
                     }
@@ -2049,14 +2068,19 @@ impl State {
                     draw_button(btn_x, rect.y as f64 - titlebar_height as f64 + 1.0, [200, 200, 0, 255], btn_size); // maximize
                     btn_x -= btn_size as f64 + btn_gap as f64;
                     draw_button(btn_x, rect.y as f64 - titlebar_height as f64 + 1.0, [100, 100, 100, 255], btn_size); // minimize
-                    // Titlebar background buffer
-                    let mut tb_pix = Vec::with_capacity((tb_w * tb_h * 4) as usize);
-                    for _ in 0..(tb_w * tb_h) {
-                        tb_pix.extend_from_slice(&tb_px);
-                    }
-                    let tb_buf = MemoryRenderBuffer::from_slice(
-                        &tb_pix, Fourcc::Argb8888, (tb_w as i32, tb_h as i32), 1, Transform::Normal, None,
-                    );
+                    // Titlebar background buffer - cached by (window_id, rect, color, titlebar_height)
+                    let tb_buf = {
+                        let tb_cache_key = (*id, *rect, tb_px, tb_h);
+                        udev.titlebar_buffer_cache.entry(tb_cache_key).or_insert_with(|| {
+                            let mut tb_pix = Vec::with_capacity((tb_w * tb_h * 4) as usize);
+                            for _ in 0..(tb_w * tb_h) {
+                                tb_pix.extend_from_slice(&tb_px);
+                            }
+                            MemoryRenderBuffer::from_slice(
+                                &tb_pix, Fourcc::Argb8888, (tb_w as i32, tb_h as i32), 1, Transform::Normal, None,
+                            )
+                        }).clone()
+                    };
                     // Borders pushed earlier are at low index (on top). Buttons next,
                     // then titlebar background last (below buttons, above surface).
                     elements.extend(button_elements);

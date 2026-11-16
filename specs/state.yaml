@@ -1,0 +1,7 @@
+active_flow: fix_bug
+bug_cycle:
+  current_step: 5
+  completed_steps: [1, 2, 3, 4]
+  bug_id: e001-key-logging
+handoff:
+  next_skill: release-branch
