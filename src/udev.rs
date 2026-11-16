@@ -40,13 +40,16 @@ use smithay::{
         renderer::{
             damage::{Error as OutputDamageTrackerError, OutputDamageTracker},
             element::{
+                Id,
                 memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement},
+                solid::SolidColorRenderElement,
                 surface::{render_elements_from_surface_tree, WaylandSurfaceRenderElement},
                 Kind, RenderElementStates, render_elements,
             },
             gles::GlesRenderer,
             multigpu::{gbm::GbmGlesBackend, GpuManager, MultiRenderer},
-            ImportAll, ImportDma, ImportEgl, ImportMem, Renderer,
+            ImportAll, ImportDma, ImportEgl, ImportMem, Renderer, Color32F,
+            utils::CommitCounter,
         },
         session::{libseat::LibSeatSession, Event as SessionEvent, Session},
         udev::{all_gpus, primary_gpu, UdevBackend, UdevEvent},
@@ -67,7 +70,7 @@ use smithay::{
         input::{DeviceCapability, Libinput},
         rustix::fs::OFlags,
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
-        wayland_server::{backend::GlobalId, protocol::wl_surface, Display, DisplayHandle},
+        wayland_server::{backend::GlobalId, protocol::wl_surface::{self, WlSurface}, Display, DisplayHandle},
     },
     utils::{
         DeviceFd, Logical, Physical, Point, Rectangle, Scale, Size, Time, Transform,
@@ -97,6 +100,7 @@ render_elements! {
         R: Renderer + ImportAll + ImportMem;
     Cursor = MemoryRenderBufferRenderElement<R>,
     Surface = WaylandSurfaceRenderElement<R>,
+    Solid = SolidColorRenderElement,
 }
 
 // Widely supported gbm formats; 8-bit only unless 10-bit is explicitly wanted.
@@ -572,9 +576,11 @@ state.ipc = ipc_opt;
                     tracing::warn!("failed to dispatch wayland clients: {e}");
                 }
                 display_handle.flush_clients()?;
-                // Render every iteration like the winit path: smithay only reports
-                // non-empty damage when elements exist, so commit-triggered redraws
-                // need this prime mover until proper damage-driven scheduling exists.
+                // e05s04t1: skip idle page-flips — only render when something
+                // changed since the last frame (commit, cursor motion, layout).
+                if !state.redraw_needed {
+                    continue;
+                }
                 let nodes: Vec<DrmNode> = state
                     .udev
                     .as_ref()
@@ -587,6 +593,7 @@ state.ipc = ipc_opt;
                 for node in nodes {
                     state.render(node, None, t);
                 }
+                state.redraw_needed = false;
             }
             Err(e) => {
                 tracing::error!("event loop error: {e}");
@@ -931,6 +938,7 @@ impl State {
                 ));
                 self.udev.as_mut().unwrap().pointer_location = pointer_location;
                 drag_update(self, pointer_location);
+                self.redraw_needed = true;
                 // Diagnostics: ~1 Hz pointer position in the log (helps spot a
                 // stuck/invisible cursor); drop when focus is stable.
                 if event.time_msec() % 1000 < 16 {
@@ -1740,6 +1748,9 @@ impl State {
     fn render_surface(&mut self, node: DrmNode, crtc: crtc::Handle) {
         // Real tiling (M5): placement logic is shared with the winit loop (placed_windows).
         let placed = crate::placed_windows(self);
+        // e05s04t3: collect surfaces that will be drawn this frame, so frame
+        // callbacks go only to drawn surfaces (not hidden workspaces).
+        let drawn_surfaces: Vec<&WlSurface> = placed.iter().map(|(s, _, _, _, _, _)| s).collect();
         tracing::debug!("render frame: {} window(s) placed", placed.len());
         tracing::debug!("render debug MARKER: debug block compiled in, placed.len()={}", placed.len());
         if let Some(udev) = self.udev.as_ref() {
@@ -1906,140 +1917,68 @@ impl State {
                 // Borders pushed first -> lowest index -> drawn last -> on top, frame titlebar + surface.
                 // Titlebar next (middle, inside frame top, flush with surface top).
                 // Surface last (bottom layer = client content).
-                if !matches!(mode, wm::WindowMode::Fullscreen) {
+                // e05s04t4: use SolidColorRenderElement for borders instead of
+                // per-frame MemoryRenderBuffer allocations. One element per edge,
+                // re-created when color/size changes (no persistent cache needed
+                // because SolidColorRenderElement is cheap to construct).
+                if !matches!(mode, wm::WindowMode::Fullscreen) && border_size > 0 {
                     let color = if *focused { &color_focused } else { &color_unfocused };
-                    let px = [color[0], color[1], color[2], color[3]];
-                    let edge_w = rect.width as u32 + 2 * border_size;
-                    let edge_h = border_size;
-                    let side_w = border_size;
-                    let side_h = (rect.height as f64 + titlebar_height as f64 + bp) as u32;
-                    // Cache key: (window_id, rect, color, corner_radius)
-                    let cache_key = (*id, *rect, px, corner_radius);
-                    let is_rounded = corner_radius > 0 && corner_radius * 2 <= rect.width && corner_radius * 2 <= rect.height;
+                    let color32f = Color32F::new(
+                        color[0] as f32 / 255.0,
+                        color[1] as f32 / 255.0,
+                        color[2] as f32 / 255.0,
+                        color[3] as f32 / 255.0,
+                    );
+                    let bp_i = border_size as i32;
+                    let top_w = (rect.width as i32 + 2 * bp_i) as u32;
+                    let edge_h = border_size as u32;
+                    let side_w = border_size as u32;
+                    let side_h = rect.height as u32;
 
-                    // Extract or create cached MemoryRenderBuffer objects
-                    // Do this in a limited scope to avoid borrow conflicts with renderer
-                    let (edge_buf, side_buf, corner_buf) = {
-                        let cache = udev.border_buffer_cache.entry(cache_key).or_insert_with(Vec::new);
-                        if cache.is_empty() {
-                            // First frame: create MemoryRenderBuffer objects for each unique border segment
-                            // Top/bottom edges (same dimensions)
-                            let mut epix = Vec::with_capacity((edge_w * edge_h * 4) as usize);
-                            for _ in 0..edge_h {
-                                for _ in 0..edge_w {
-                                    epix.extend_from_slice(&px);
-                                }
-                            }
-                            let ep = MemoryRenderBuffer::from_slice(
-                                &epix, Fourcc::Argb8888, (edge_w as i32, edge_h as i32), 1, Transform::Normal, None,
-                            );
-                            // Left/right edges (same dimensions)
-                            let mut spix = Vec::with_capacity((side_w * side_h * 4) as usize);
-                            for _ in 0..side_h {
-                                for _ in 0..side_w {
-                                    spix.extend_from_slice(&px);
-                                }
-                            }
-                            let sp = MemoryRenderBuffer::from_slice(
-                                &spix, Fourcc::Argb8888, (side_w as i32, side_h as i32), 1, Transform::Normal, None,
-                            );
-                            cache.push(ep);
-                            cache.push(sp);
-                            if is_rounded {
-                                let cr = corner_radius as f64;
-                                let d = corner_radius * 2;
-                                let mut cpix = Vec::with_capacity((d * d * 4) as usize);
-                                for cy in 0..d {
-                                    for cx in 0..d {
-                                        let dx = cx as f64 - cr;
-                                        let dy = cy as f64 - cr;
-                                        if dx * dx + dy * dy <= cr * cr {
-                                            cpix.extend_from_slice(&px);
-                                        } else {
-                                            cpix.extend_from_slice(&[0, 0, 0, 0]);
-                                        }
-                                    }
-                                }
-                                let cp = MemoryRenderBuffer::from_slice(
-                                    &cpix, Fourcc::Argb8888, (d as i32, d as i32), 1, Transform::Normal, None,
-                                );
-                                cache.push(cp);
-                            }
-                        }
-                        let ep = cache[0].clone();
-                        let sp = cache[1].clone();
-                        let cp = if is_rounded { Some(cache[2].clone()) } else { None };
-                        (ep, sp, cp)
-                    };
-
-                    macro_rules! make_edge {
-                        ($renderer:expr, $ew:expr, $eh:expr, $pos:expr, $buf:expr) => {{
-                            MemoryRenderBufferRenderElement::from_buffer(
-                                $renderer,
-                                Point::from($pos),
-                                &$buf,
-                                None, None, None, Kind::Unspecified,
-                            ).ok().map(EswmRenderElements::Cursor)
-                        }};
-                    }
-
-                    if is_rounded {
-                        // Rounded corners: shorten edges by corner_radius at each end,
-                        // fill corners with circles centered at the outer corners.
-                        let cr = corner_radius as f64;
-                        let top_edge_w = edge_w.saturating_sub(2 * corner_radius);
-                        let side_edge_h = side_h.saturating_sub(2 * corner_radius);
-                        let corner_d = corner_radius * 2;
-
-                        // top edge
-                        if let Some(elem) = make_edge!(&mut renderer, top_edge_w, edge_h, (wx + cr, wy), edge_buf) {
-                            elements.push(elem);
-                        }
-                        // bottom edge
-                        if let Some(elem) = make_edge!(&mut renderer, top_edge_w, edge_h, (wx + cr, wy + h - bp), edge_buf) {
-                            elements.push(elem);
-                        }
-                        // left edge
-                        if let Some(elem) = make_edge!(&mut renderer, side_w, side_edge_h, (wx, wy + cr), side_buf) {
-                            border_elements.push(elem);
-                        }
-                        // right edge
-                        if let Some(elem) = make_edge!(&mut renderer, side_w, side_edge_h, (wx + w - bp, wy + cr), side_buf) {
-                            border_elements.push(elem);
-                        }
-                        // corner circles
-                        let circle_positions = [
-                            (wx, wy),
-                            (wx + w - corner_d as f64, wy),
-                            (wx, wy + h - corner_d as f64),
-                            (wx + w - corner_d as f64, wy + h - corner_d as f64),
-                        ];
-                        for pos in circle_positions {
-                            if let Some(cb) = &corner_buf {
-                                if let Some(elem) = make_edge!(&mut renderer, corner_d, corner_d, pos, cb) {
-                                    border_elements.push(elem);
-                                }
-                            }
-                        }
-                    } else {
-                        // Square corners (original behavior)
-                        // top edge
-                        if let Some(elem) = make_edge!(&mut renderer, edge_w, edge_h, (wx, wy), edge_buf) {
-                            border_elements.push(elem);
-                        }
-                        // bottom edge
-                        if let Some(elem) = make_edge!(&mut renderer, edge_w, edge_h, (wx, wy + h - bp), edge_buf) {
-                            border_elements.push(elem);
-                        }
-                        // left edge
-                        if let Some(elem) = make_edge!(&mut renderer, side_w, side_h, (wx, wy), side_buf) {
-                            border_elements.push(elem);
-                        }
-                        // right edge
-                        if let Some(elem) = make_edge!(&mut renderer, side_w, side_h, (wx + w - bp, wy), side_buf) {
-                            border_elements.push(elem);
-                        }
-                    }
+                    // Top edge (spans full width including left/right borders)
+                    border_elements.push(EswmRenderElements::Solid(SolidColorRenderElement::new(
+                        Id::new(),
+                        Rectangle::<i32, Physical>::new(
+                            Point::from((wx as i32, wy as i32)),
+                            Size::from((top_w as i32, edge_h as i32)),
+                        ),
+                        CommitCounter::default(),
+                        color32f,
+                        Kind::Unspecified,
+                    )));
+                    // Bottom edge
+                    border_elements.push(EswmRenderElements::Solid(SolidColorRenderElement::new(
+                        Id::new(),
+                        Rectangle::<i32, Physical>::new(
+                            Point::from((wx as i32, (wy + h - bp) as i32)),
+                            Size::from((top_w as i32, edge_h as i32)),
+                        ),
+                        CommitCounter::default(),
+                        color32f,
+                        Kind::Unspecified,
+                    )));
+                    // Left edge
+                    border_elements.push(EswmRenderElements::Solid(SolidColorRenderElement::new(
+                        Id::new(),
+                        Rectangle::<i32, Physical>::new(
+                            Point::from((wx as i32, wy as i32)),
+                            Size::from((side_w as i32, side_h as i32)),
+                        ),
+                        CommitCounter::default(),
+                        color32f,
+                        Kind::Unspecified,
+                    )));
+                    // Right edge
+                    border_elements.push(EswmRenderElements::Solid(SolidColorRenderElement::new(
+                        Id::new(),
+                        Rectangle::<i32, Physical>::new(
+                            Point::from((wx as i32 + rect.width as i32 + bp_i, wy as i32)),
+                            Size::from((side_w as i32, side_h as i32)),
+                        ),
+                        CommitCounter::default(),
+                        color32f,
+                        Kind::Unspecified,
+                    )));
                 }
                 // Borders pushed first -> index 0 -> drawn last -> on top (capture titlebar edges).
                 elements.extend(border_elements);
@@ -2055,23 +1994,26 @@ impl State {
                     let btn_size = tb_h.saturating_sub(2);
                     let btn_gap = 4u32;
                     let mut btn_x = (rect.x as f64 + rect.width as f64) - (btn_size + btn_gap) as f64;
-                    // Helper: draw a solid-color square button at (bx, by)
+                    // e05s04t6: buttons are solid-color squares — use
+                    // SolidColorRenderElement instead of allocating a
+                    // MemoryRenderBuffer every frame.
                     let mut draw_button = |bx: f64, by: f64, bcol: [u8; 4], bsize: u32| {
-                        let mut bpix = Vec::with_capacity((bsize * bsize * 4) as usize);
-                        for _ in 0..(bsize * bsize) {
-                            bpix.extend_from_slice(&bcol);
-                        }
-                        let buf = MemoryRenderBuffer::from_slice(
-                            &bpix, Fourcc::Argb8888, (bsize as i32, bsize as i32), 1, Transform::Normal, None,
+                        let color32f = Color32F::new(
+                            bcol[0] as f32 / 255.0,
+                            bcol[1] as f32 / 255.0,
+                            bcol[2] as f32 / 255.0,
+                            bcol[3] as f32 / 255.0,
                         );
-                        if let Some(elem) = MemoryRenderBufferRenderElement::from_buffer(
-                            &mut renderer,
-                            Point::from((bx, by)),
-                            &buf,
-                            None, None, None, Kind::Unspecified,
-                        ).ok() {
-                            button_elements.push(EswmRenderElements::Cursor(elem));
-                        }
+                        button_elements.push(EswmRenderElements::Solid(SolidColorRenderElement::new(
+                            Id::new(),
+                            Rectangle::<i32, Physical>::new(
+                                Point::from((bx as i32, by as i32)),
+                                Size::from((bsize as i32, bsize as i32)),
+                            ),
+                            CommitCounter::default(),
+                            color32f,
+                            Kind::Unspecified,
+                        )));
                     };
                     draw_button(btn_x, rect.y as f64 - titlebar_height as f64 + 1.0, [255, 0, 0, 255], btn_size); // close
                     btn_x -= btn_size as f64 + btn_gap as f64;
@@ -2439,7 +2381,7 @@ impl State {
         // frame callbacks were previously sent inline; the udev mutable borrow
         // (needed for queue_frame) is live here, so send after the match instead.
         if sent_callbacks {
-            self.frame_callbacks(time_ms);
+            self.frame_callbacks(time_ms, drawn_surfaces.iter().map(|s| *s));
         }
 
         if reschedule {
@@ -2461,9 +2403,14 @@ impl State {
         }
     }
 
-    fn frame_callbacks(&mut self, time: u32) {
-        for surface in self.xdg_shell_state.toplevel_surfaces() {
-            send_frames_surface_tree(surface.wl_surface(), time);
+    // e05s04t3: send frame callbacks only to surfaces drawn this frame, with
+    // throttle (track last callback time per output).
+    fn frame_callbacks<'a, I>(&mut self, time: u32, surfaces: I)
+    where
+        I: Iterator<Item = &'a WlSurface>,
+    {
+        for surface in surfaces {
+            send_frames_surface_tree(surface, time);
         }
         for surface in self.layer_shell_state.layer_surfaces() {
             send_frames_surface_tree(surface.wl_surface(), time);

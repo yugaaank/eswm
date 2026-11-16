@@ -1,7 +1,7 @@
 e02-window-workspace-model: completed
 e03-tiling-layouts-master-equal: completed
 e04-security-ci: completed
-e05-core-loop-rendering: in_progress
+e05-core-loop-rendering: completed
 e06-input-focus: pending
 e07-spawn-keybinds: pending
 e08-panics-correctness: pending

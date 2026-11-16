@@ -2,7 +2,7 @@ active_flow: e05-core-loop-rendering
 bug_cycle: {}
 active_story: e05s04
 handoff:
-  next_skill: execute-plan
+  next_skill: verify-work
 decisions:
   - story: e05s01
     note: "tests/globals.rs does not exist; tests live inline in src/main.rs. UnixStream pair + insert_client works, but libwayland-server's wl_event_loop_dispatch(timeout=0) does not poll the client fd in tests, so e05s01t5 tests wm.add_window directly instead of full wayland-client protocol."
@@ -11,5 +11,8 @@ decisions:
     note: "Generic source on display poll fd (t2) not implemented — State doesn't hold Display, so &mut Display isn't available in calloop callbacks. Same goal achieved via event_loop.dispatch(None) + post-dispatch display.dispatch_clients(). Spin loop eliminated: CPU should drop from ~89% to near idle."
     added: "ListeningSocketSource for client acceptance, None dispatch timeout, error logging + exit(1) on loop error"
   - story: e05s03
-    note: "Dirty flag added to WindowManager; set on every state-changing method (add_output, remove_output, add_window, remove_window, set_rect, set_activated_sent, set_window_meta, set_wm_mode, set_tiling_layout, set_outer, set_inner, set_border_size, set_titlebar_colors, set_titlebar_height, set_dock_height, set_mode, set_xdg_offset, focus_workspace, swap_focused, toggle_maximized, toggle_minimize, focus_window_or_restore, swap_windows, move_window_to_workspace). arrange_output returns early when !dirty, then consumes dirty flag. placed_windows no longer calls apply_layout (reads only). apply_layout uses send_pending_configure instead of send_configure. All 56 tests pass."
+    note: "Dirty flag added to WindowManager; set on every state-changing method. arrange_output returns early when !dirty, then consumes dirty flag. placed_windows no longer calls apply_layout (reads only). apply_layout uses send_pending_configure instead of send_configure. All 56 tests pass. Committed as 82f16aa."
     added: "dirty flag on WindowManager; send_pending_configure in apply_layout"
+  - story: e05s04
+    note: "Redraw flag added to State; gated render loop on redraw_needed (set on commit, cursor motion, apply_layout). Frame callbacks sent only to drawn surfaces (not hidden workspaces). Borders and titlebar buttons use SolidColorRenderElement instead of per-frame MemoryRenderBuffer allocations. prune_dead_windows moved from apply_layout (every frame) to toplevel_destroyed (on window destruction). PixelShaderElement (t5) not available in Smithay 0.7; corner_radius defaults to 0 so no rounded corners drawn. All 56 tests pass."
+    added: "redraw_needed flag; frame callback filtering; SolidColorRenderElement for borders/buttons; pruning moved to toplevel_destroyed"

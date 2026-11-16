@@ -118,6 +118,9 @@ impl XdgShellHandler for State {
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
         if let Some(id) = window_id_of(surface.wl_surface()) {
             self.wm.remove_window(id);
+            // e05s04t7: prune any stale window registrations when a toplevel
+            // is destroyed, instead of every render frame.
+            prune_dead_windows(self);
             crate::apply_layout(self);
         }
     }
@@ -346,6 +349,7 @@ impl CompositorHandler for State {
     fn commit(&mut self, surface: &WlSurface) {
         on_commit_buffer_handler::<Self>(surface);
         self.map_layer_surfaces();
+        self.redraw_needed = true;
     }
 }
 
@@ -413,6 +417,9 @@ struct State {
     layer_wrappers: Vec<smithay::desktop::LayerSurface>,
     // Cached border buffers keyed by (width, height, color) to avoid per-frame
     // allocation. Border elements are rebuilt each frame from cached buffers.
+    // e05s04t1: set to true when anything changes that requires a re-render;
+    // consumed by the render loop to skip idle page-flips.
+    redraw_needed: bool,
 }
 
 fn install_diag_logging() {
@@ -545,6 +552,7 @@ fn new_state(
         decoration: Arc::new(std::sync::Mutex::new(wm::DecorationConfig::standard())),
         dock_entries: Arc::new(std::sync::Mutex::new(Vec::new())),
         dock_buffers: std::sync::Mutex::new(None),
+        redraw_needed: true,
     }
 }
 
@@ -602,7 +610,6 @@ pub fn apply_layout(state: &mut State) {
     // workspace) so frontends can read it via es.dock.entries().
     let entries = state.wm.dock_entries();
     *state.dock_entries.lock().unwrap() = entries;
-    prune_dead_windows(state);
     let windows = state
         .wm
         .window_ids()
@@ -654,6 +661,8 @@ pub fn apply_layout(state: &mut State) {
     let focused = state.wm.focused_id();
     if !layer_has_focus {
         crate::udev::keyboard_focus_set(state, focused);
+        // e05s04t1: apply_layout ran because something changed; mark for redraw.
+        state.redraw_needed = true;
     }
 }
 
