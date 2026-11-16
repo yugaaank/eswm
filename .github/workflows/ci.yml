@@ -16,6 +16,7 @@ jobs:
         run: |
           pacman -Sy --noconfirm \
             base-devel \
+            git \
             rust \
             libdrm \
             mesa \
@@ -25,6 +26,11 @@ jobs:
             libxcursor \
             libxkbcommon \
             pkgconf
+
+      - name: Install libseat from AUR
+        run: |
+          git clone https://aur.archlinux.org/libseat.git /tmp/libseat
+          (cd /tmp/libseat && makepkg -si --noconfirm --needed)
 
       - name: Build
         run: cargo build --release
