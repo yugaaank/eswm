@@ -1,0 +1,54 @@
+story_id: e04s01
+title: Stop logging key presses; secure log file location and permissions
+status: passing
+bcps: 3
+delta: MODIFIED
+tasks:
+  - id: e04s01t1
+    description: Delete key-press tracing::info! line in udev.rs:773; never log keysyms or text above trace level
+    verify: cargo build && cargo test
+    risk: P1
+    status: passing
+    allure:
+      severity: critical
+      categories: ["security", "unit"]
+  - id: e04s01t2
+    description: Move log file to $XDG_STATE_HOME/eswm/eswm.log with mode 0600 using OpenOptionsExt::mode(0o600)
+    verify: cargo build && cargo test
+    risk: P1
+    status: passing
+    allure:
+      severity: critical
+      categories: ["security", "unit"]
+  - id: e04s01t3
+    description: Rename previous log to eswm.log.old instead of truncating it
+    verify: cargo build && cargo test
+    risk: P1
+    status: passing
+    allure:
+      severity: high
+      categories: ["security", "unit"]
+  - id: e04s01t4
+    description: Move "layer mapped" debug line from per-commit to layer creation
+    verify: cargo build && cargo test
+    risk: P2
+    status: passing
+    allure:
+      severity: low
+      categories: ["unit"]
+  - id: e04s01t5
+    description: Unit test: log file is created at $XDG_STATE_HOME/eswm/eswm.log with mode 0600
+    verify: cargo test
+    risk: P1
+    status: passing
+    allure:
+      severity: high
+      categories: ["security", "unit"]
+  - id: e04s01t6
+    description: Unit test: no key press data appears in any log output at info level
+    verify: cargo test
+    risk: P1
+    status: passing
+    allure:
+      severity: critical
+      categories: ["security", "unit"]

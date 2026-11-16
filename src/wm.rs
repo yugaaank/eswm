@@ -4,7 +4,7 @@ pub type OutputId = u64;
 pub type WindowId = u64;
 pub type WorkspaceId = i32;
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
 pub struct Rect {
     pub x: i32,
     pub y: i32,

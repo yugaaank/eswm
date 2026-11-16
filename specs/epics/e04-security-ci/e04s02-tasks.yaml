@@ -1,0 +1,38 @@
+story_id: e04s02
+title: Fix Arch CI build (smithay-drm-extras / libdisplay-info)
+status: passing
+bcps: 5
+delta: ADDED
+tasks:
+  - id: e04s02t1
+    description: Set default-features = false on smithay-drm-extras in Cargo.toml
+    verify: cargo build
+    risk: P1
+    status: passing
+    allure:
+      severity: high
+      categories: ["build", "ci"]
+  - id: e04s02t2
+    description: Replace display_info::for_connector with edid.rs parser in udev.rs
+    verify: cargo build && cargo test
+    risk: P1
+    status: passing
+    allure:
+      severity: high
+      categories: ["build", "unit"]
+  - id: e04s02t3
+    description: Add GitHub Actions CI workflow in archlinux:latest container
+    verify: CI job passes
+    risk: P2
+    status: failing
+    allure:
+      severity: medium
+      categories: ["ci"]
+  - id: e04s02t4
+    description: Unit tests for edid.rs with real 128-byte EDID and no-0xFC descriptor case
+    verify: cargo test
+    risk: P2
+    status: passing
+    allure:
+      severity: high
+      categories: ["unit", "edid"]
