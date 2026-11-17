@@ -482,10 +482,21 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     
-    // Use the first GPU with hw acceleration as primary for dmabuf feedback
-    let primary_for_dmabuf = hw_accel_gpus.first().copied().unwrap_or(primary_gpu);
+    // Use the scanout GPU as the dmabuf GPU: it is the only choice that lets
+    // client buffers be imported without a cross-GPU or cpu copy. The GPU that
+    // can `bind_wl_display` is not necessarily the one driving the panel.
+    let scanout_render_node = udev
+        .backends
+        .values()
+        .find(|backend| !backend.surfaces.is_empty())
+        .and_then(|backend| backend.surfaces.values().find_map(|surface| surface.render_node));
+    let primary_for_dmabuf = choose_dmabuf_gpu(scanout_render_node, &hw_accel_gpus, primary_gpu);
     // Store for later use in render_surface and dmabuf_imported
     udev.dmabuf_primary_gpu = primary_for_dmabuf;
+    info!(
+        "dmabuf device: {primary_for_dmabuf} (scanout {:?}, hw-accel {:?})",
+        scanout_render_node, hw_accel_gpus
+    );
     
     // Create renderer for the primary GPU (used for dmabuf formats)
     let renderer = udev.gpus.single_renderer(&primary_for_dmabuf).unwrap();
@@ -754,14 +765,22 @@ fn callback_min_gap_ms(refresh_mhz: u32) -> u32 {
     (1_000_000 / refresh_mhz).max(1)
 }
 
+/// Pick the GPU whose formats the dmabuf global advertises.
+///
+/// It must be the GPU that scans out: clients allocate on the advertised
+/// device, and any other choice means their buffers cross GPUs (or fall into
+/// smithay's cpu-copy path) on every single frame. `bind_wl_display` is *not* a
+/// good signal here — Mesa exposes EGL_WL_bind_wayland_display only on Wayland
+/// platform displays, so it fails on the Intel GBM display that actually drives
+/// the panel while succeeding on the idle NVIDIA one.
 fn choose_dmabuf_gpu(
-    _scanout: Option<DrmNode>,
-    _hw_accel: &[DrmNode],
+    scanout: Option<DrmNode>,
+    hw_accel: &[DrmNode],
     fallback: DrmNode,
 ) -> DrmNode {
-    // stub: today the first GPU where bind_wl_display succeeds wins, which on a
-    // hybrid laptop is the dGPU that drives nothing
-    fallback
+    scanout
+        .or_else(|| hw_accel.first().copied())
+        .unwrap_or(fallback)
 }
 
 fn frame_outcome(empty_error: bool, queued: bool) -> FrameOutcome {
