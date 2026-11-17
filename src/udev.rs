@@ -1270,6 +1270,12 @@ impl State {
                 let serial = SCOUNTER.next_serial();
                 self.udev.as_mut().unwrap().pointer_location = location;
                 drag_update(self, location);
+                // Same-class sibling of the freeze above: moving the pointer is
+                // the user waiting for a new cursor pixel. Without this flag the
+                // location updates in memory and no flip is ever queued, so an
+                // absolute (tablet/touchpad-mapped) pointer could sit frozen
+                // while the compositor believes it has nothing to do.
+                self.redraw_needed = true;
                 let focus = pointer_focus(self, location);
                 let pointer = self.seat.get_pointer().unwrap();
                 pointer.motion(
