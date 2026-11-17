@@ -196,7 +196,9 @@ Fixed and confirmed by the operator on the DRM session ("yes now fixed").
 | 5 | a pending frame callback was dropped as "too soon", which blocks the client instead of delaying it — no commit → no damage → no flip → no callback | `02f57d2` |
 
 Final state on the panel: `prep` ~0.4 ms, `queue` ~0.1 ms, `flip max` 16–19 ms,
-zero `queue err`, zero `presented N ms after commit (late)`.
+zero `queue err`, zero `presented N ms after commit (late)`, idle CPU near zero
+and RSS down with it (the old loop allocated a frame's worth of buffers 60 times
+a second with nothing damaged).
 
 Diagnostics kept on purpose: the 5-second `render stats` INFO line, plus
 `frame gap ... with N commits, M inputs waiting` and `presented N ms after
@@ -206,7 +208,7 @@ frame", which is what cost four rounds of guessing here.
 ## Acceptance Criteria
 
 - [x] Renders per second ≤ refresh rate (max 49 observed on 60 Hz; was 138–149)
-- [ ] Idle desktop (cursor untouched, no client activity) consumes ~0–2% CPU — idle windows now present 0–2 frames; not measured end-to-end since the final fix
+- [x] Idle desktop (cursor untouched, no client activity) consumes ~0–2% CPU — operator confirmed near zero after the final fix, and RSS fell with it (the loop was allocating every frame it didn't need to draw)
 - [x] Desktop does not stutter/freeze when the pointer is stationary — operator confirmed
 - [x] Pointer motion and client commits remain smooth (no regression) — operator confirmed
 - [x] Wallpaper animation and bar remain smooth during activity — operator confirmed

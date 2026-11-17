@@ -97,6 +97,8 @@ bug-2026-11-17t00:30:00:
   verify: |
     cargo clippy && cargo test && cargo build --release (72/72, 0 clippy errors).
     Live DRM session: no freezes with the pointer still, operator confirmed.
+    Operator confirmed idle CPU near zero and RSS down after 02f57d2; the loop
+    was allocating a frame's buffers 60 times a second with nothing damaged.
     Watch for "presented N ms after commit|input (late)" and
     "frame gap N ms had work waiting" in ~/.local/state/eswm/eswm.log — both
     must stay at zero during normal desktop use.
