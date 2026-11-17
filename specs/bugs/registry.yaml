@@ -2,10 +2,10 @@ bug-2026-11-16t17:30:00:
   id: bug-2026-11-16t17:30:00
   title: Idle CPU at ~55% due to unthrottled frame callbacks
   severity: low
-  status: open
+  status: resolved
   reported_by: operator_observation
-  fixed_in: ""
-  fixed_date: ""
+  fixed_in: 02f57d2
+  fixed_date: "2026-11-17T19:10:00+05:30"
   files:
     - src/main.rs
     - src/udev.rs
@@ -30,10 +30,10 @@ bug-2026-11-16t17:45:54:
   id: bug-2026-11-16t17:45:54
   title: Idle CPU 80-93% from unconditional vblank re-render timer
   severity: low
-  status: open
+  status: resolved
   reported_by: operator_observation
-  fixed_in: ""
-  fixed_date: ""
+  fixed_in: 8902405
+  fixed_date: "2026-11-17T19:10:00+05:30"
   files:
     - src/udev.rs
   description: |
@@ -47,6 +47,59 @@ bug-2026-11-16t17:45:54:
     Only reschedule when something actually needs redrawing.
   verify: |
     cargo test; cargo build; measure idle CPU on bare TTY.
+
+bug-2026-11-17t00:30:00:
+  id: bug-2026-11-17T00:30:00
+  title: Stutter/freeze when the cursor is still; a dropped frame callback deadlocks the client
+  severity: high
+  status: fixed
+  reported_by: operator_observation
+  fixed_in: 02f57d2
+  fixed_date: "2026-11-17T19:10:00+05:30"
+  risk_level: medium
+  files:
+    - src/udev.rs
+    - src/main.rs
+  description: |
+    After the vblank-timer fix, idle CPU fell to 14-16% but the desktop still
+    stuttered, and later froze completely: whole screen, cursor included, until
+    the pointer moved. Five defects sat on top of each other and each hid the
+    next — an unpaced render loop, empty frames counted as failed paints, dmabuf
+    feedback advertising the idle dGPU, frame callbacks gated on two different
+    clocks, and finally a frame callback dropped as "too soon".
+  resolution: |
+    A frame callback is the client's permission to draw. Dropping it does not
+    delay the client, it blocks it: it already committed and has nothing left to
+    do. No commits means no damage, no flip and therefore no callback — a
+    self-sustaining deadlock. No flip also means no atomic commit, which is what
+    moves the cursor plane, so the pointer froze too; moving it forced a present
+    and broke the loop, exactly as reported.
+    Pacing is done by the one-frame-in-flight gate, so pending callbacks are now
+    delivered on every present. Render loop gated on frame_in_flight; empty
+    frames satisfy the redraw request instead of retrying; dmabuf device taken
+    from the scanout GPU; callback time from now(self) only.
+  approach: |
+    Two-commit TDD per defect (test then fix), plus a hardening pass that fixed
+    PointerMotionAbsolute, which updated the pointer location without requesting
+    a redraw — the same class of defect (silently not requesting the flip the
+    user is waiting on), untestable without a fake InputBackend.
+  commits:
+    - 8902405
+    - fc52ecf
+    - 51260d3
+    - b613102
+    - 80a8e0a
+    - b0fc67f
+    - 02f57d2
+    - 2ac8dc4
+    - be0f2bd
+    - 6922ccc
+  verify: |
+    cargo clippy && cargo test && cargo build --release (72/72, 0 clippy errors).
+    Live DRM session: no freezes with the pointer still, operator confirmed.
+    Watch for "presented N ms after commit|input (late)" and
+    "frame gap N ms had work waiting" in ~/.local/state/eswm/eswm.log — both
+    must stay at zero during normal desktop use.
 
 e001-key-logging:
   id: e001
