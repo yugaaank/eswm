@@ -196,6 +196,39 @@ metrics cannot see it. Three candidates, each with its own counter:
 `record_present` logs `frame gap N ms (hitch)` above 100 ms, giving each hitch
 a timestamp to correlate against wall clock.
 
+## Round 7: root cause found — a dropped frame callback deadlocks the client
+
+Live run with commit→present latency plus stall blame (63 hitches, 102
+`presented N ms after commit (late)` up to 885 ms). The user's report was the
+decisive detail: *the whole screen freezes, cursor included, and moving the
+pointer restarts it.*
+
+- `flip max` stayed 16–19 ms and `queue err` 0 → **no flip was ever submitted**
+- no `loop blocked` warning → the loop was idle, not stuck
+- `late max` up to 885 ms → a client had committed and was waiting
+
+Mechanism:
+
+1. Client draws, commits **with a `wl_callback.done` request**, then blocks
+   waiting for it. It has nothing else to do.
+2. The commit lands within one refresh of the previous callback, so
+   `frame_callbacks`' pacing gate dropped the callback.
+3. The client stays blocked → no commits → no damage → no flip → no callback.
+   Self-sustaining deadlock.
+4. No flip means no atomic commit, which is also what moves the cursor plane,
+   so the pointer freezes with the rest of the screen.
+5. Moving the pointer sets `redraw_needed`, forces a present and delivers the
+   callback — the deadlock breaks, which is exactly what the user saw.
+
+Why every earlier metric missed it: `prep`/`queue` measure flips that happen,
+`flip max` measures flips that complete, `loop blocked` measures a busy loop.
+Here nothing was submitted and nothing was busy — the compositor was waiting
+for a client that was waiting for the compositor.
+
+Fix: deliver pending callbacks on **every** present. Pacing was never the
+gate's job — only one flip is in flight, so presents cannot outrun the refresh.
+Tests `b0fc67f` → `02f57d2`.
+
 ## Round 6: root cause — frame callbacks paced on two different clocks
 
 Live run: 47 `frame gap ... (hitch)` warnings in ~60 s, gaps up to 6.4 s,
