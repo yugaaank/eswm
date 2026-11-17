@@ -196,6 +196,32 @@ metrics cannot see it. Three candidates, each with its own counter:
 `record_present` logs `frame gap N ms (hitch)` above 100 ms, giving each hitch
 a timestamp to correlate against wall clock.
 
+## Round 6: root cause — frame callbacks paced on two different clocks
+
+Live run: 47 `frame gap ... (hitch)` warnings in ~60 s, gaps up to 6.4 s,
+`queue err` 0, `prep` ~1 ms, `queue` ~0.3 ms, commits ≈ frames. Every frame
+was cheap and no flip was refused, yet whole seconds had no present.
+
+`render()` takes a timestamp from its caller, and the two callers use
+different epochs:
+
+| caller | timestamp |
+|---|---|
+| event loop after `dispatch` | `now(self)` — ms since compositor start |
+| `frame_finish` timer | `next_frame_target` = DRM vblank time — ms since boot |
+
+`frame_callbacks` compared that value against `last_frame_callback_ms`
+(`src/main.rs:432`) and returned early when the difference was below the
+refresh period. With the epochs alternating, `time.saturating_sub(last)` was
+0, so the callback was dropped. Clients wait for `wl_callback.done` before
+drawing their next frame, so they stopped until some later render happened to
+deliver one — bursts at 60 fps (300 frames/5 s) interleaved with 200 ms–2 s of
+silence, which is exactly what the log showed.
+
+Fix: `frame_callbacks` derives its timestamp from `now(self)` itself, so the
+gate and its stored value cannot disagree, and `callback_due` fails open if
+time ever goes backwards. Tests `a03b97c` → `80a8e0a`.
+
 ## Resolution
 
 <!-- filled in by validate-fix -->
