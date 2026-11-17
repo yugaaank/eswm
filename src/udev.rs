@@ -1112,7 +1112,19 @@ const BORDER_PX: i32 = 2;
 
 /// Recompute pointer (hover/drag) focus from `pos` and return the surface-local
 /// hit for `Pointer.motion`, or None when over empty space.
+/// If a popup has an active grab, all pointer events go to the popup surface.
 fn pointer_focus(state: &mut State, pos: Point<f64, Logical>) -> Option<(wl_surface::WlSurface, Point<f64, Logical>)> {
+    // Popup grab takes priority: route all pointer input to the grabbed popup
+    if let Some(popup) = &state.popup_grab {
+        // Find the popup data to get its wl_surface
+        if let Some(popup_data) = state.popups.iter().find(|p| p.surface == *popup) {
+            return Some((
+                popup_data.surface.wl_surface().clone(),
+                Point::from((0.0, 0.0)),
+            ));
+        }
+    }
+
     crate::prune_dead_windows(state);
     let dragging = state.udev.as_ref().unwrap().drag;
     let id = dragging.map(|drag| drag.window).or_else(|| state.wm.window_at((pos.x, pos.y), state.wm.border_size()));
@@ -1315,6 +1327,14 @@ impl State {
                     pointer.frame(self);
 
                     let mods = self.udev.as_ref().unwrap().last_mods;
+                    // Popup grab active: dismiss on click outside, forward to popup on click inside.
+                    // Since we don't track popup screen geometry yet, dismiss on any press
+                    // while grab is active; the popup client receives the button event via
+                    // pointer_focus routing if the click landed on it.
+                    if self.popup_grab.is_some() {
+                        self.popup_grab.take();
+                        tracing::info!("popup dismissed on click outside (grab released)");
+                    }
                     // Super+button starts a move/resize drag on a floating window
                     if mods.logo && (button == BTN_LEFT || button == BTN_RIGHT) {
                         if let Some(id) = self.wm.window_at((location.x, location.y), self.wm.border_size()) {
