@@ -1,5 +1,8 @@
-active_flow: e05-core-loop-rendering
-bug_cycle: {}
+active_flow: fix_bug
+bug_cycle:
+  current_step: 3
+  completed_steps: [1, 2]
+  bug_id: BUG-2026-11-17T00:30:00-idle-stutter
 active_story: e05s04
 handoff:
   next_skill: verify-work

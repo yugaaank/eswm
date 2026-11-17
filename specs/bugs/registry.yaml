@@ -26,6 +26,28 @@ bug-2026-11-16t17:30:00:
   verify: |
     cargo test; cargo build; measure idle CPU on bare TTY with waybar running.
 
+bug-2026-11-16t17:45:54:
+  id: bug-2026-11-16t17:45:54
+  title: Idle CPU 80-93% from unconditional vblank re-render timer
+  severity: low
+  status: open
+  reported_by: operator_observation
+  fixed_in: ""
+  fixed_date: ""
+  files:
+    - src/udev.rs
+  description: |
+    eswm uses 80-93% CPU while idle (no clients, no input), RSS 287 MB. Hyprland idles at 0% CPU / 84 MB.
+    The prior fix (frame callback throttle to ~30fps) did not stop the render loop.
+    The actual driver is frame_finish in the DRM backend, which unconditionally
+    schedules a calloop timer after every queue_frame, creating a continuous
+    ~60fps render loop that bypasses the redraw_needed gate in the main event loop.
+  fix_plan: |
+    In frame_finish, guard the timer-scheduling block with if !self.redraw_needed { return; }.
+    Only reschedule when something actually needs redrawing.
+  verify: |
+    cargo test; cargo build; measure idle CPU on bare TTY.
+
 e001-key-logging:
   id: e001
   title: Key presses (including passwords) logged to world-readable /tmp/eswm.log

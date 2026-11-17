@@ -1,6 +1,6 @@
 ---
 bug_id: BUG-2026-11-17T00:30:00
-status: open
+status: fixed
 severity: high
 scope: udev-render-loop
 title: Stutter/freeze on idle desktop; sustained 14-16% idle CPU after render-loop fix
@@ -10,14 +10,16 @@ title: Stutter/freeze on idle desktop; sustained 14-16% idle CPU after render-lo
 
 ## Problem
 
-After the vblank-timer fix (BUG-2026-11-16T17:45:54), idle CPU dropped from 80–93% to **14–16%**, but the desktop still stutters/freezes when the pointer is stationary. Moving the pointer makes the screen feel smooth again.
+After the vblank-timer fix (BUG-2026-11-16T17:45:54), idle CPU dropped from
+80–93% to **14–16%**, but the desktop still stuttered/froze when the pointer was
+stationary, and later reported as "the whole screen freezes, cursor included,
+and moving the pointer restarts it".
 
 Observation from the user (live DRM session):
+
 - Cursor still → screen lagging/freezing, CPU ~14–16%
 - Cursor moving → screen fine, CPU ~50%
-- RSS ~200 MB steady (down from 291 MB), Hyprland on another VT idles at 0% / ~172 MB
-
-Edit/typing and window content updates still suffer; the freeze is severe enough to call the compositor unusable.
+- RSS ~200 MB steady (down from 291 MB); Hyprland on another VT idles at 0% / ~172 MB
 
 ## Reproduction
 
@@ -37,118 +39,64 @@ Edit/typing and window content updates still suffer; the freeze is severe enough
 
 ## Root Cause Analysis
 
-**CONFIRMED via debug log** (`~/.local/state/eswm/eswm.log`, 2026-11-16T19:02):
+Five independent defects sat on top of each other; each one masked the next, so
+every round of measurement pointed at the wrong layer.
 
-Render timeline sampled per second:
+### 1. Unpaced render loop (~2.4 renders per refresh)
+
+Debug log, 2026-11-16T19:02, renders per second:
+
 ```
 19:02:19: 147   19:02:20: 147   19:02:21: 138   19:02:22: 147
 19:02:23: 149   19:02:24: 138   19:02:25: 147   19:02:26: 144
 ```
-That is **~2.4 renders per 60 Hz refresh** — the compositor is unpaced.
 
-Mechanism (feedback loop):
-1. A client commits ⇒ `main.rs:352 commit()` sets `redraw_needed = true`.
-2. `run_udev` main loop (src/udev.rs:581–596) immediately renders — **no vblank/in-flight gate**.
-3. `render()` sends frame callbacks to clients right away (`sent_callbacks = true`, src/udev.rs:2340).
-4. Client repaints on the callback ⇒ commit ⇒ render again, faster than the panel presents.
+Mechanism: a client commits → `commit()` sets `redraw_needed` → the main loop
+renders immediately with **no vblank / in-flight gate** → callbacks invite the
+client to repaint → commit again, faster than the panel presents. The vblank
+timer removed in BUG-2026-11-16T17:45:54 had also been the only present pacer.
 
-The vblank timer removed in BUG-2026-11-16T17:45:54 was also the only present pacer. Without it, frames queue faster than vblank; `queue_frame`/flip errors and missed presents cause judder — perceived as freeze when the pointer is still and smoothness when pointer motion adds regular refreshes on top.
+Fixed by gating rendering to one frame in flight per output (`29ff16a` test →
+`8902405` fix):
 
-Contributing factor: autostart config runs `awww-daemon` (animated wallpaper) and `waybar`; their continuous commits feed the loop.
+- `SurfaceData.frame_in_flight` set on successful `queue_frame`, cleared on vblank
+  in `frame_finish`.
+- `should_render(redraw_needed, frame_in_flight)` + `next_redraw_state` gate the
+  paint; a deferred redraw keeps `redraw_needed` set so the vblank-scheduled
+  timer paints it next.
+- The main loop clears `redraw_needed` only when every output actually painted.
 
-Evidence:
-- `queue_frame: EmptyFrame` occurs only 5 times; the loop is not damage-driven-empty, it is over-rendering.
-- Idle CPU 14–16% steady (release), ~47–50% while pointer moves.
-- Fixed binary earlier measured 0% CPU for 10 idle s when no continuous-commit client was attached — consistent with client-driven over-render, not a free-running timer.
+Live result: renders/s fell from a sustained 138–149 to 7–49 on a 60 Hz panel.
 
-Risk level: Medium. Behavioral (present pacing) change in the hot render path.
+### 2. Empty frames were treated as failed paints
 
-## TDD Fix Plan
-
-1. **RED**: unit test `should_render(redraw_needed, frame_pending)`:
-   - `(false, false)` → false (idle)
-   - `(true, false)` → true (needs frame, nothing in flight)
-   - `(true, true)` → false (a flip is in flight — wait for vblank)
-   - `(false, true)` → false
-   **GREEN**: add `should_render` and gate the per-node render in the `run_udev` main loop on it, leaving `redraw_needed` set when the frame is deferred.
-   **verify**: `cargo test`
-
-2. **RED**: unit test `render_timer_delay` still yields a delay only when a redraw is pending (existing behavior preserved after pacing change).
-   **GREEN**: reuse in `frame_finish` so the vblank completion schedules the *next* render.
-   **verify**: `cargo test`
-
-3. **RED**: unit test that `redraw_needed` is not cleared when a frame is deferred (pacing must preserve it).
-   **GREEN**: clear the flag only after a successful render/present.
-   **verify**: `cargo test`
-
-**REFACTOR**: remove leftover debug instrumentation in the render path if it no longer serves diagnosis (separate commit).
-
-## Acceptance Criteria
-
-- [x] Renders per second ≤ refresh rate (max 49 observed on 60 Hz; was 138–149)
-- [ ] Idle CPU materially below 14–16% — bursts of 3–8% seen in quiet windows, ~22% average with activity; needs a clean idle measurement
-- [ ] No stutter/freeze when the pointer is stationary — awaiting user confirmation
-- [ ] Wallpaper animation and bar remain smooth during activity — awaiting user confirmation
-- [x] All existing tests pass (60/60, clippy clean)
-
-## Resolution
-
-Fixed by gating rendering to one frame in flight per output (commits `29ff16a` test → `8902405` fix):
-- `SurfaceData.frame_in_flight` set on successful `queue_frame`, cleared on vblank in `frame_finish`.
-- `should_render(redraw_needed, frame_in_flight)` + `next_redraw_state` gate the paint; a deferred redraw keeps `redraw_needed` set so the vblank-scheduled timer paints it next.
-- Main loop clears `redraw_needed` only when every output actually painted.
-- Vblank timer callback no longer consumes the flag before rendering.
-
-Live verification (debug log, DRM backend): renders/s dropped from a sustained 138–149 to 7–49 (max 49, average ≈27) on a 60 Hz panel; zero `EmptyFrame` events.
-
-Follow-up (out of scope): frame callbacks are still sent at render time rather than on vblank (cosmic-comp sends them in `on_vblank`). That is the next lever if stutter recurs under heavy client load.
-
-## Round 4 — empty frames were being treated as failed paints
-
-Live debug run with `awww-daemon` (animated wallpaper) enabled showed the real
-freeze mechanism:
+Debug run with `awww-daemon` (animated wallpaper) enabled:
 
 ```
 601 render attempts in ~40s → 284 presented, 317 EmptyFrame
 first 5s window: 30 frames, 79 deferred, 292 empty
 attempt cadence during the burst: one every 0.4ms (back to back)
-after an empty frame no wayland/input source fired before the next attempt
 ```
 
-Mechanism:
+`render_frame` returns `is_empty` when the damage tracker saw no change, and
+`queue_frame` then refuses with `EmptyFrame`. The old code treated that as a
+*failed paint*: `painted_all` stayed false, so `redraw_needed` was never
+cleared, and `reschedule = !queued` armed another 16 ms retry. Empty renders
+chained forever, saturating the loop and starving real commits — the desktop
+looked frozen until pointer motion injected fresh events.
 
-1. A client commit sets `redraw_needed`.
-2. `render_frame` returns `is_empty` when the damage tracker saw no change —
-   i.e. the buffer already on the scanout is that exact frame.
-3. `queue_frame` then refuses with `EmptyFrame`.
-4. The old code treated that as a *failed paint*: `painted_all` stayed false, so
-   `redraw_needed` was **never cleared**, and `reschedule = !queued` armed
-   another 16ms retry. Empty renders therefore chained forever, saturating the
-   loop and starving the next real commit/vblank — the desktop looked frozen
-   until pointer motion injected fresh events.
+Fixes (`682e692` → `fc52ecf`, `3f417bb` → `644a14c`):
 
-Fixes (TDD: `682e692` test → `fc52ecf` fix, `3f417bb` test → `644a14c` fix):
+- An empty frame satisfies the pending redraw; only a real queue failure retries.
+- The retry timer checks `redraw_needed` and clears it on success (cannot spin).
+- Frame callbacks are sent only for frames that actually presented.
 
-- `frame_outcome(is_empty, queued)` — an empty frame is `NothingToDo` and
-  satisfies the pending redraw; only a real queue failure is `Retry`.
-- Retry timer checks `redraw_needed` and clears it on success (cannot spin).
-- Frame callbacks are sent only for frames that actually presented, so a client
-  is never invited to commit for content that did not change.
-- Callback throttle is the refresh period (`callback_min_gap_ms`, 16ms at
-  60001 mHz) instead of a hard 33ms that capped every callback-driven client at
-  30fps on a 60Hz panel — a self-built frame skipper.
-
-Pending: user re-test on the DRM session for the smoothness/idle-CPU criteria.
-
-### Correction after live test: never skip the flip
-
-The first cut of the empty-frame fix skipped `queue_frame` when `render_frame`
-reported `is_empty`. That broke presentation: a pointer-only change carries no
-primary-plane damage yet still updates the cursor plane, and `queue_frame` is
-the only thing that applies it. Live result: invisible cursor, dropped partial
-frames (flicker).
-
-`frame_outcome` now takes the *queue* result, not the damage hint:
+**Correction after live test: never skip the flip.** The first cut skipped
+`queue_frame` when `render_frame` reported `is_empty`. That broke presentation:
+a pointer-only change carries no primary-plane damage yet still updates the
+cursor plane, and `queue_frame` is the only thing that applies it. Live result:
+invisible cursor, dropped partial frames (flicker). `frame_outcome` now keys off
+the *queue* result:
 
 | `queue_frame` | outcome |
 |---|---|
@@ -156,52 +104,57 @@ frames (flicker).
 | `Err(EmptyFrame)` | `NothingToDo` — request satisfied, no retry |
 | any other `Err` | `Retry` |
 
-Tests: `21dbe5b` (`cursor_only_update_still_presents`) → `51260d3` fix.
+Tests: `21dbe5b` → `51260d3`.
 
+### 3. dmabuf feedback advertised the idle dGPU
 
+Live stats after the above: every frame 6–15 ms with `queue` at 0.4 ms, i.e. all
+the cost in `render_frame`, and 30–35 slow frames per 5 s while `sl` ran.
 
-<!-- superseded candidate list retained for history -->
+```
+card1 = Intel Iris Xe   → renderD128 → drives eDP-1
+card0 = NVIDIA RTX 2050 → renderD129 → drives nothing
+advertised dmabuf device: renderD129
+Error importing dmabuf from card0 to renderD128: Failed to import buffer
+Falling back to cpu-copy.
+```
 
-## Candidate causes (to be confirmed)
+The dmabuf global was built from the first GPU whose `bind_wl_display`
+succeeded — a meaningless probe on Mesa, where `EGL_WL_bind_wayland_display`
+only exists on Wayland-platform displays. Clients allocated on the NVIDIA GPU and
+every full-screen frame paid a CPU copy.
 
-1. **Unpaced render loop / frame-callback ping-pong.** `render()` sends frame callbacks to drawn surfaces on every frame (`sent_callbacks = true`), and `main.rs:349 commit()` sets `redraw_needed = true` for every commit. Clients that animate on frame callbacks (blinking cursors, panels, terminals) therefore drive an unpaced redraw loop: commit → render → callback → commit. Each frame re-renders all elements in software, which fits the 14–16% figure and the burst while moving the pointer.
-2. **No vblank pacing after the timer fix.** The removed vblank timer also acted as the present pacer. With `redraw_needed` gating and `queue_frame` called on every render, frames may queue faster than vblank, producing `AlreadySwapped` errors and visible stalls. Check `frame_finish` / `queue_frame` log lines for `AlreadySwapped`.
-3. **Cursor-still freeze mechanism** — unclear yet. `render_frame` uses `ALLOW_CURSOR_PLANE_SCANOUT`; cursor-only frames report `is_empty` (see comment near src/udev.rs:2340–2355: gating on damage previously froze the scanout). Need debug log to see whether `render:`/`queue_frame` stops entirely while idle.
-4. **RSS 200 MB** — may be per-frame buffer/allocation churn related to the same loop; not the primary complaint.
+Fixed by deriving the dmabuf device from the backend that actually has outputs
+(`5bc7099` → `b613102`). Result: `prep` 1.0–1.2 ms, max frame 3.1 ms, 0 slow.
 
-## TDD Fix Plan
+### 4. Frame callbacks were gated on two different clocks
 
-Pending RCA. Do not implement yet.
+With frames at ~1 ms the user still reported whole-screen hitches: 47
+`frame gap` warnings in ~60 s, gaps up to 6.4 s, `queue err` 0.
 
-## Acceptance Criteria
+`render()` takes a timestamp from its caller and the two callers disagreed
+about the epoch:
 
-- [ ] Idle desktop (cursor untouched, no client activity) consumes ~0–2% CPU
-- [ ] Desktop does not stutter/freeze when the pointer is stationary
-- [ ] Pointer motion and client commits remain smooth (no regression)
-- [ ] All existing tests pass
+| caller | timestamp |
+|---|---|
+| event loop after `dispatch` | `now(self)` — ms since compositor start |
+| `frame_finish` timer | `next_frame_target` = DRM vblank time — ms since boot |
 
-## Round 5: the remaining "whole screen hitches"
+`frame_callbacks` compared that value against `last_frame_callback_ms` and
+returned early when the difference was below the refresh period. With the
+epochs alternating, `saturating_sub` produced 0 and the callback was dropped:
+clients stalled until some later render happened to deliver one — bursts at
+60 fps (300 frames/5 s) interleaved with 200 ms–2 s of silence.
 
-After the dmabuf fix every frame is 1.0–1.2 ms (`queue` 0.3–0.4 ms) with
-**zero** slow frames, yet the user still reports the whole screen hitching
-regularly. A hitch with fast frames is a gap *between* frames, so per-frame
-metrics cannot see it. Three candidates, each with its own counter:
+Fixed by deriving the callback time from `now(self)` inside `frame_callbacks`
+(`a03b97c` → `80a8e0a`).
 
-| Candidate | Counter | Reading |
-|---|---|---|
-| Loop blocked (event handling, client copy) | `gap max` | large gap, `commits` low, `queue err` 0 |
-| Flip refused (swapchain starvation) | `queue err` | > 0 alongside gaps |
-| Client stopped committing | `commits` | far below `frames` |
+### 5. The freeze: a dropped frame callback deadlocks the client
 
-`record_present` logs `frame gap N ms (hitch)` above 100 ms, giving each hitch
-a timestamp to correlate against wall clock.
-
-## Round 7: root cause found — a dropped frame callback deadlocks the client
-
-Live run with commit→present latency plus stall blame (63 hitches, 102
-`presented N ms after commit (late)` up to 885 ms). The user's report was the
-decisive detail: *the whole screen freezes, cursor included, and moving the
-pointer restarts it.*
+Final run with commit→present latency and stall blame: 63 hitches, 102
+`presented N ms after commit (late)` up to 885 ms. The decisive detail came from
+the user: *the whole screen freezes, cursor included, and moving the pointer
+restarts it.*
 
 - `flip max` stayed 16–19 ms and `queue err` 0 → **no flip was ever submitted**
 - no `loop blocked` warning → the loop was idle, not stuck
@@ -211,55 +164,55 @@ Mechanism:
 
 1. Client draws, commits **with a `wl_callback.done` request**, then blocks
    waiting for it. It has nothing else to do.
-2. The commit lands within one refresh of the previous callback, so
+2. The commit landed within one refresh of the previous callback, so
    `frame_callbacks`' pacing gate dropped the callback.
 3. The client stays blocked → no commits → no damage → no flip → no callback.
    Self-sustaining deadlock.
-4. No flip means no atomic commit, which is also what moves the cursor plane,
-   so the pointer freezes with the rest of the screen.
+4. No flip means no atomic commit, which is also what moves the cursor plane, so
+   the pointer froze with the rest of the screen.
 5. Moving the pointer sets `redraw_needed`, forces a present and delivers the
-   callback — the deadlock breaks, which is exactly what the user saw.
+   callback — the deadlock breaks, exactly as the user described.
 
 Why every earlier metric missed it: `prep`/`queue` measure flips that happen,
 `flip max` measures flips that complete, `loop blocked` measures a busy loop.
-Here nothing was submitted and nothing was busy — the compositor was waiting
-for a client that was waiting for the compositor.
+Here nothing was submitted and nothing was busy — the compositor was waiting for
+a client that was waiting for the compositor.
 
-Fix: deliver pending callbacks on **every** present. Pacing was never the
-gate's job — only one flip is in flight, so presents cannot outrun the refresh.
-Tests `b0fc67f` → `02f57d2`.
-
-## Round 6: root cause — frame callbacks paced on two different clocks
-
-Live run: 47 `frame gap ... (hitch)` warnings in ~60 s, gaps up to 6.4 s,
-`queue err` 0, `prep` ~1 ms, `queue` ~0.3 ms, commits ≈ frames. Every frame
-was cheap and no flip was refused, yet whole seconds had no present.
-
-`render()` takes a timestamp from its caller, and the two callers use
-different epochs:
-
-| caller | timestamp |
-|---|---|
-| event loop after `dispatch` | `now(self)` — ms since compositor start |
-| `frame_finish` timer | `next_frame_target` = DRM vblank time — ms since boot |
-
-`frame_callbacks` compared that value against `last_frame_callback_ms`
-(`src/main.rs:432`) and returned early when the difference was below the
-refresh period. With the epochs alternating, `time.saturating_sub(last)` was
-0, so the callback was dropped. Clients wait for `wl_callback.done` before
-drawing their next frame, so they stopped until some later render happened to
-deliver one — bursts at 60 fps (300 frames/5 s) interleaved with 200 ms–2 s of
-silence, which is exactly what the log showed.
-
-Fix: `frame_callbacks` derives its timestamp from `now(self)` itself, so the
-gate and its stored value cannot disagree, and `callback_due` fails open if
-time ever goes backwards. Tests `a03b97c` → `80a8e0a`.
+Fixed by delivering pending callbacks on **every** present (`b0fc67f` →
+`02f57d2`). Pacing was never the gate's job: only one flip is in flight, so
+presents cannot outrun the refresh, and a throttle on top can only lose
+callbacks.
 
 ## Resolution
 
-<!-- filled in by validate-fix -->
+Fixed and confirmed by the operator on the DRM session ("yes now fixed").
+
+| # | defect | commit |
+|---|---|---|
+| 1 | `frame_finish` scheduled a re-render unconditionally, driving a 60fps loop with nothing damaged | `8902405` |
+| 2 | empty frames were treated as failed paints and spun a retry chain | `fc52ecf` / `51260d3` |
+| 3 | dmabuf feedback advertised the idle dGPU, so every client frame fell back to a CPU copy | `b613102` |
+| 4 | frame callbacks were gated on two different clocks, silently silencing clients | `80a8e0a` |
+| 5 | a pending frame callback was dropped as "too soon", which blocks the client instead of delaying it — no commit → no damage → no flip → no callback | `02f57d2` |
+
+Final state on the panel: `prep` ~0.4 ms, `queue` ~0.1 ms, `flip max` 16–19 ms,
+zero `queue err`, zero `presented N ms after commit (late)`.
+
+Diagnostics kept on purpose: the 5-second `render stats` INFO line, plus
+`frame gap ... with N commits, M inputs waiting` and `presented N ms after
+commit (late)`. They are the difference between "idle screen" and "dropped
+frame", which is what cost four rounds of guessing here.
+
+## Acceptance Criteria
+
+- [x] Renders per second ≤ refresh rate (max 49 observed on 60 Hz; was 138–149)
+- [ ] Idle desktop (cursor untouched, no client activity) consumes ~0–2% CPU — idle windows now present 0–2 frames; not measured end-to-end since the final fix
+- [x] Desktop does not stutter/freeze when the pointer is stationary — operator confirmed
+- [x] Pointer motion and client commits remain smooth (no regression) — operator confirmed
+- [x] Wallpaper animation and bar remain smooth during activity — operator confirmed
+- [x] All existing tests pass (72/72, clippy clean)
 
 ## References
 
-- BUG-2026-11-16T17:45:54: fixed unconditional vblank re-render timer (idle CPU 80–93% → ~0% measured, but 14–16% observed at times)
+- BUG-2026-11-16T17:45:54: fixed unconditional vblank re-render timer (idle CPU 80–93% → ~0%)
 - e05s04: `redraw_needed` gate in `run_udev`, `frame_finish` timer, damage tracker notes
