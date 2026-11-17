@@ -193,6 +193,8 @@ pub struct RenderStats {
     /// Longest gap between presented frames: a "whole screen hitch" shows up
     /// here even when every individual frame is fast.
     max_gap_ms: f64,
+    /// Slowest queue_frame -> vblank round trip.
+    flip_max_ms: f64,
     last_present: Option<Instant>,
     since: Option<Instant>,
 }
@@ -229,6 +231,8 @@ impl RenderStats {
         }
         gap
     }
+
+    fn record_flip(&mut self, _ms: f64) {}
 }
 
 impl DmabufHandler for State {
@@ -707,6 +711,19 @@ state.ipc = ipc_opt;
 
 fn now(state: &State) -> u32 {
     state.udev.as_ref().unwrap().start.elapsed().as_millis() as u32
+}
+
+/// Time between queue_frame and the matching vblank.
+fn flip_latency_ms(queued_at: Instant, finished_at: Instant) -> f64 {
+    finished_at.duration_since(queued_at).as_secs_f64() * 1000.0
+}
+
+/// Blocking the event loop is fine when there is nothing to paint. Blocking it
+/// with a redraw pending is a hitch: the frame existed and we sat on it.
+const LOOP_STALL_MS: f64 = 30.0;
+
+fn loop_stall(pending: bool, blocked_ms: f64) -> bool {
+    false
 }
 
 fn render_timer_delay(redraw_needed: bool, _frame_duration: Duration) -> Option<Duration> {
@@ -2897,6 +2914,33 @@ mod tests {
         assert!((s.max_gap_ms - 200.0).abs() < 0.01);
         s.record_present(t0 + Duration::from_millis(232));
         assert!((s.max_gap_ms - 200.0).abs() < 0.01, "max never shrinks");
+    }
+
+    /// A hitch has two possible owners: the compositor held the frame, or the
+    /// kernel/GPU held the flip. Comparing queue-to-vblank time against render
+    /// time says which one owes the user an apology.
+    #[test]
+    fn render_stats_track_flip_latency() {
+        let mut s = RenderStats::default();
+        assert_eq!(s.flip_max_ms, 0.0);
+        s.record_flip(16.0);
+        s.record_flip(4.0);
+        assert_eq!(s.flip_max_ms, 16.0);
+        s.record_flip(320.0);
+        assert_eq!(s.flip_max_ms, 320.0);
+    }
+
+    #[test]
+    fn loop_stall_only_counts_blocked_work() {
+        assert!(!loop_stall(false, 500.0), "idle blocking is not a hitch");
+        assert!(!loop_stall(true, 16.0), "waiting for a vblank is normal");
+        assert!(loop_stall(true, 120.0));
+        assert!((flip_latency_ms(
+            Instant::now(),
+            Instant::now() + Duration::from_millis(16)
+        ) - 16.0)
+            .abs()
+            < 0.01);
     }
 
     /// Clients allocate dmabufs on the GPU the feedback advertises. If that is
