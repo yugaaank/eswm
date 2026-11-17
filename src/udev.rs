@@ -81,7 +81,7 @@ use smithay::{
         socket::ListeningSocketSource,
     },
 };
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 
 use smithay_drm_extras::drm_scanner::{DrmScanEvent, DrmScanner};
@@ -744,7 +744,10 @@ fn now(state: &State) -> u32 {
 /// from the output itself: only one flip is in flight, so presents cannot
 /// outrun the refresh and a throttle on top of that can only lose callbacks.
 fn callback_due(ms_since_last: u32, min_gap_ms: u32) -> bool {
-    ms_since_last >= min_gap_ms
+    // Diagnostics only. This used to gate delivery, which deadlocked clients:
+    // a suppressed callback leaves them waiting with nothing left to commit.
+    trace!(ms_since_last, min_gap_ms, "delivering frame callbacks");
+    true
 }
 
 /// A long gap between presents is only *our* hitch if something was actually
@@ -850,7 +853,8 @@ impl FrameOutcome {
     }
 }
 
-/// Minimum gap between frame callbacks for a refresh rate given in mHz.
+/// Refresh period for a mode, in ms. Used only to describe pacing in logs: the
+/// real pacing is the one-frame-in-flight gate, which cannot outrun the panel.
 fn callback_min_gap_ms(refresh_mhz: u32) -> u32 {
     // One refresh period. The old hard 33ms gave every callback-driven client
     // exactly every second frame on a 60Hz panel — i.e. visible frame skipping.
