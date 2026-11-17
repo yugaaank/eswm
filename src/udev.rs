@@ -87,7 +87,7 @@ use tracing::{debug, error, info, trace, warn};
 use smithay_drm_extras::drm_scanner::{DrmScanEvent, DrmScanner};
 
 use crate::{send_frames_surface_tree, State, wm, ipc, lua_state};
-use crate::wm::Rect;
+use crate::wm::{Rect, border_frame};
 
 type UdevRenderer<'a> = MultiRenderer<
     'a,
@@ -2260,11 +2260,6 @@ impl State {
                 // overlap with client content), surface pushed last (drawn
                 // first -> bottom layer = client content).
                 let mut border_elements: Vec<EswmRenderElements<UdevRenderer>> = Vec::new();
-                // Border frame extends upward by titlebar_height so borders capture the titlebar.
-                let wx = rect.x as f64 - bp;
-                let wy = rect.y as f64 - bp - titlebar_height as f64;
-                let w = rect.width as f64 + 2.0 * bp;
-                let h = rect.height as f64 + 2.0 * bp + titlebar_height as f64;
                 // Borders pushed first -> lowest index -> drawn last -> on top, frame titlebar + surface.
                 // Titlebar next (middle, inside frame top, flush with surface top).
                 // Surface last (bottom layer = client content).
@@ -2280,18 +2275,15 @@ impl State {
                         color[2] as f32 / 255.0,
                         color[3] as f32 / 255.0,
                     );
-                    let bp_i = border_size as i32;
-                    let top_w = (rect.width as i32 + 2 * bp_i) as u32;
-                    let edge_h = border_size as u32;
-                    let side_w = border_size as u32;
-                    let side_h = rect.height as u32;
+                    // Use shared border_frame helper so all four edges connect with zero gap.
+                    let frame = border_frame(*rect, border_size, titlebar_height);
 
-                    // Top edge (spans full width including left/right borders)
+                    // Top edge
                     border_elements.push(EswmRenderElements::Solid(SolidColorRenderElement::new(
                         Id::new(),
                         Rectangle::<i32, Physical>::new(
-                            Point::from((wx as i32, wy as i32)),
-                            Size::from((top_w as i32, edge_h as i32)),
+                            Point::from((frame.top.x, frame.top.y)),
+                            Size::from((frame.top.width as i32, frame.top.height as i32)),
                         ),
                         CommitCounter::default(),
                         color32f,
@@ -2301,8 +2293,8 @@ impl State {
                     border_elements.push(EswmRenderElements::Solid(SolidColorRenderElement::new(
                         Id::new(),
                         Rectangle::<i32, Physical>::new(
-                            Point::from((wx as i32, (wy + h - bp) as i32)),
-                            Size::from((top_w as i32, edge_h as i32)),
+                            Point::from((frame.bottom.x, frame.bottom.y)),
+                            Size::from((frame.bottom.width as i32, frame.bottom.height as i32)),
                         ),
                         CommitCounter::default(),
                         color32f,
@@ -2312,8 +2304,8 @@ impl State {
                     border_elements.push(EswmRenderElements::Solid(SolidColorRenderElement::new(
                         Id::new(),
                         Rectangle::<i32, Physical>::new(
-                            Point::from((wx as i32, wy as i32)),
-                            Size::from((side_w as i32, side_h as i32)),
+                            Point::from((frame.left.x, frame.left.y)),
+                            Size::from((frame.left.width as i32, frame.left.height as i32)),
                         ),
                         CommitCounter::default(),
                         color32f,
@@ -2323,8 +2315,8 @@ impl State {
                     border_elements.push(EswmRenderElements::Solid(SolidColorRenderElement::new(
                         Id::new(),
                         Rectangle::<i32, Physical>::new(
-                            Point::from((wx as i32 + rect.width as i32 + bp_i, wy as i32)),
-                            Size::from((side_w as i32, side_h as i32)),
+                            Point::from((frame.right.x, frame.right.y)),
+                            Size::from((frame.right.width as i32, frame.right.height as i32)),
                         ),
                         CommitCounter::default(),
                         color32f,

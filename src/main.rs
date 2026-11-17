@@ -165,11 +165,15 @@ pub fn placed_windows(state: &mut State) -> Vec<(WlSurface, i32, i32, wm::Window
             }
             let target_rect = window.target_rect;
             let focused = window.focused;
-            tracing::debug!("render window id={id:?} rect={:?} focused={}", target_rect, focused);
+            // render position = target_rect - xdg_offset (client's window geometry offset)
+            let render_x = target_rect.x - window.xdg_offset.0;
+            let render_y = target_rect.y - window.xdg_offset.1;
+            tracing::debug!("render window id={id:?} rect={:?} offset={:?} render=({}, {}) focused={}",
+                target_rect, window.xdg_offset, render_x, render_y, focused);
             placed.push((
                 surface.wl_surface().clone(),
-                target_rect.x,
-                target_rect.y,
+                render_x,
+                render_y,
                 id,
                 focused,
                 target_rect,
@@ -304,7 +308,9 @@ impl State {
                 self.layer_wrappers.len(), dock_h, wa.x, wa.y, wa.width, wa.height
             );
             if let Some(output_id) = self.wm.primary_output_id() {
+                self.wm.mark_dirty();
                 self.wm.arrange_output(output_id);
+                apply_layout(self);
             }
         }
         // smithay's arrange never sends the initial configure (the spec reserves

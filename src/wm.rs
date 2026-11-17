@@ -141,6 +141,66 @@ pub struct WindowRule {
     pub mode: Option<WindowMode>,
 }
 
+/// Border frame geometry: the outer frame that wraps a window's target_rect.
+/// Includes top edge (spans full width), bottom edge, left edge, right edge.
+/// All edges connect at corners with zero gap.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BorderFrame {
+    /// Top edge rect (x, y, width, height)
+    pub top: Rect,
+    /// Bottom edge rect
+    pub bottom: Rect,
+    /// Left edge rect
+    pub left: Rect,
+    /// Right edge rect
+    pub right: Rect,
+}
+
+/// Compute the border frame for a window's target_rect.
+/// The frame extends `border_size` pixels outward on all sides, plus
+/// `titlebar_height` pixels upward from the top edge.
+/// All four edges meet at corners with no gap.
+pub fn border_frame(
+    target: Rect,
+    border_size: u32,
+    titlebar_height: u32,
+) -> BorderFrame {
+    let bp = border_size as i32;
+    let tb = titlebar_height as i32;
+    // Frame bounds: extends bp left/right, bp+tb up, bp down from target_rect
+    let frame_x = target.x - bp;
+    let frame_y = target.y - bp - tb;
+    let frame_w = target.width as i32 + 2 * bp;
+    let frame_h = target.height as i32 + 2 * bp + tb;
+
+    BorderFrame {
+        top: Rect {
+            x: frame_x,
+            y: frame_y,
+            width: frame_w as u32,
+            height: border_size,
+        },
+        bottom: Rect {
+            x: frame_x,
+            y: frame_y + frame_h - bp,
+            width: frame_w as u32,
+            height: border_size,
+        },
+        left: Rect {
+            x: frame_x,
+            y: frame_y,
+            width: border_size,
+            height: frame_h as u32,
+        },
+        right: Rect {
+            x: frame_x + frame_w - bp,
+            y: frame_y,
+            width: border_size,
+            height: frame_h as u32,
+        },
+    }
+}
+
 /// Window decoration values shared between the Lua config API and the WM.
 /// Lua mutates these via `es.dsp.set_*`; the renderer reads them each frame.
 #[derive(Clone, Debug, Default)]
@@ -424,6 +484,7 @@ impl WindowManager {
         {
             self.focus_window(window);
         }
+        self.arrange_output(output);
         true
     }
 
@@ -516,6 +577,12 @@ impl WindowManager {
 
     pub fn dock_height(&self) -> u32 {
         self.dock_height
+    }
+
+    /// Mark the window manager as needing re-arrangement. Call when external
+    /// state (e.g. work_area) changes so arrange_output will run.
+    pub fn mark_dirty(&mut self) {
+        self.dirty = true;
     }
 
     /// Dock entries for the active workspace of the primary output: every
