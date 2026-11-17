@@ -354,7 +354,6 @@ impl CompositorHandler for State {
         // "client stopped committing" from "we dropped or refused the frame".
         if let Some(u) = self.udev.as_mut() {
             u.stats.commits += 1;
-            u.commits_since_present += 1;
             u.last_commit_at = Some(Instant::now());
         }
         tracing::debug!("commit -> redraw");

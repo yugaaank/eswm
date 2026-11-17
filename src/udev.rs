@@ -170,12 +170,14 @@ pub struct UdevData {
     /// measured without debug logging inflating the frame time.
     pub stats: RenderStats,
     /// When the most recent client commit arrived. Used to measure the wait the
-    /// user feels between "key pressed" and "pixels on screen".
+    /// user feels between "key pressed" and "pixels on screen". Taken (not
+    /// copied) when a present serves it, so an already-painted commit cannot
+    /// keep aging and fake a hitch on every later present. (A commit that is
+    /// never taken is the freeze: it waited for input to force a flip.)
     pub last_commit_at: Option<Instant>,
-    /// Work that arrived since the last present. A long gap with these at zero
-    /// is an idle desktop, not a hitch.
-    pub commits_since_present: u32,
-    pub inputs_since_present: u32,
+    /// Same, for the last input event. A cursor that does not move is the
+    /// failure the user notices before anything else.
+    pub last_input_at: Option<Instant>,
 }
 
 #[derive(Default)]
@@ -359,8 +361,7 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         paused: false,
         stats: RenderStats::default(),
         last_commit_at: None,
-        commits_since_present: 0,
-        inputs_since_present: 0,
+        last_input_at: None,
     };
 
     // Shared protocol/global/socket setup from main.rs.
@@ -750,26 +751,19 @@ fn callback_due(ms_since_last: u32, min_gap_ms: u32) -> bool {
     true
 }
 
-/// A long gap between presents is only *our* hitch if something was actually
-/// waiting to be drawn. A commit or an input event during the gap proves the
-/// screen owed the user a frame; nothing at all means the desktop was idle.
-fn stall_blame(commits: u32, inputs: u32) -> &'static str {
-    if commits > 0 || inputs > 0 { "compositor" } else { "idle" }
-}
-
 /// A long gap between presents is only a hitch if a commit or an input event
 /// actually waited for it. A commit that arrives just before the present ends
 /// the gap and is served in a millisecond: the screen was simply idle, and
-/// warning about it buries the real stalls in noise.
+/// warning about it buries the real stalls in noise. A nap is not a coma.
 fn is_hitch(waited_ms: Option<f64>) -> bool {
-    true
+    matches!(waited_ms, Some(ms) if ms > HITCH_GAP_MS)
 }
 
-/// Time between a client's last commit and the frame that carries it reaching
-/// the scanout. This is the number the user calls "lag"; the frame gap alone
-/// cannot tell an idle screen from a dropped frame.
-fn commit_latency_ms(committed_at: Instant, presented_at: Instant) -> f64 {
-    presented_at.duration_since(committed_at).as_secs_f64() * 1000.0
+/// Time between an event the user is waiting on (a commit, an input event) and
+/// the frame that answers it reaching the scanout. This is the wait the user
+/// feels; a frame gap alone cannot tell an idle screen from a dropped frame.
+fn latency_ms(event_at: Instant, presented_at: Instant) -> f64 {
+    presented_at.duration_since(event_at).as_secs_f64() * 1000.0
 }
 
 /// Time between queue_frame and the matching vblank.
@@ -1204,10 +1198,11 @@ fn switch_workspace(state: &mut State, ws: i32) {
 
 impl State {
     fn process_input_event<B: InputBackend>(&mut self, event: &InputEvent<B>) {
-        // Input arriving while nothing presents is a freeze the user feels; the
-        // count tells a real hitch apart from an idle screen.
+        // Input arriving while nothing presents is a freeze the user feels.
+        // Record when it arrived so the next present can say how long it
+        // waited, instead of guessing from "was there any input".
         if let Some(u) = self.udev.as_mut() {
-            u.inputs_since_present += 1;
+            u.last_input_at = Some(Instant::now());
         }
         match event {
             InputEvent::Keyboard { event, .. } => {
@@ -2803,34 +2798,33 @@ impl State {
         if let Some(u) = self.udev.as_mut() {
             if stat_frame {
                 u.stats.record_frame(stat_ms, prep_ms, stat_queue_ms);
-                // How long did the user wait for this frame? Measured from the
-                // last client commit, so an idle screen cannot fake a hitch.
-                if let Some(committed) = u.last_commit_at {
-                    let ms = commit_latency_ms(committed, Instant::now());
+                // How long did the user wait for this frame? A commit that
+                // arrived just before the present waited a millisecond; one
+                // that sat through the whole gap is the stall we care about.
+                let presented = Instant::now();
+                let commit_wait = u.last_commit_at.take().map(|at| latency_ms(at, presented));
+                if let Some(ms) = commit_wait {
                     u.stats.record_latency(ms);
-                    if ms > HITCH_GAP_MS {
+                    if is_hitch(commit_wait) {
                         warn!("presented {ms:.0} ms after commit (late)");
                     }
                 }
-                // The gap, not the frame cost, is what a "whole screen hitch"
-                // is: everything was fast, then nothing was presented for a
-                // while. Log the ugly ones so a reported hitch has a timestamp.
-                if let Some(gap) = u.stats.record_present(Instant::now()) {
-                    if gap > HITCH_GAP_MS {
-                        // Work waiting during the gap is proof the screen owed
-                        // the user a frame. None of it means we were idle.
-                        if stall_blame(u.commits_since_present, u.inputs_since_present) == "compositor" {
-                            warn!(
-                                "frame gap {gap:.0} ms (hitch) with {} commits, {} inputs waiting",
-                                u.commits_since_present, u.inputs_since_present
-                            );
-                        } else {
-                            debug!("frame gap {gap:.0} ms (idle, no work waiting)");
-                        }
+                // Input that waited is a frozen cursor / unresponsive keys,
+                // which is a different failure from a late client frame.
+                let input_wait = u.last_input_at.take().map(|at| latency_ms(at, presented));
+                if is_hitch(input_wait) {
+                    let ms = input_wait.unwrap_or_default();
+                    warn!("presented {ms:.0} ms after input (late)");
+                }
+                // Keep the gap for the stats line; it is only a hitch if one of
+                // the waits above says something was actually queued.
+                if let Some(gap) = u.stats.record_present(presented) {
+                    if is_hitch(commit_wait) || is_hitch(input_wait) {
+                        warn!("frame gap {gap:.0} ms had work waiting");
+                    } else {
+                        debug!("frame gap {gap:.0} ms (idle)");
                     }
                 }
-                u.commits_since_present = 0;
-                u.inputs_since_present = 0;
             }
             if stat_empty {
                 u.stats.empty += 1;
@@ -3047,13 +3041,6 @@ mod tests {
         assert!(is_hitch(Some(1500.0)), "a commit waited 1.5s");
     }
 
-    #[test]
-    fn stall_blame_requires_pending_work() {
-        assert_eq!(stall_blame(0, 0), "idle");
-        assert_eq!(stall_blame(3, 0), "compositor");
-        assert_eq!(stall_blame(0, 1), "compositor");
-    }
-
     /// The frame gap cannot tell an idle screen from a dropped frame. Latency
     /// from the client's commit to the present can: it is the wait the user
     /// experiences after pressing a key.
@@ -3065,7 +3052,7 @@ mod tests {
         s.record_latency(8.0);
         assert_eq!(s.lat_max_ms, 400.0);
         let t0 = Instant::now();
-        let ms = commit_latency_ms(t0, t0 + Duration::from_millis(25));
+        let ms = latency_ms(t0, t0 + Duration::from_millis(25));
         assert!((ms - 25.0).abs() < 0.01);
     }
 
