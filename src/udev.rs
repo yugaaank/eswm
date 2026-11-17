@@ -713,9 +713,17 @@ impl FrameOutcome {
     }
 }
 
-fn frame_outcome(_rendered_empty: bool, queued: bool) -> FrameOutcome {
-    // stub: today an empty frame is reported as a failed paint, so it is retried
-    if queued { FrameOutcome::Presented } else { FrameOutcome::Retry }
+fn frame_outcome(rendered_empty: bool, queued: bool) -> FrameOutcome {
+    if rendered_empty {
+        // Nothing changed: the buffer already on the scanout is exactly this
+        // frame. Nothing to flip and nothing to retry. Treating this as failure
+        // is what kept redraw_needed set and spun empty renders back to back.
+        FrameOutcome::NothingToDo
+    } else if queued {
+        FrameOutcome::Presented
+    } else {
+        FrameOutcome::Retry
+    }
 }
 
 // Parse a list of modifier strings ("logo", "ctrl", "alt", "shift") into a ModifiersState.
@@ -2475,38 +2483,39 @@ impl State {
         let mut stat_empty = false;
         let mut stat_ms = 0.0f64;
         let reschedule = match result {
-            Ok((_is_empty, _states)) => {
+            Ok((is_empty, _states)) => {
                 sent_callbacks = true;
-                // render_frame only prepares the buffer; queue_frame actually
-                // page-flips it to the scanout. Without it the screen stays black.
-                // Also queue when there are placed windows but damage tracker sees no damage
-                // (e.g. first window before client commits first buffer).
-                // Always queue: render_frame only prepares the buffer;
-                // queue_frame actually page-flips it. Gating on damage (is_empty)
-                // froze the screen when the last window died — cursor-only frames
-                // report is_empty (cursor elements are damage-ignored), so no
-                // flip happened and the scanout kept the killed window's buffer.
-                let queued = match surface.drm_output.queue_frame(None::<OutputPresentationFeedback>) {
-                    Ok(()) => {
-                        surface.frame_in_flight = true;
-                        true
-                    }
-                    Err(err) => {
-                        debug!("queue_frame: {err:?}");
-                        false
+                // render_frame only prepares a buffer; queue_frame is what
+                // page-flips it. An empty frame means the damage tracker saw no
+                // change — the buffer on screen already *is* this frame, so
+                // skipping the flip is correct. (Queueing anyway just returns
+                // EmptyFrame and used to leave redraw_needed stuck, spinning
+                // ~2000 empty renders/s until the pointer moved.)
+                let queued = if is_empty {
+                    false
+                } else {
+                    match surface.drm_output.queue_frame(None::<OutputPresentationFeedback>) {
+                        Ok(()) => {
+                            surface.frame_in_flight = true;
+                            true
+                        }
+                        Err(err) => {
+                            debug!("queue_frame: {err:?}");
+                            false
+                        }
                     }
                 };
+                let outcome = frame_outcome(is_empty, queued);
                 if queued {
                     stat_frame = true;
                     stat_ms = render_started.elapsed().as_secs_f64() * 1000.0;
-                } else {
+                    tracing::debug!("render: {} elements, queued (placed={})", elements.len(), placed.len());
+                } else if is_empty {
                     stat_empty = true;
                 }
-                if queued {
-                    tracing::debug!("render: {} elements, queued (placed={})", elements.len(), placed.len());
-                }
-                queued_ok = queued;
-                !queued
+                queued_ok = outcome.satisfied();
+                // Retry only on a real failure; an empty frame is already done.
+                !outcome.satisfied()
             }
             Err(err) => {
                 debug!("error during rendering: {err:#?}");
@@ -2557,7 +2566,12 @@ impl State {
                 .insert_source(
                     timer,
                     move |_, _, data: &mut State| {
-                        data.render(node, Some(crtc), now(data));
+                        if !data.redraw_needed {
+                            return TimeoutAction::Drop;
+                        }
+                        if data.render(node, Some(crtc), now(data)) {
+                            data.redraw_needed = false;
+                        }
                         TimeoutAction::Drop
                     },
                 )
