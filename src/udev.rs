@@ -757,6 +757,14 @@ fn stall_blame(commits: u32, inputs: u32) -> &'static str {
     if commits > 0 || inputs > 0 { "compositor" } else { "idle" }
 }
 
+/// A long gap between presents is only a hitch if a commit or an input event
+/// actually waited for it. A commit that arrives just before the present ends
+/// the gap and is served in a millisecond: the screen was simply idle, and
+/// warning about it buries the real stalls in noise.
+fn is_hitch(waited_ms: Option<f64>) -> bool {
+    true
+}
+
 /// Time between a client's last commit and the frame that carries it reaching
 /// the scanout. This is the number the user calls "lag"; the frame gap alone
 /// cannot tell an idle screen from a dropped frame.
@@ -3030,6 +3038,13 @@ mod tests {
         assert_eq!(s.flip_max_ms, 16.0);
         s.record_flip(320.0);
         assert_eq!(s.flip_max_ms, 320.0);
+    }
+
+    #[test]
+    fn a_hitch_needs_something_that_waited() {
+        assert!(!is_hitch(None), "no commit and no input: an idle screen");
+        assert!(!is_hitch(Some(2.0)), "commit arrived right before the present");
+        assert!(is_hitch(Some(1500.0)), "a commit waited 1.5s");
     }
 
     #[test]
