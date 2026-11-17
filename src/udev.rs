@@ -175,9 +175,34 @@ pub struct UdevData {
 struct RenderStats {
     frames: u64,
     ms: f64,
+    /// Slowest single frame in the window: the "random lag" moments live here,
+    /// not in the average.
+    max_ms: f64,
+    /// Frames that could not fit inside a 60Hz period.
+    slow: u64,
+    /// Time inside render_frame (element drawing / dmabuf import).
+    prep_ms: f64,
+    /// Time inside queue_frame (atomic commit / page-flip submission).
+    queue_ms: f64,
     deferred: u64,
     empty: u64,
     since: Option<Instant>,
+}
+
+/// A frame slower than this misses the next 60Hz vblank.
+const SLOW_FRAME_MS: f64 = 1000.0 / 60.0;
+
+impl RenderStats {
+    fn record_frame(&mut self, total_ms: f64, prep_ms: f64, queue_ms: f64) {
+        self.frames += 1;
+        self.ms += total_ms;
+        self.prep_ms += prep_ms;
+        self.queue_ms += queue_ms;
+        self.max_ms = self.max_ms.max(total_ms);
+        if total_ms >= SLOW_FRAME_MS {
+            self.slow += 1;
+        }
+    }
 }
 
 impl DmabufHandler for State {
@@ -672,10 +697,15 @@ fn render_stats_tick(u: &mut UdevData) {
     }
     let s = &mut u.stats;
     if s.frames > 0 || s.deferred > 0 || s.empty > 0 {
+        let n = s.frames.max(1) as f64;
         info!(
-            "render stats: {} frames, {:.1} avg ms, {} deferred, {} empty",
+            "render stats: {} frames, {:.1} avg ms (max {:.1}, {} slow), prep {:.1}, queue {:.1}, {} deferred, {} empty",
             s.frames,
-            s.ms / (s.frames.max(1) as f64),
+            s.ms / n,
+            s.max_ms,
+            s.slow,
+            s.prep_ms / n,
+            s.queue_ms / n,
             s.deferred,
             s.empty
         );
@@ -2475,6 +2505,7 @@ impl State {
             output.current_location(), output.current_transform(), output.current_scale(), output.current_mode());
         let _ = mode_size;
 
+        let prep_started = Instant::now();
         let result = surface
             .drm_output
             .render_frame(
@@ -2492,11 +2523,14 @@ impl State {
                 _ => unreachable!(),
             });
 
+        let prep_ms = prep_started.elapsed().as_secs_f64() * 1000.0;
+
         let mut sent_callbacks = false;
         let mut queued_ok = false;
         let mut stat_frame = false;
         let mut stat_empty = false;
         let mut stat_ms = 0.0f64;
+        let mut stat_queue_ms = 0.0f64;
         let reschedule = match result {
             Ok((_is_empty, _states)) => {
                 // Only tell clients "your frame is on screen" when a flip
@@ -2509,6 +2543,7 @@ impl State {
                 // change has no primary-plane damage yet still moves the cursor,
                 // and skipping the flip made the cursor vanish.
                 let mut empty_error = false;
+                let queue_started = Instant::now();
                 let queued = match surface.drm_output.queue_frame(None::<OutputPresentationFeedback>) {
                     Ok(()) => {
                         surface.frame_in_flight = true;
@@ -2525,6 +2560,7 @@ impl State {
                         false
                     }
                 };
+                stat_queue_ms = queue_started.elapsed().as_secs_f64() * 1000.0;
                 let outcome = frame_outcome(empty_error, queued);
                 if queued {
                     stat_frame = true;
@@ -2608,8 +2644,7 @@ impl State {
 
         if let Some(u) = self.udev.as_mut() {
             if stat_frame {
-                u.stats.frames += 1;
-                u.stats.ms += stat_ms;
+                u.stats.record_frame(stat_ms, prep_ms, stat_queue_ms);
             }
             if stat_empty {
                 u.stats.empty += 1;
@@ -2757,6 +2792,22 @@ mod tests {
     #[test]
     fn cursor_only_update_still_presents() {
         assert_eq!(frame_outcome(true, true), FrameOutcome::Presented);
+    }
+
+    /// The lag the user feels lives in the outliers, not the mean: track the
+    /// slowest frame and how often a frame misses the 16.7ms budget, plus where
+    /// the time goes (render vs DRM submission).
+    #[test]
+    fn render_stats_track_outliers_and_breakdown() {
+        let mut s = RenderStats::default();
+        s.record_frame(8.0, 5.0, 1.0);
+        s.record_frame(25.0, 15.0, 6.0);
+        assert_eq!(s.frames, 2);
+        assert_eq!(s.max_ms, 25.0);
+        assert_eq!(s.slow, 1, "25ms misses a 60Hz vblank");
+        assert_eq!(s.ms, 33.0);
+        assert_eq!(s.prep_ms, 20.0);
+        assert_eq!(s.queue_ms, 7.0);
     }
 
     #[test]
