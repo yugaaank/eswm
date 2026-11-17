@@ -1,35 +1,87 @@
-### Story e06s01: Popups (initial configure, rendering, input)
+# Story e06s01: Popups (initial configure, rendering, input)
 
-**type:** feat  
+**type:** feature  
 **risk:** P3  
-**context:** shell  
+**context:** input, xdg_popup protocol
 
-**Context:** Popups never get their initial configure, so they never map, and they
-aren't rendered or given input. That breaks menus, dropdowns, tooltips, Quickshell's
-PopupWindow and tray menus.
+## Context
+
+Tacit's shell uses fuzzel for menus/dropdowns, which creates xdg_popup surfaces. eswm currently handles xdg_toplevel but not xdg_popup. Without this, fuzzel menus don't appear or don't receive input.
+
+xdg_popup is a short-lived surface attached to a parent (xdg_toplevel or another popup). It requires:
+- Initial configure with position relative to parent
+- Grab management (keyboard/pointer grab for modal behavior)
+- Correct stacking (above parent, below overlays)
+- Dismiss on outside click or explicit close
 
 ## Steps
 
-1. Add PopupManager to State -> verify: `cargo build`
-2. new_popup: track_popup(PopupKind::Xdg(surface)) and constrain to parent's output -> verify: `cargo build`
-3. Commit handler: call popups.commit(surface); on initial commit, send_configure()
-   (anvil's shell/mod.rs ensure_initial_configure) -> verify: `cargo build`
-4. reposition_request: update positioner, constrain, send_repositioned(token) -> verify: `cargo build`
-5. grab: popups.grab_popup(...) with PopupKeyboardGrab and PopupPointerGrab -> verify: `cargo build`
-6. Render popups above parent; same for layer surfaces (get_popup) -> verify: `cargo build`
+### e06s01t1: Implement xdg_popup handler in State
 
-## Verification Script
+**RED**: Write a test that creates a popup via the xdg_shell handler and verifies `new_popup` is called with correct parent reference.
 
-1. Client creates xdg_popup; receives configure; after commit with buffer, appears in
-   render list.
-2. Right-click menu opens in GTK app and browser.
+**GREEN**: Implement `XdgPopupHandler` trait for `State`:
+- `new_popup`: Create popup wrapper, store parent relationship, initialize grab
+- `popup_destroyed`: Clean up wrapper, release grab
+- `grab`: Handle keyboard/pointer grab for modal popups
+- `reposition`: Update popup position when parent moves
 
-## Out of scope
+**verify**: `cargo test e06s01t1`
 
-- Popup keyboard grab nuances beyond anvil's pattern
+### e06s01t2: Wire popup initial configure
 
-## Risks
+**RED**: Write a test that verifies popup receives initial configure with correct position/size within 1 frame of creation.
 
-- Smithay 0.7 popup API may differ from anvil; check Smithay source.
+**GREEN**: In `new_popup`, send `xdg_popup.configure` with:
+- Position: parent position + popup's requested offset
+- Size: popup's requested size
+- Serial for acknowledgement
 
----
+**verify**: `cargo test e06s01t2`
+
+### e06s01t3: Render popup surfaces in correct stacking order
+
+**RED**: Write a test that verifies popup renders above its parent toplevel but below overlay layers.
+
+**GREEN**: In render loop (udev.rs), add popup surfaces to elements list:
+- After parent toplevel's surface
+- Before overlay/top layer surfaces
+- Use popup's geometry from LayerMap or direct positioning
+
+**verify**: `cargo test e06s01t3`
+
+### e06s01t4: Forward input to popup when grab active; dismiss on outside click
+
+**RED**: Write a test that verifies pointer/keyboard events route to popup during grab, and click outside dismisses popup.
+
+**GREEN**: 
+- Track active grab in State (popup serial + surface)
+- In pointer handler: if grab active and click outside popup geometry -> send `xdg_popup.dismissed`
+- In keyboard handler: if grab active, forward keys to popup surface
+- On dismiss: cleanup grab, destroy popup
+
+**verify**: `cargo test e06s01t4`
+
+### e06s01t5: Integration test: fuzzel menu works end-to-end
+
+**RED**: Write an integration test that spawns fuzzel (or mock popup client) and verifies: menu opens at cursor, accepts keyboard input, dismisses on Escape/outside click.
+
+**GREEN**: Use existing test fixture (UnixStream + insert_client) to simulate fuzzel creating popup. Verify full lifecycle.
+
+**verify**: `cargo test e06s01t5`
+
+## Acceptance Criteria
+
+- [ ] Popup created via xdg_shell gets initial configure with correct position/size
+- [ ] Popup renders visually above parent toplevel
+- [ ] Keyboard/pointer input routes to popup while grab active
+- [ ] Click outside popup geometry dismisses it
+- [ ] Popup destruction cleans up grab and parent reference
+- [ ] All 5 tasks pass; cargo test passes; preflight green
+
+## References
+
+- specs/epics/e06-input-focus/e06s01-tasks.yaml: task breakdown
+- notes/tacit-integration.md: fuzzel popup requirements
+- src/main.rs: XdgShellHandler, existing xdg_toplevel handling
+- Smithay xdg_shell::popup docs

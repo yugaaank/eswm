@@ -1,0 +1,26 @@
+story_id: e06s01
+title: Popups (initial configure, rendering, input)
+status: pending
+bcps: 5
+delta: ADDED
+tasks:
+  - id: e06s01t1
+    description: Implement xdg_popup handler in State — new_popup, popup_destroyed, grab, reposition
+    verify: cargo test e06s01t1
+    status: pending
+  - id: e06s01t2
+    description: Wire popup initial configure — send xdg_popup.configure with position/size from parent
+    verify: cargo test e06s01t2
+    status: pending
+  - id: e06s01t3
+    description: Render popup surfaces in correct stacking order — above parent, below overlays
+    verify: cargo test e06s01t3
+    status: pending
+  - id: e06s01t4
+    description: Forward pointer/keyboard input to popup when grab active; dismiss on outside click
+    verify: cargo test e06s01t4
+    status: pending
+  - id: e06s01t5
+    description: Integration test — fuzzel menu opens at correct position, accepts input, dismisses
+    verify: cargo test e06s01t5
+    status: pending
