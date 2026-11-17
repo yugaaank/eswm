@@ -186,8 +186,19 @@ struct RenderStats {
     queue_ms: f64,
     deferred: u64,
     empty: u64,
+    /// Client commits seen in the window: demand for frames.
+    commits: u64,
+    /// queue_frame failures that are not EmptyFrame (e.g. swapchain starvation).
+    queue_err: u64,
+    /// Longest gap between presented frames: a "whole screen hitch" shows up
+    /// here even when every individual frame is fast.
+    max_gap_ms: f64,
+    last_present: Option<Instant>,
     since: Option<Instant>,
 }
+
+/// A frame-to-frame gap longer than this is visible as a hitch on 60Hz.
+const HITCH_GAP_MS: f64 = 100.0;
 
 /// A frame slower than this misses the next 60Hz vblank.
 const SLOW_FRAME_MS: f64 = 1000.0 / 60.0;
@@ -202,6 +213,12 @@ impl RenderStats {
         if total_ms >= SLOW_FRAME_MS {
             self.slow += 1;
         }
+    }
+
+    /// Record a presented frame and return the gap since the previous one, if
+    /// any. The gap is what the user perceives, not the frame cost.
+    fn record_present(&mut self, _now: Instant) -> Option<f64> {
+        None
     }
 }
 
@@ -2560,6 +2577,7 @@ impl State {
         let mut stat_empty = false;
         let mut stat_ms = 0.0f64;
         let mut stat_queue_ms = 0.0f64;
+        let mut stat_queue_err = false;
         let reschedule = match result {
             Ok((_is_empty, _states)) => {
                 // Only tell clients "your frame is on screen" when a flip
@@ -2584,6 +2602,7 @@ impl State {
                         if matches!(err, FrameError::EmptyFrame) {
                             empty_error = true;
                         } else {
+                            stat_queue_err = true;
                             debug!("queue_frame: {err:?}");
                         }
                         false
@@ -2837,6 +2856,24 @@ mod tests {
         assert_eq!(s.ms, 33.0);
         assert_eq!(s.prep_ms, 20.0);
         assert_eq!(s.queue_ms, 7.0);
+    }
+
+    /// A "whole screen hitch" is a gap *between* frames, not a slow frame: every
+    /// individual render can be 1ms and the screen still freezes for 200ms while
+    /// the loop is blocked or a flip is refused. Track the gap, keep the worst.
+    #[test]
+    fn render_stats_measure_frame_gaps() {
+        let mut s = RenderStats::default();
+        let t0 = Instant::now();
+        assert_eq!(s.record_present(t0), None, "first frame has no gap");
+        let gap = s.record_present(t0 + Duration::from_millis(16)).unwrap();
+        assert!((gap - 16.0).abs() < 0.01);
+        assert!((s.max_gap_ms - 16.0).abs() < 0.01);
+        // A hitch shows up as a long gap; max keeps the worst one seen.
+        s.record_present(t0 + Duration::from_millis(216));
+        assert!((s.max_gap_ms - 200.0).abs() < 0.01);
+        s.record_present(t0 + Duration::from_millis(232));
+        assert!((s.max_gap_ms - 200.0).abs() < 0.01, "max never shrinks");
     }
 
     /// Clients allocate dmabufs on the GPU the feedback advertises. If that is
