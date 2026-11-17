@@ -180,6 +180,22 @@ Pending RCA. Do not implement yet.
 - [ ] Pointer motion and client commits remain smooth (no regression)
 - [ ] All existing tests pass
 
+## Round 5: the remaining "whole screen hitches"
+
+After the dmabuf fix every frame is 1.0–1.2 ms (`queue` 0.3–0.4 ms) with
+**zero** slow frames, yet the user still reports the whole screen hitching
+regularly. A hitch with fast frames is a gap *between* frames, so per-frame
+metrics cannot see it. Three candidates, each with its own counter:
+
+| Candidate | Counter | Reading |
+|---|---|---|
+| Loop blocked (event handling, client copy) | `gap max` | large gap, `commits` low, `queue err` 0 |
+| Flip refused (swapchain starvation) | `queue err` | > 0 alongside gaps |
+| Client stopped committing | `commits` | far below `frames` |
+
+`record_present` logs `frame gap N ms (hitch)` above 100 ms, giving each hitch
+a timestamp to correlate against wall clock.
+
 ## Resolution
 
 <!-- filled in by validate-fix -->
