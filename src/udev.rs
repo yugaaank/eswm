@@ -166,6 +166,18 @@ pub struct UdevData {
     start: Instant,
     pub quit: AtomicBool,
     pub paused: bool,
+    /// Rolling render stats, logged at INFO every ~5s so release runs can be
+    /// measured without debug logging inflating the frame time.
+    stats: RenderStats,
+}
+
+#[derive(Default)]
+struct RenderStats {
+    frames: u64,
+    ms: f64,
+    deferred: u64,
+    empty: u64,
+    since: Option<Instant>,
 }
 
 impl DmabufHandler for State {
@@ -275,6 +287,7 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         start: Instant::now(),
         quit: AtomicBool::new(false),
         paused: false,
+        stats: RenderStats::default(),
     };
 
     // Shared protocol/global/socket setup from main.rs.
@@ -647,6 +660,27 @@ fn render_timer_delay(redraw_needed: bool, _frame_duration: Duration) -> Option<
 // QueueState::WaitingForVBlank { redraw_needed }.
 fn should_render(redraw_needed: bool, frame_in_flight: bool) -> bool {
     redraw_needed && !frame_in_flight
+}
+
+/// Log render cost every ~5s at INFO so release runs are measurable without
+/// debug logging inflating the numbers (debug adds ~40 lines per frame).
+fn render_stats_tick(u: &mut UdevData) {
+    let now = Instant::now();
+    let since = *u.stats.since.get_or_insert(now);
+    if now.duration_since(since) < Duration::from_secs(5) {
+        return;
+    }
+    let s = &mut u.stats;
+    if s.frames > 0 || s.deferred > 0 || s.empty > 0 {
+        info!(
+            "render stats: {} frames, {:.1} avg ms, {} deferred, {} empty",
+            s.frames,
+            s.ms / (s.frames.max(1) as f64),
+            s.deferred,
+            s.empty
+        );
+    }
+    *s = RenderStats { since: Some(now), ..RenderStats::default() };
 }
 
 // (render_now, keep_pending): a deferred redraw must survive the in-flight
@@ -1823,8 +1857,13 @@ impl State {
             .unwrap_or(true);
         if !should_render(true, in_flight) {
             tracing::debug!("render deferred: frame in flight on {crtc:?}");
+            if let Some(u) = self.udev.as_mut() {
+                u.stats.deferred += 1;
+                render_stats_tick(u);
+            }
             return false;
         }
+        let render_started = Instant::now();
         // Real tiling (M5): placement logic is shared with the winit loop (placed_windows).
         let placed = crate::placed_windows(self);
         // e05s04t3: collect surfaces that will be drawn this frame, so frame
@@ -2408,6 +2447,9 @@ impl State {
 
         let mut sent_callbacks = false;
         let mut queued_ok = false;
+        let mut stat_frame = false;
+        let mut stat_empty = false;
+        let mut stat_ms = 0.0f64;
         let reschedule = match result {
             Ok((_is_empty, _states)) => {
                 sent_callbacks = true;
@@ -2430,6 +2472,12 @@ impl State {
                         false
                     }
                 };
+                if queued {
+                    stat_frame = true;
+                    stat_ms = render_started.elapsed().as_secs_f64() * 1000.0;
+                } else {
+                    stat_empty = true;
+                }
                 if queued {
                     tracing::debug!("render: {} elements, queued (placed={})", elements.len(), placed.len());
                 }
@@ -2490,6 +2538,17 @@ impl State {
                     },
                 )
                 .expect("failed to schedule damage test timer");
+        }
+
+        if let Some(u) = self.udev.as_mut() {
+            if stat_frame {
+                u.stats.frames += 1;
+                u.stats.ms += stat_ms;
+            }
+            if stat_empty {
+                u.stats.empty += 1;
+            }
+            render_stats_tick(u);
         }
 
         queued_ok
