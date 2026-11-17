@@ -634,8 +634,11 @@ fn now(state: &State) -> u32 {
     state.udev.as_ref().unwrap().start.elapsed().as_millis() as u32
 }
 
-fn render_timer_delay(redraw_needed: bool, frame_duration: Duration) -> Option<Duration> {
-    redraw_needed.then_some(Duration::from_secs_f64(frame_duration.as_secs_f64() * 0.6))
+fn render_timer_delay(redraw_needed: bool, _frame_duration: Duration) -> Option<Duration> {
+    // Paint as soon as the vblank frees the output. The old 0.6-frame client
+    // head start assumes a repaint under ~2ms; ours is ~15ms, so waiting meant
+    // missing every second vblank and visibly skipping frames.
+    redraw_needed.then_some(Duration::ZERO)
 }
 
 // One frame in flight per output. Rendering while a flip is pending just
