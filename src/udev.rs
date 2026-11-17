@@ -25,7 +25,7 @@ use smithay::{
             Fourcc, Modifier,
         },
         drm::{
-            compositor::FrameFlags,
+            compositor::{FrameError, FrameFlags},
             exporter::gbm::GbmFramebufferExporter,
             output::{DrmOutput, DrmOutputManager, DrmOutputRenderElements},
             CreateDrmNodeError, DrmAccessError, DrmDevice, DrmDeviceFd, DrmError, DrmEvent,
@@ -724,15 +724,18 @@ fn callback_min_gap_ms(refresh_mhz: u32) -> u32 {
     (1_000_000 / refresh_mhz).max(1)
 }
 
-fn frame_outcome(rendered_empty: bool, queued: bool) -> FrameOutcome {    if rendered_empty {
-        // Nothing changed: the buffer already on the scanout is exactly this
-        // frame. Nothing to flip and nothing to retry. Treating this as failure
-        // is what kept redraw_needed set and spun empty renders back to back.
-        // Think of it as the compositor saying "I'm already wearing that" —
-        // no need to ask again in 16ms.
-        FrameOutcome::NothingToDo
-    } else if queued {
+fn frame_outcome(empty_error: bool, queued: bool) -> FrameOutcome {
+    if queued {
+        // A flip happened. This includes cursor-plane-only updates: the damage
+        // tracker calls those "empty" but the cursor plane still needs the
+        // flip, and only queue_frame applies it.
         FrameOutcome::Presented
+    } else if empty_error {
+        // queue_frame said EmptyFrame: nothing changed, nothing to apply.
+        // Request satisfied. Retrying here is what spun empty frames back to
+        // back. Think of it as the compositor saying "I'm already wearing
+        // that" — no need to ask again in 16ms.
+        FrameOutcome::NothingToDo
     } else {
         FrameOutcome::Retry
     }
@@ -2495,33 +2498,34 @@ impl State {
         let mut stat_empty = false;
         let mut stat_ms = 0.0f64;
         let reschedule = match result {
-            Ok((is_empty, _states)) => {
+            Ok((_is_empty, _states)) => {
                 // Only tell clients "your frame is on screen" when a flip
-                // actually happened. An empty frame means the previously
-                // presented buffer already is that content; a callback here
-                // would invite a client to commit again for nothing.
+                // actually happened; a callback for unchanged content invites a
+                // pointless commit.
                 sent_callbacks = false;
-                // render_frame only prepares a buffer; queue_frame is what
-                // page-flips it. An empty frame means the damage tracker saw no
-                // change — the buffer on screen already *is* this frame, so
-                // skipping the flip is correct. (Queueing anyway just returns
-                // EmptyFrame and used to leave redraw_needed stuck, spinning
-                // ~2000 empty renders/s until the pointer moved.)
-                let queued = if is_empty {
-                    false
-                } else {
-                    match surface.drm_output.queue_frame(None::<OutputPresentationFeedback>) {
-                        Ok(()) => {
-                            surface.frame_in_flight = true;
-                            true
-                        }
-                        Err(err) => {
+                // queue_frame is what page-flips the prepared buffer, and it is
+                // also what applies cursor-plane-only updates. Never skip it on
+                // the strength of render_frame's is_empty hint: a pointer-only
+                // change has no primary-plane damage yet still moves the cursor,
+                // and skipping the flip made the cursor vanish.
+                let mut empty_error = false;
+                let queued = match surface.drm_output.queue_frame(None::<OutputPresentationFeedback>) {
+                    Ok(()) => {
+                        surface.frame_in_flight = true;
+                        true
+                    }
+                    Err(err) => {
+                        // EmptyFrame is benign: nothing changed, so there is
+                        // nothing to present. Any other error deserves a retry.
+                        if matches!(err, FrameError::EmptyFrame) {
+                            empty_error = true;
+                        } else {
                             debug!("queue_frame: {err:?}");
-                            false
                         }
+                        false
                     }
                 };
-                let outcome = frame_outcome(is_empty, queued);
+                let outcome = frame_outcome(empty_error, queued);
                 if queued {
                     stat_frame = true;
                     stat_ms = render_started.elapsed().as_secs_f64() * 1000.0;
@@ -2530,7 +2534,7 @@ impl State {
                     // ours is in flight (Hyprland sends callbacks here too).
                     sent_callbacks = true;
                     tracing::debug!("render: {} elements, queued (placed={})", elements.len(), placed.len());
-                } else if is_empty {
+                } else if empty_error {
                     stat_empty = true;
                 }
                 queued_ok = outcome.satisfied();
