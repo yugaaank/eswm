@@ -172,6 +172,10 @@ pub struct UdevData {
     /// When the most recent client commit arrived. Used to measure the wait the
     /// user feels between "key pressed" and "pixels on screen".
     pub last_commit_at: Option<Instant>,
+    /// Work that arrived since the last present. A long gap with these at zero
+    /// is an idle desktop, not a hitch.
+    pub commits_since_present: u32,
+    pub inputs_since_present: u32,
 }
 
 #[derive(Default)]
@@ -355,6 +359,8 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         paused: false,
         stats: RenderStats::default(),
         last_commit_at: None,
+        commits_since_present: 0,
+        inputs_since_present: 0,
     };
 
     // Shared protocol/global/socket setup from main.rs.
@@ -745,8 +751,8 @@ fn callback_due(now_ms: u32, last_ms: u32, min_gap_ms: u32) -> bool {
 /// A long gap between presents is only *our* hitch if something was actually
 /// waiting to be drawn. A commit or an input event during the gap proves the
 /// screen owed the user a frame; nothing at all means the desktop was idle.
-fn stall_blame(_commits: u32, _inputs: u32) -> &'static str {
-    "idle"
+fn stall_blame(commits: u32, inputs: u32) -> &'static str {
+    if commits > 0 || inputs > 0 { "compositor" } else { "idle" }
 }
 
 /// Time between a client's last commit and the frame that carries it reaching
@@ -1187,6 +1193,11 @@ fn switch_workspace(state: &mut State, ws: i32) {
 
 impl State {
     fn process_input_event<B: InputBackend>(&mut self, event: &InputEvent<B>) {
+        // Input arriving while nothing presents is a freeze the user feels; the
+        // count tells a real hitch apart from an idle screen.
+        if let Some(u) = self.udev.as_mut() {
+            u.inputs_since_present += 1;
+        }
         match event {
             InputEvent::Keyboard { event, .. } => {
                 let keyboard = self.seat.get_keyboard().unwrap();
@@ -2795,9 +2806,20 @@ impl State {
                 // while. Log the ugly ones so a reported hitch has a timestamp.
                 if let Some(gap) = u.stats.record_present(Instant::now()) {
                     if gap > HITCH_GAP_MS {
-                        warn!("frame gap {gap:.0} ms (hitch)");
+                        // Work waiting during the gap is proof the screen owed
+                        // the user a frame. None of it means we were idle.
+                        if stall_blame(u.commits_since_present, u.inputs_since_present) == "compositor" {
+                            warn!(
+                                "frame gap {gap:.0} ms (hitch) with {} commits, {} inputs waiting",
+                                u.commits_since_present, u.inputs_since_present
+                            );
+                        } else {
+                            debug!("frame gap {gap:.0} ms (idle, no work waiting)");
+                        }
                     }
                 }
+                u.commits_since_present = 0;
+                u.inputs_since_present = 0;
             }
             if stat_empty {
                 u.stats.empty += 1;
