@@ -140,6 +140,25 @@ Fixes (TDD: `682e692` test → `fc52ecf` fix, `3f417bb` test → `644a14c` fix):
 
 Pending: user re-test on the DRM session for the smoothness/idle-CPU criteria.
 
+### Correction after live test: never skip the flip
+
+The first cut of the empty-frame fix skipped `queue_frame` when `render_frame`
+reported `is_empty`. That broke presentation: a pointer-only change carries no
+primary-plane damage yet still updates the cursor plane, and `queue_frame` is
+the only thing that applies it. Live result: invisible cursor, dropped partial
+frames (flicker).
+
+`frame_outcome` now takes the *queue* result, not the damage hint:
+
+| `queue_frame` | outcome |
+|---|---|
+| `Ok` (including cursor-plane-only) | `Presented` |
+| `Err(EmptyFrame)` | `NothingToDo` — request satisfied, no retry |
+| any other `Err` | `Retry` |
+
+Tests: `21dbe5b` (`cursor_only_update_still_presents`) → `51260d3` fix.
+
+
 
 <!-- superseded candidate list retained for history -->
 
