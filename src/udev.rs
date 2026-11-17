@@ -694,6 +694,30 @@ fn next_redraw_state(redraw_needed: bool, frame_in_flight: bool) -> (bool, bool)
     }
 }
 
+/// What one render attempt achieved. Decides whether the pending redraw request
+/// is satisfied and whether a retry timer is worth arming.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FrameOutcome {
+    /// The frame reached the scanout.
+    Presented,
+    /// Nothing changed: the current scanout already shows this content.
+    NothingToDo,
+    /// A real failure (no free slot, device busy): retry on a timer.
+    Retry,
+}
+
+impl FrameOutcome {
+    /// True when the pending redraw request is done and must be cleared.
+    fn satisfied(self) -> bool {
+        !matches!(self, FrameOutcome::Retry)
+    }
+}
+
+fn frame_outcome(_rendered_empty: bool, queued: bool) -> FrameOutcome {
+    // stub: today an empty frame is reported as a failed paint, so it is retried
+    if queued { FrameOutcome::Presented } else { FrameOutcome::Retry }
+}
+
 // Parse a list of modifier strings ("logo", "ctrl", "alt", "shift") into a ModifiersState.
 fn parse_mods(mods: &[String]) -> ModifiersState {
     let mut m = ModifiersState::default();
@@ -2653,6 +2677,25 @@ mod tests {
         assert!(should_render(true, false), "pending redraw, free to paint");
         assert!(!should_render(true, true), "pending redraw but a flip is in flight");
         assert!(!should_render(false, true), "flip in flight, nothing pending");
+    }
+
+    /// BUG-2026-11-17T00:30:00 — an empty frame means "nothing changed", not
+    /// "paint failed". Treating it as failure kept redraw_needed set, so the
+    /// loop re-rendered empty frames back to back (317 in 5s, one every
+    /// 0.4ms) and each one armed another retry timer. That is the spin that
+    /// froze the desktop until the pointer moved.
+    #[test]
+    fn empty_frame_is_satisfied_not_retried() {
+        assert_eq!(frame_outcome(true, false), FrameOutcome::NothingToDo);
+        assert_eq!(frame_outcome(false, true), FrameOutcome::Presented);
+        assert_eq!(frame_outcome(false, false), FrameOutcome::Retry);
+    }
+
+    #[test]
+    fn satisfied_outcomes_consume_the_redraw_request() {
+        assert!(frame_outcome(true, false).satisfied(), "empty is done");
+        assert!(frame_outcome(false, true).satisfied(), "presented is done");
+        assert!(!frame_outcome(false, false).satisfied(), "real error retries");
     }
 
     #[test]
