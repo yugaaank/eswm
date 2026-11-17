@@ -1,8 +1,8 @@
-active_flow: e05-core-loop-rendering
+active_flow: e06-input-focus
 bug_cycle: {}
-active_story: e05s04
+active_story: e06s01
 handoff:
-  next_skill: verify-work
+  next_skill: develop-tdd
 decisions:
   - story: BUG-2026-11-17T00:30:00
     note: "Freeze/stutter fix closed via validate-fix: five stacked defects (unconditional re-render, empty frames treated as failed paints, dmabuf on the idle dGPU, callbacks on two clocks, and a dropped frame callback deadlocking the client). Final fix 02f57d2; diagnostics now blame wait time rather than the existence of work (be0f2bd); PointerMotionAbsolute now requests a redraw (6922ccc). Operator confirmed on the DRM session."
@@ -19,3 +19,6 @@ decisions:
   - story: e05s04
     note: "Redraw flag added to State; gated render loop on redraw_needed (set on commit, cursor motion, apply_layout). Frame callbacks sent only to drawn surfaces (not hidden workspaces). Borders and titlebar buttons use SolidColorRenderElement instead of per-frame MemoryRenderBuffer allocations. prune_dead_windows moved from apply_layout (every frame) to toplevel_destroyed (on window destruction). PixelShaderElement (t5) not available in Smithay 0.7; corner_radius defaults to 0 so no rounded corners drawn. All 56 tests pass."
     added: "redraw_needed flag; frame callback filtering; SolidColorRenderElement for borders/buttons; pruning moved to toplevel_destroyed"
+  - story: e06s01
+    note: "Popup support for xdg_popup protocol: XdgShellHandler::new_popup stores PopupData (surface, parent=None, positioner) and sends initial configure via surface.send_configure(). grab/reposition_request stubbed. placed_windows inserts popup surfaces at front of render list so they paint above toplevel windows. PopupData struct added with positioner_size() accessor (returns None — PositionerState has no size() method in smithay 0.7). Tests: xdg_popup_handler_compiles_and_tracks_popups, xdg_popup_initial_configure_has_geometry, placed_windows_includes_popups. All 74 tests pass. Preflight green."
+    added: "PopupData struct, popups Vec in State, XdgShellHandler::new_popup/grab/reposition_request, placed_windows popup insertion"
