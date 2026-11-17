@@ -714,9 +714,13 @@ impl FrameOutcome {
 }
 
 /// Minimum gap between frame callbacks for a refresh rate given in mHz.
-fn callback_min_gap_ms(_refresh_mhz: u32) -> u32 {
-    // stub: today a hard 33ms caps every callback-driven client at 30fps
-    33
+fn callback_min_gap_ms(refresh_mhz: u32) -> u32 {
+    // One refresh period. The old hard 33ms gave every callback-driven client
+    // exactly every second frame on a 60Hz panel — i.e. visible frame skipping.
+    if refresh_mhz == 0 {
+        return 16;
+    }
+    (1_000_000 / refresh_mhz).max(1)
 }
 
 fn frame_outcome(rendered_empty: bool, queued: bool) -> FrameOutcome {    if rendered_empty {
@@ -2565,7 +2569,11 @@ impl State {
         // frame callbacks were previously sent inline; the udev mutable borrow
         // (needed for queue_frame) is live here, so send after the match instead.
         if sent_callbacks {
-            self.frame_callbacks(time_ms, drawn_surfaces.iter().map(|s| *s));
+            let gap = output
+                .current_mode()
+                .map(|m| callback_min_gap_ms(m.refresh as u32))
+                .unwrap_or(16);
+            self.frame_callbacks(time_ms, gap, drawn_surfaces.iter().map(|s| *s));
         }
 
         if reschedule {
@@ -2605,16 +2613,17 @@ impl State {
         queued_ok
     }
 
-    // e05s04t3: send frame callbacks only to surfaces drawn this frame, with
-    // throttle (track last callback time per output).
-    fn frame_callbacks<'a, I>(&mut self, time: u32, surfaces: I)
+    // e05s04t3: send frame callbacks only to surfaces drawn this frame, paced by
+    // the panel refresh (see callback_min_gap_ms).
+    fn frame_callbacks<'a, I>(&mut self, time: u32, min_gap_ms: u32, surfaces: I)
     where
         I: Iterator<Item = &'a WlSurface>,
     {
-        // e05s04t3: throttle frame callbacks to ~30 fps max. A client in a
-        // commit/frame-callback loop can't spin the render loop at refresh rate.
+        // Duplicate-callback guard only; pacing comes from the panel period.
+        // The in-flight gate in render_surface is what stops a client from
+        // spinning the render loop faster than the output.
         let elapsed = time.saturating_sub(self.last_frame_callback_ms);
-        if elapsed < 33 {
+        if elapsed < min_gap_ms {
             return;
         }
         self.last_frame_callback_ms = time;
