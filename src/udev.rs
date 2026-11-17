@@ -724,6 +724,12 @@ fn now(state: &State) -> u32 {
     state.udev.as_ref().unwrap().start.elapsed().as_millis() as u32
 }
 
+/// Should a frame callback be sent this frame? Both times must come from the
+/// same clock; callers pass `now(self)` so they always do.
+fn callback_due(_now_ms: u32, _last_ms: u32, _min_gap_ms: u32) -> bool {
+    true
+}
+
 /// Time between queue_frame and the matching vblank.
 fn flip_latency_ms(queued_at: Instant, finished_at: Instant) -> f64 {
     finished_at.duration_since(queued_at).as_secs_f64() * 1000.0
@@ -2957,6 +2963,18 @@ mod tests {
         assert_eq!(s.flip_max_ms, 16.0);
         s.record_flip(320.0);
         assert_eq!(s.flip_max_ms, 320.0);
+    }
+
+    /// Frame callbacks are the client's metronome. A gate that compares two
+    /// different clocks goes quiet and every animated client stalls with it.
+    #[test]
+    fn callback_gate_needs_one_clock() {
+        // Normal pacing: 16ms period on a 60Hz output.
+        assert!(!callback_due(1000, 990, 16));
+        assert!(callback_due(1000, 984, 16));
+        // A timestamp that went backwards means mixed clocks (ms since boot vs
+        // ms since start). Never let that silence clients.
+        assert!(callback_due(1_000, 5_900_000, 16));
     }
 
     #[test]
