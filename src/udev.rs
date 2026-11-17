@@ -232,7 +232,9 @@ impl RenderStats {
         gap
     }
 
-    fn record_flip(&mut self, _ms: f64) {}
+    fn record_flip(&mut self, ms: f64) {
+        self.flip_max_ms = self.flip_max_ms.max(ms);
+    }
 }
 
 impl DmabufHandler for State {
@@ -671,8 +673,17 @@ if let Some(ref ipc) = ipc_opt {
 }
 state.ipc = ipc_opt;
 
+        // A hitch with fast frames means the loop sat on a pending redraw. Time
+        // the blocking dispatch: nothing pending = idle wait, work pending =
+        // we are the ones holding the frame hostage.
+        let pending_before = state.redraw_needed;
+        let dispatch_started = Instant::now();
         match event_loop.dispatch(None, &mut state) {
             Ok(()) => {
+                let blocked_ms = dispatch_started.elapsed().as_secs_f64() * 1000.0;
+                if loop_stall(pending_before, blocked_ms) {
+                    warn!("loop blocked {blocked_ms:.0} ms with redraw pending");
+                }
                 // client dispatch happens in the display-source callback; only
                 // flush our outgoing events here.
                 display_handle.flush_clients()?;
@@ -723,7 +734,7 @@ fn flip_latency_ms(queued_at: Instant, finished_at: Instant) -> f64 {
 const LOOP_STALL_MS: f64 = 30.0;
 
 fn loop_stall(pending: bool, blocked_ms: f64) -> bool {
-    false
+    pending && blocked_ms >= LOOP_STALL_MS
 }
 
 fn render_timer_delay(redraw_needed: bool, _frame_duration: Duration) -> Option<Duration> {
@@ -753,7 +764,7 @@ fn render_stats_tick(u: &mut UdevData) {
     if s.frames > 0 || s.deferred > 0 || s.empty > 0 {
         let n = s.frames.max(1) as f64;
         info!(
-            "render stats: {} frames, {:.1} avg ms (max {:.1}, {} slow), prep {:.1}, queue {:.1} ({} err), {} commits, gap max {:.0} ms, {} deferred, {} empty",
+            "render stats: {} frames, {:.1} avg ms (max {:.1}, {} slow), prep {:.1}, queue {:.1} ({} err), {} commits, gap max {:.0} ms, flip max {:.0} ms, {} deferred, {} empty",
             s.frames,
             s.ms / n,
             s.max_ms,
@@ -763,6 +774,7 @@ fn render_stats_tick(u: &mut UdevData) {
             s.queue_err,
             s.commits,
             s.max_gap_ms,
+            s.flip_max_ms,
             s.deferred,
             s.empty
         );
@@ -1711,6 +1723,7 @@ impl State {
             last_presentation_time: None,
             vblank_throttle_timer: None,
             frame_in_flight: false,
+            queued_at: None,
         };
 
         device.surfaces.insert(crtc, surface);
@@ -1806,10 +1819,13 @@ impl State {
             }
         };
 
-        let (last_presentation_time, timer_token) = if let Some(surface) = device_backend.surfaces.get_mut(&crtc) {
+        let (last_presentation_time, timer_token, flip_ms) = if let Some(surface) = device_backend.surfaces.get_mut(&crtc) {
             // The vblank landed: this crtc is free to accept another frame.
             surface.frame_in_flight = false;
-            (surface.last_presentation_time, surface.vblank_throttle_timer)
+            // If the flip itself was slow, no amount of render-loop tuning
+            // helps: the kernel/GPU is the one holding the picture hostage.
+            let flip_ms = surface.queued_at.take().map(|queued| flip_latency_ms(queued, Instant::now()));
+            (surface.last_presentation_time, surface.vblank_throttle_timer, flip_ms)
         } else {
             error!("trying to finish frame on non-existent crtc {crtc:?}");
             return;
@@ -1817,6 +1833,15 @@ impl State {
 
         if let Some(timer_token) = timer_token {
             self.handle.as_ref().unwrap().clone().remove(timer_token);
+        }
+
+        if let Some(ms) = flip_ms {
+            if let Some(u) = self.udev.as_mut() {
+                u.stats.record_flip(ms);
+            }
+            if ms > HITCH_GAP_MS {
+                warn!("flip took {ms:.0} ms (vblank late)");
+            }
         }
 
         let output = match self
@@ -2623,6 +2648,7 @@ impl State {
                 let queued = match surface.drm_output.queue_frame(None::<OutputPresentationFeedback>) {
                     Ok(()) => {
                         surface.frame_in_flight = true;
+                        surface.queued_at = Some(queue_started);
                         true
                     }
                     Err(err) => {
@@ -2783,6 +2809,9 @@ struct SurfaceData {
     vblank_throttle_timer: Option<RegistrationToken>,
     /// True between queue_frame and the matching vblank (see frame_finish).
     frame_in_flight: bool,
+    /// When queue_frame accepted the flip; the vblank latency is measured from
+    /// here so a slow flip can be blamed on the kernel rather than on us.
+    queued_at: Option<Instant>,
 }
 
 impl Drop for SurfaceData {
