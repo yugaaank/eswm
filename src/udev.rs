@@ -515,6 +515,7 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
                 // SAFETY: the display lives for the whole event loop; this is
                 // the same pattern anvil uses (NoIoDrop::get_mut is unsafe by design).
                 let display = unsafe { display.get_mut() };
+                tracing::debug!("wayland source fired");
                 if let Err(e) = display.dispatch_clients(data) {
                     tracing::warn!("failed to dispatch wayland clients: {e}");
                 }
@@ -1818,6 +1819,7 @@ impl State {
             .map(|s| s.frame_in_flight)
             .unwrap_or(true);
         if !should_render(true, in_flight) {
+            tracing::debug!("render deferred: frame in flight on {crtc:?}");
             return false;
         }
         // Real tiling (M5): placement logic is shared with the winit loop (placed_windows).
@@ -2574,8 +2576,11 @@ mod tests {
 
     #[test]
     fn active_frame_schedules_render_timer() {
+        // A paint must start right after vblank: a 0.6-frame head start for
+        // clients pushed our ~15ms software repaint past the next vblank, so
+        // every other frame was dropped (measured 26fps on a 60Hz panel).
         let delay = render_timer_delay(true, Duration::from_millis(16));
-        assert_eq!(delay, Some(Duration::from_secs_f64(16.0 * 0.6 / 1000.0)));
+        assert_eq!(delay, Some(Duration::ZERO));
     }
 
     // BUG-2026-11-17T00:30:00 — at most one frame in flight per output.

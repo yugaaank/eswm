@@ -349,6 +349,7 @@ impl CompositorHandler for State {
     fn commit(&mut self, surface: &WlSurface) {
         on_commit_buffer_handler::<Self>(surface);
         self.map_layer_surfaces();
+        tracing::debug!("commit -> redraw");
         self.redraw_needed = true;
     }
 }
