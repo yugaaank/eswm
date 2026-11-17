@@ -713,8 +713,13 @@ impl FrameOutcome {
     }
 }
 
-fn frame_outcome(rendered_empty: bool, queued: bool) -> FrameOutcome {
-    if rendered_empty {
+/// Minimum gap between frame callbacks for a refresh rate given in mHz.
+fn callback_min_gap_ms(_refresh_mhz: u32) -> u32 {
+    // stub: today a hard 33ms caps every callback-driven client at 30fps
+    33
+}
+
+fn frame_outcome(rendered_empty: bool, queued: bool) -> FrameOutcome {    if rendered_empty {
         // Nothing changed: the buffer already on the scanout is exactly this
         // frame. Nothing to flip and nothing to retry. Treating this as failure
         // is what kept redraw_needed set and spun empty renders back to back.
@@ -2484,7 +2489,11 @@ impl State {
         let mut stat_ms = 0.0f64;
         let reschedule = match result {
             Ok((is_empty, _states)) => {
-                sent_callbacks = true;
+                // Only tell clients "your frame is on screen" when a flip
+                // actually happened. An empty frame means the previously
+                // presented buffer already is that content; a callback here
+                // would invite a client to commit again for nothing.
+                sent_callbacks = false;
                 // render_frame only prepares a buffer; queue_frame is what
                 // page-flips it. An empty frame means the damage tracker saw no
                 // change — the buffer on screen already *is* this frame, so
@@ -2509,6 +2518,10 @@ impl State {
                 if queued {
                     stat_frame = true;
                     stat_ms = render_started.elapsed().as_secs_f64() * 1000.0;
+                    // The flip is queued, so the buffer is committed: this is
+                    // the moment the client may render its next frame while
+                    // ours is in flight (Hyprland sends callbacks here too).
+                    sent_callbacks = true;
                     tracing::debug!("render: {} elements, queued (placed={})", elements.len(), placed.len());
                 } else if is_empty {
                     stat_empty = true;
@@ -2710,6 +2723,16 @@ mod tests {
         assert!(frame_outcome(true, false).satisfied(), "empty is done");
         assert!(frame_outcome(false, true).satisfied(), "presented is done");
         assert!(!frame_outcome(false, false).satisfied(), "real error retries");
+    }
+
+    /// Frame callbacks must be paced by the panel, not by a hard 33ms: on a
+    /// 60Hz output that halves every callback-driven animation to 30fps, which
+    /// reads as skipped frames. 60001 mHz is a 16.6ms period.
+    #[test]
+    fn frame_callback_gap_follows_refresh_rate() {
+        assert_eq!(callback_min_gap_ms(60_001), 16);
+        assert_eq!(callback_min_gap_ms(143_981), 6);
+        assert_eq!(callback_min_gap_ms(0), 16, "unknown refresh falls back to 60Hz");
     }
 
     #[test]
