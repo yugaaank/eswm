@@ -740,12 +740,11 @@ fn now(state: &State) -> u32 {
     state.udev.as_ref().unwrap().start.elapsed().as_millis() as u32
 }
 
-/// Should a frame callback be sent this frame? Both times must come from the
-/// same clock; callers pass `now(self)` so they always do.
-fn callback_due(now_ms: u32, last_ms: u32, min_gap_ms: u32) -> bool {
-    // Backwards means two clocks got mixed again (or the clock wrapped). Trust
-    // "due" rather than freezing every animated client into silence.
-    now_ms < last_ms || now_ms - last_ms >= min_gap_ms
+/// Every present delivers the frame callbacks that are pending. Pacing comes
+/// from the output itself: only one flip is in flight, so presents cannot
+/// outrun the refresh and a throttle on top of that can only lose callbacks.
+fn callback_due(ms_since_last: u32, min_gap_ms: u32) -> bool {
+    ms_since_last >= min_gap_ms
 }
 
 /// A long gap between presents is only *our* hitch if something was actually
@@ -2848,7 +2847,8 @@ impl State {
         // Two clocks, two opinions on what time it is, and the client pays for
         // the argument. One clock from now on.
         let time = now(self);
-        if !callback_due(time, self.last_frame_callback_ms, min_gap_ms) {
+        let elapsed = time.saturating_sub(self.last_frame_callback_ms);
+        if !callback_due(elapsed, min_gap_ms) {
             return;
         }
         self.last_frame_callback_ms = time;
@@ -3050,16 +3050,19 @@ mod tests {
         assert!((ms - 25.0).abs() < 0.01);
     }
 
-    /// Frame callbacks are the client's metronome. A gate that compares two
-    /// different clocks goes quiet and every animated client stalls with it.
+    /// A frame callback is the client's permission to draw. Dropping one does
+    /// not delay the client, it *blocks* it: the client has committed its frame
+    /// and has nothing else to do, so it stops committing. With no commits
+    /// there is no damage, so no flip happens, so no callback is ever delivered
+    /// — a deadlock that freezes the whole screen (cursor plane included, since
+    /// the pointer only moves when a flip commits) until unrelated input forces
+    /// a present. Back-to-back presents must both deliver.
     #[test]
-    fn callback_gate_needs_one_clock() {
-        // Normal pacing: 16ms period on a 60Hz output.
-        assert!(!callback_due(1000, 990, 16));
-        assert!(callback_due(1000, 984, 16));
-        // A timestamp that went backwards means mixed clocks (ms since boot vs
-        // ms since start). Never let that silence clients.
-        assert!(callback_due(1_000, 5_900_000, 16));
+    fn every_present_delivers_pending_callbacks() {
+        assert!(callback_due(0, 16), "same-millisecond present still owes");
+        assert!(callback_due(5, 16), "early present still owes");
+        assert!(callback_due(16, 16));
+        assert!(callback_due(1_000, 16));
     }
 
     #[test]
