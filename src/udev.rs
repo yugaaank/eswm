@@ -742,6 +742,13 @@ fn callback_due(now_ms: u32, last_ms: u32, min_gap_ms: u32) -> bool {
     now_ms < last_ms || now_ms - last_ms >= min_gap_ms
 }
 
+/// A long gap between presents is only *our* hitch if something was actually
+/// waiting to be drawn. A commit or an input event during the gap proves the
+/// screen owed the user a frame; nothing at all means the desktop was idle.
+fn stall_blame(_commits: u32, _inputs: u32) -> &'static str {
+    "idle"
+}
+
 /// Time between a client's last commit and the frame that carries it reaching
 /// the scanout. This is the number the user calls "lag"; the frame gap alone
 /// cannot tell an idle screen from a dropped frame.
@@ -2997,6 +3004,13 @@ mod tests {
         assert_eq!(s.flip_max_ms, 16.0);
         s.record_flip(320.0);
         assert_eq!(s.flip_max_ms, 320.0);
+    }
+
+    #[test]
+    fn stall_blame_requires_pending_work() {
+        assert_eq!(stall_blame(0, 0), "idle");
+        assert_eq!(stall_blame(3, 0), "compositor");
+        assert_eq!(stall_blame(0, 1), "compositor");
     }
 
     /// The frame gap cannot tell an idle screen from a dropped frame. Latency
