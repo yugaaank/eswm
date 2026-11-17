@@ -2747,6 +2747,14 @@ mod tests {
         assert_eq!(callback_min_gap_ms(0), 16, "unknown refresh falls back to 60Hz");
     }
 
+    /// A cursor-plane-only update can still be worth flipping even when the
+    /// damage tracker reported nothing for the primary plane. `queue_frame`
+    /// succeeding is the authority here; the caller's `is_empty` hint is not.
+    #[test]
+    fn cursor_only_update_still_presents() {
+        assert_eq!(frame_outcome(true, true), FrameOutcome::Presented);
+    }
+
     #[test]
     fn deferred_redraw_keeps_pending_flag() {
         // (render_now, keep_pending)
