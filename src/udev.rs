@@ -754,6 +754,16 @@ fn callback_min_gap_ms(refresh_mhz: u32) -> u32 {
     (1_000_000 / refresh_mhz).max(1)
 }
 
+fn choose_dmabuf_gpu(
+    _scanout: Option<DrmNode>,
+    _hw_accel: &[DrmNode],
+    fallback: DrmNode,
+) -> DrmNode {
+    // stub: today the first GPU where bind_wl_display succeeds wins, which on a
+    // hybrid laptop is the dGPU that drives nothing
+    fallback
+}
+
 fn frame_outcome(empty_error: bool, queued: bool) -> FrameOutcome {
     if queued {
         // A flip happened. This includes cursor-plane-only updates: the damage
@@ -2808,6 +2818,21 @@ mod tests {
         assert_eq!(s.ms, 33.0);
         assert_eq!(s.prep_ms, 20.0);
         assert_eq!(s.queue_ms, 7.0);
+    }
+
+    /// Clients allocate dmabufs on the GPU the feedback advertises. If that is
+    /// not the GPU that scans out, every client frame crosses GPUs or lands in
+    /// the cpu-copy fallback — measured here as 6-15ms per frame in
+    /// render_frame while the DRM submit took 0.4ms.
+    #[test]
+    fn dmabuf_gpu_follows_the_scanout_gpu() {
+        let intel = DrmNode::from_dev_id(libc::makedev(226, 0) as u64).unwrap();
+        let nvidia = DrmNode::from_dev_id(libc::makedev(226, 1) as u64).unwrap();
+        // Hybrid laptop: Intel drives eDP-1, but primary_gpu() picked NVIDIA.
+        assert_eq!(choose_dmabuf_gpu(Some(intel), &[nvidia], nvidia), intel);
+        // No output up yet: first hw-accel GPU, then the primary as last resort.
+        assert_eq!(choose_dmabuf_gpu(None, &[nvidia], intel), nvidia);
+        assert_eq!(choose_dmabuf_gpu(None, &[], intel), intel);
     }
 
     #[test]
