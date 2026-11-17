@@ -1,12 +1,12 @@
-active_flow: fix_bug
-bug_cycle:
-  current_step: 3
-  completed_steps: [1, 2]
-  bug_id: BUG-2026-11-17T00:30:00-idle-stutter
+active_flow: e05-core-loop-rendering
+bug_cycle: {}
 active_story: e05s04
 handoff:
   next_skill: verify-work
 decisions:
+  - story: BUG-2026-11-17T00:30:00
+    note: "Freeze/stutter fix closed via validate-fix: five stacked defects (unconditional re-render, empty frames treated as failed paints, dmabuf on the idle dGPU, callbacks on two clocks, and a dropped frame callback deadlocking the client). Final fix 02f57d2; diagnostics now blame wait time rather than the existence of work (be0f2bd); PointerMotionAbsolute now requests a redraw (6922ccc). Operator confirmed on the DRM session."
+    added: "frame_in_flight gate, dmabuf on scanout GPU, callback delivery on every present, commit/input latency warnings"
   - story: e05s01
     note: "tests/globals.rs does not exist; tests live inline in src/main.rs. UnixStream pair + insert_client works, but libwayland-server's wl_event_loop_dispatch(timeout=0) does not poll the client fd in tests, so e05s01t5 tests wm.add_window directly instead of full wayland-client protocol."
     added: "tests::fixture_inserts_client_over_unixstream, tests::fixture_client_creates_toplevel_wm_sees_app_id"

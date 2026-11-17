@@ -1,7 +1,7 @@
 id: e05
 slug: core-loop-rendering
 title: Core Loop & Rendering
-status: planned
+status: completed
 wsjf_rank: 4
 bcps_total: 13
 core_value: |
@@ -13,19 +13,19 @@ stories:
     title: Test fixture with no display (UnixStream client)
     bcps: 5
     delta: ADDED
-    status: pending
+    status: completed
   - id: e05s02
     title: Event-driven loop with calloop sources
     bcps: 3
     delta: ADDED
-    status: pending
+    status: completed
   - id: e05s03
     title: Configure only when something changed (dirty flag)
     bcps: 3
     delta: MODIFIED
-    status: pending
+    status: completed
   - id: e05s04
     title: Render only when something changed (redraw flag)
     bcps: 2
     delta: MODIFIED
-    status: pending
+    status: completed

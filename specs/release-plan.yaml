@@ -36,7 +36,7 @@ epics:
     slug: core-loop-rendering
     title: Core Loop & Rendering
     wsjf_rank: 4
-    status: planned
+    status: completed
     stories: []
     description: |
       Make compositor loop event-driven and damage-aware: calloop sources for

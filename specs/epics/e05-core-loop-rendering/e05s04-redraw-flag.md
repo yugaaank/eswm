@@ -39,4 +39,21 @@ per frame. anvil's udev.rs shows how to do damage-aware rendering.
 - Missing a redraw_needed flag set point causes frozen UI; every state change must
   set it.
 
+## Post-completion (2026-11-17)
+
+The risk above materialised twice, and both times the UI froze rather than
+degraded:
+
+- **Step 3's throttle.** Holding frame callbacks back looks like pacing, but a
+  callback is the client's permission to draw — suppressing one blocks the
+  client, and a blocked client stops committing, so no damage, no flip and no
+  callback ever again. Delivery is now on every present; the one-frame-in-flight
+  gate is what actually paces the loop.
+- **A missing `redraw_needed` point.** `PointerMotionAbsolute` updated the
+  pointer location without setting the flag, so an absolute pointer could move in
+  state and never reach the panel.
+
+Both are recorded in `specs/bugs/BUG-2026-11-17T00-30-00-idle-stutter.md`. Every
+new state-change path needs a test or a comment saying which present it triggers.
+
 ---
