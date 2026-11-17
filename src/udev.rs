@@ -717,6 +717,7 @@ impl FrameOutcome {
 fn callback_min_gap_ms(refresh_mhz: u32) -> u32 {
     // One refresh period. The old hard 33ms gave every callback-driven client
     // exactly every second frame on a 60Hz panel — i.e. visible frame skipping.
+    // It was the compositor holding up a "no running by the pool" sign at 120Hz.
     if refresh_mhz == 0 {
         return 16;
     }
@@ -727,6 +728,8 @@ fn frame_outcome(rendered_empty: bool, queued: bool) -> FrameOutcome {    if ren
         // Nothing changed: the buffer already on the scanout is exactly this
         // frame. Nothing to flip and nothing to retry. Treating this as failure
         // is what kept redraw_needed set and spun empty renders back to back.
+        // Think of it as the compositor saying "I'm already wearing that" —
+        // no need to ask again in 16ms.
         FrameOutcome::NothingToDo
     } else if queued {
         FrameOutcome::Presented
