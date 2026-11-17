@@ -169,6 +169,9 @@ pub struct UdevData {
     /// Rolling render stats, logged at INFO every ~5s so release runs can be
     /// measured without debug logging inflating the frame time.
     pub stats: RenderStats,
+    /// When the most recent client commit arrived. Used to measure the wait the
+    /// user feels between "key pressed" and "pixels on screen".
+    pub last_commit_at: Option<Instant>,
 }
 
 #[derive(Default)]
@@ -238,7 +241,9 @@ impl RenderStats {
         self.flip_max_ms = self.flip_max_ms.max(ms);
     }
 
-    fn record_latency(&mut self, _ms: f64) {}
+    fn record_latency(&mut self, ms: f64) {
+        self.lat_max_ms = self.lat_max_ms.max(ms);
+    }
 }
 
 impl DmabufHandler for State {
@@ -349,6 +354,7 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         quit: AtomicBool::new(false),
         paused: false,
         stats: RenderStats::default(),
+        last_commit_at: None,
     };
 
     // Shared protocol/global/socket setup from main.rs.
@@ -783,7 +789,7 @@ fn render_stats_tick(u: &mut UdevData) {
     if s.frames > 0 || s.deferred > 0 || s.empty > 0 {
         let n = s.frames.max(1) as f64;
         info!(
-            "render stats: {} frames, {:.1} avg ms (max {:.1}, {} slow), prep {:.1}, queue {:.1} ({} err), {} commits, gap max {:.0} ms, flip max {:.0} ms, {} deferred, {} empty",
+            "render stats: {} frames, {:.1} avg ms (max {:.1}, {} slow), prep {:.1}, queue {:.1} ({} err), {} commits, late max {:.0} ms, gap max {:.0} ms, flip max {:.0} ms, {} deferred, {} empty",
             s.frames,
             s.ms / n,
             s.max_ms,
@@ -792,6 +798,7 @@ fn render_stats_tick(u: &mut UdevData) {
             s.queue_ms / n,
             s.queue_err,
             s.commits,
+            s.lat_max_ms,
             s.max_gap_ms,
             s.flip_max_ms,
             s.deferred,
@@ -2767,6 +2774,15 @@ impl State {
         if let Some(u) = self.udev.as_mut() {
             if stat_frame {
                 u.stats.record_frame(stat_ms, prep_ms, stat_queue_ms);
+                // How long did the user wait for this frame? Measured from the
+                // last client commit, so an idle screen cannot fake a hitch.
+                if let Some(committed) = u.last_commit_at {
+                    let ms = commit_latency_ms(committed, Instant::now());
+                    u.stats.record_latency(ms);
+                    if ms > HITCH_GAP_MS {
+                        warn!("presented {ms:.0} ms after commit (late)");
+                    }
+                }
                 // The gap, not the frame cost, is what a "whole screen hitch"
                 // is: everything was fast, then nothing was presented for a
                 // while. Log the ugly ones so a reported hitch has a timestamp.
