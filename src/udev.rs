@@ -195,6 +195,8 @@ pub struct RenderStats {
     max_gap_ms: f64,
     /// Slowest queue_frame -> vblank round trip.
     flip_max_ms: f64,
+    /// Slowest commit -> present latency, the user-visible number.
+    lat_max_ms: f64,
     last_present: Option<Instant>,
     since: Option<Instant>,
 }
@@ -235,6 +237,8 @@ impl RenderStats {
     fn record_flip(&mut self, ms: f64) {
         self.flip_max_ms = self.flip_max_ms.max(ms);
     }
+
+    fn record_latency(&mut self, _ms: f64) {}
 }
 
 impl DmabufHandler for State {
@@ -730,6 +734,13 @@ fn callback_due(now_ms: u32, last_ms: u32, min_gap_ms: u32) -> bool {
     // Backwards means two clocks got mixed again (or the clock wrapped). Trust
     // "due" rather than freezing every animated client into silence.
     now_ms < last_ms || now_ms - last_ms >= min_gap_ms
+}
+
+/// Time between a client's last commit and the frame that carries it reaching
+/// the scanout. This is the number the user calls "lag"; the frame gap alone
+/// cannot tell an idle screen from a dropped frame.
+fn commit_latency_ms(committed_at: Instant, presented_at: Instant) -> f64 {
+    presented_at.duration_since(committed_at).as_secs_f64() * 1000.0
 }
 
 /// Time between queue_frame and the matching vblank.
@@ -2970,6 +2981,21 @@ mod tests {
         assert_eq!(s.flip_max_ms, 16.0);
         s.record_flip(320.0);
         assert_eq!(s.flip_max_ms, 320.0);
+    }
+
+    /// The frame gap cannot tell an idle screen from a dropped frame. Latency
+    /// from the client's commit to the present can: it is the wait the user
+    /// experiences after pressing a key.
+    #[test]
+    fn render_stats_track_commit_to_present_latency() {
+        let mut s = RenderStats::default();
+        s.record_latency(12.0);
+        s.record_latency(400.0);
+        s.record_latency(8.0);
+        assert_eq!(s.lat_max_ms, 400.0);
+        let t0 = Instant::now();
+        let ms = commit_latency_ms(t0, t0 + Duration::from_millis(25));
+        assert!((ms - 25.0).abs() < 0.01);
     }
 
     /// Frame callbacks are the client's metronome. A gate that compares two
