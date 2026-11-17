@@ -726,8 +726,10 @@ fn now(state: &State) -> u32 {
 
 /// Should a frame callback be sent this frame? Both times must come from the
 /// same clock; callers pass `now(self)` so they always do.
-fn callback_due(_now_ms: u32, _last_ms: u32, _min_gap_ms: u32) -> bool {
-    true
+fn callback_due(now_ms: u32, last_ms: u32, min_gap_ms: u32) -> bool {
+    // Backwards means two clocks got mixed again (or the clock wrapped). Trust
+    // "due" rather than freezing every animated client into silence.
+    now_ms < last_ms || now_ms - last_ms >= min_gap_ms
 }
 
 /// Time between queue_frame and the matching vblank.
@@ -2725,7 +2727,7 @@ impl State {
                 .current_mode()
                 .map(|m| callback_min_gap_ms(m.refresh as u32))
                 .unwrap_or(16);
-            self.frame_callbacks(time_ms, gap, drawn_surfaces.iter().map(|s| *s));
+            self.frame_callbacks(gap, drawn_surfaces.iter().map(|s| *s));
         }
 
         if reschedule {
@@ -2777,15 +2779,20 @@ impl State {
 
     // e05s04t3: send frame callbacks only to surfaces drawn this frame, paced by
     // the panel refresh (see callback_min_gap_ms).
-    fn frame_callbacks<'a, I>(&mut self, time: u32, min_gap_ms: u32, surfaces: I)
+    fn frame_callbacks<'a, I>(&mut self, min_gap_ms: u32, surfaces: I)
     where
         I: Iterator<Item = &'a WlSurface>,
     {
-        // Duplicate-callback guard only; pacing comes from the panel period.
-        // The in-flight gate in render_surface is what stops a client from
-        // spinning the render loop faster than the output.
-        let elapsed = time.saturating_sub(self.last_frame_callback_ms);
-        if elapsed < min_gap_ms {
+        // One clock, always. render() takes its timestamp from the caller, and
+        // the two callers use different epochs: the event loop passes ms since
+        // start while the vblank timer passes the DRM event's ms since boot.
+        // Mixing them made the pacing gate read 0 and drop every callback, so
+        // animated clients went quiet and then burst. Derive the time here from
+        // the same clock that stamps last_frame_callback_ms.
+        // Two clocks, two opinions on what time it is, and the client pays for
+        // the argument. One clock from now on.
+        let time = now(self);
+        if !callback_due(time, self.last_frame_callback_ms, min_gap_ms) {
             return;
         }
         self.last_frame_callback_ms = time;
