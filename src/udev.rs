@@ -168,11 +168,11 @@ pub struct UdevData {
     pub paused: bool,
     /// Rolling render stats, logged at INFO every ~5s so release runs can be
     /// measured without debug logging inflating the frame time.
-    stats: RenderStats,
+    pub stats: RenderStats,
 }
 
 #[derive(Default)]
-struct RenderStats {
+pub struct RenderStats {
     frames: u64,
     ms: f64,
     /// Slowest single frame in the window: the "random lag" moments live here,
@@ -187,7 +187,7 @@ struct RenderStats {
     deferred: u64,
     empty: u64,
     /// Client commits seen in the window: demand for frames.
-    commits: u64,
+    pub commits: u64,
     /// queue_frame failures that are not EmptyFrame (e.g. swapchain starvation).
     queue_err: u64,
     /// Longest gap between presented frames: a "whole screen hitch" shows up
@@ -197,7 +197,9 @@ struct RenderStats {
     since: Option<Instant>,
 }
 
-/// A frame-to-frame gap longer than this is visible as a hitch on 60Hz.
+/// A frame-to-frame gap longer than this is visible as a hitch on 60Hz — the
+/// screen equivalent of a conversational pause that lasts long enough for
+/// everyone to notice.
 const HITCH_GAP_MS: f64 = 100.0;
 
 /// A frame slower than this misses the next 60Hz vblank.
@@ -217,8 +219,15 @@ impl RenderStats {
 
     /// Record a presented frame and return the gap since the previous one, if
     /// any. The gap is what the user perceives, not the frame cost.
-    fn record_present(&mut self, _now: Instant) -> Option<f64> {
-        None
+    fn record_present(&mut self, now: Instant) -> Option<f64> {
+        let gap = self
+            .last_present
+            .map(|last| now.duration_since(last).as_secs_f64() * 1000.0);
+        self.last_present = Some(now);
+        if let Some(gap) = gap {
+            self.max_gap_ms = self.max_gap_ms.max(gap);
+        }
+        gap
     }
 }
 
@@ -727,13 +736,16 @@ fn render_stats_tick(u: &mut UdevData) {
     if s.frames > 0 || s.deferred > 0 || s.empty > 0 {
         let n = s.frames.max(1) as f64;
         info!(
-            "render stats: {} frames, {:.1} avg ms (max {:.1}, {} slow), prep {:.1}, queue {:.1}, {} deferred, {} empty",
+            "render stats: {} frames, {:.1} avg ms (max {:.1}, {} slow), prep {:.1}, queue {:.1} ({} err), {} commits, gap max {:.0} ms, {} deferred, {} empty",
             s.frames,
             s.ms / n,
             s.max_ms,
             s.slow,
             s.prep_ms / n,
             s.queue_ms / n,
+            s.queue_err,
+            s.commits,
+            s.max_gap_ms,
             s.deferred,
             s.empty
         );
@@ -2693,9 +2705,20 @@ impl State {
         if let Some(u) = self.udev.as_mut() {
             if stat_frame {
                 u.stats.record_frame(stat_ms, prep_ms, stat_queue_ms);
+                // The gap, not the frame cost, is what a "whole screen hitch"
+                // is: everything was fast, then nothing was presented for a
+                // while. Log the ugly ones so a reported hitch has a timestamp.
+                if let Some(gap) = u.stats.record_present(Instant::now()) {
+                    if gap > HITCH_GAP_MS {
+                        warn!("frame gap {gap:.0} ms (hitch)");
+                    }
+                }
             }
             if stat_empty {
                 u.stats.empty += 1;
+            }
+            if stat_queue_err {
+                u.stats.queue_err += 1;
             }
             render_stats_tick(u);
         }

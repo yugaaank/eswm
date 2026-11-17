@@ -349,6 +349,11 @@ impl CompositorHandler for State {
     fn commit(&mut self, surface: &WlSurface) {
         on_commit_buffer_handler::<Self>(surface);
         self.map_layer_surfaces();
+        // Demand for frames. Compared against frames presented it separates
+        // "client stopped committing" from "we dropped or refused the frame".
+        if let Some(u) = self.udev.as_mut() {
+            u.stats.commits += 1;
+        }
         tracing::debug!("commit -> redraw");
         self.redraw_needed = true;
     }
