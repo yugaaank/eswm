@@ -42,7 +42,7 @@ use smithay::{
         calloop::LoopHandle,
         wayland_server::{protocol::wl_seat, Display, DisplayHandle, ListeningSocket},
     },
-    utils::{Point, Logical, Rectangle, Serial, Transform},
+    utils::{Point, Logical, Rectangle, Size, Serial, Transform},
     wayland::{
         output::{OutputHandler, OutputManagerState},
         buffer::BufferHandler,
@@ -127,21 +127,44 @@ impl XdgShellHandler for State {
     }
 
     fn new_popup(&mut self, surface: PopupSurface, positioner: PositionerState) {
-        // Store popup with positioner for later configure
+        // Resolve parent toplevel from popup's parent surface
+        let parent = surface.get_parent_surface()
+            .and_then(|parent_surface| {
+                self.xdg_shell_state.toplevel_surfaces().iter()
+                    .find(|t| t.alive() && t.wl_surface() == &parent_surface)
+                    .cloned()
+            });
+
+        let (w, h) = (positioner.rect_size.w, positioner.rect_size.h);
+        tracing::info!(
+            "xdg_popup new_popup: parent={:?} positioner_size=({},{})",
+            parent.is_some(), w, h
+        );
+
+        // Store popup with positioner and resolved parent
         self.popups.push(PopupData {
             surface: surface.clone(),
-            parent: None, // parent tracking requires wayland-client integration
+            parent,
             positioner,
         });
 
-        // Send initial configure
-        surface.send_configure();
+        // Send initial configure with positioner geometry so the client
+        // knows the popup's size and position relative to its parent.
+        tracing::info!("xdg_popup sending configure: size=({},{})", w, h);
+        surface.with_pending_state(|state| {
+            state.geometry = Rectangle::new((0, 0).into(), (w, h).into());
+        });
+        match surface.send_configure() {
+            Ok(serial) => tracing::info!("xdg_popup configure sent serial={serial:?}"),
+            Err(e) => tracing::warn!("xdg_popup configure failed: {e:?}"),
+        }
     }
 
     fn grab(&mut self, surface: PopupSurface, _seat: wl_seat::WlSeat, _serial: Serial) {
         // Set keyboard/pointer grab for modal popup behavior.
         // When a grab is active, all input goes to this popup.
         self.popup_grab = Some(surface.clone());
+        tracing::info!("xdg_popup grab set");
         // Set keyboard focus to the popup surface so key events route to it
         if let Some(keyboard) = self.seat.get_keyboard() {
             keyboard.set_focus(self, Some(surface.wl_surface().clone()), crate::udev::SCOUNTER.next_serial());
@@ -216,9 +239,30 @@ pub fn placed_windows(state: &mut State) -> Vec<(WlSurface, i32, i32, wm::Window
     }
     // Add popup surfaces at the front so they paint above toplevel windows.
     // Popups are modal and should render above their parent and all other windows.
+    // Position: parent's screen position + positioner offset (relative to parent).
+    let parent_pos: std::collections::HashMap<WlSurface, (i32, i32)> = placed
+        .iter()
+        .map(|(s, x, y, _, _, _)| (s.clone(), (*x, *y)))
+        .collect();
     for popup in &state.popups {
         let wl_surface = popup.surface.wl_surface().clone();
-        placed.insert(0, (wl_surface, 0, 0, u64::MAX, false, wm::Rect::default()));
+        let (w, h) = popup.positioner_size().unwrap_or_default();
+        let (px, py) = popup
+            .parent
+            .as_ref()
+            .and_then(|p| parent_pos.get(&p.wl_surface().clone()))
+            .copied()
+            .unwrap_or_default();
+        let ox = popup.positioner.offset.x;
+        let oy = popup.positioner.offset.y;
+        placed.insert(0, (
+            wl_surface,
+            px + ox,
+            py + oy,
+            u64::MAX,
+            false,
+            wm::Rect { x: 0, y: 0, width: w as u32, height: h as u32 },
+        ));
     }
     placed
 }
@@ -485,9 +529,8 @@ pub struct PopupData {
 
 impl PopupData {
     fn positioner_size(&self) -> Option<(i32, i32)> {
-        // PositionerState in smithay 0.7 stores size internally;
-        // expose it for test verification
-        None
+        // PositionerState.rect_size is public in smithay 0.7
+        Some((self.positioner.rect_size.w, self.positioner.rect_size.h))
     }
 }
 

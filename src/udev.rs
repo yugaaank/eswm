@@ -1333,7 +1333,20 @@ impl State {
                     // pointer_focus routing if the click landed on it.
                     if self.popup_grab.is_some() {
                         self.popup_grab.take();
-                        tracing::info!("popup dismissed on click outside (grab released)");
+                        tracing::info!("popup dismissed on click outside (grab released) at ({:.0},{:.0})", location.x, location.y);
+                        // Don't forward this click to any surface — the popup is gone.
+                        let pointer = self.seat.get_pointer().unwrap();
+                        pointer.button(
+                            self,
+                            &ButtonEvent {
+                                button,
+                                state: button_state.try_into().unwrap(),
+                                serial: SCOUNTER.next_serial(),
+                                time: event.time_msec(),
+                            },
+                        );
+                        pointer.frame(self);
+                        return;
                     }
                     // Super+button starts a move/resize drag on a floating window
                     if mods.logo && (button == BTN_LEFT || button == BTN_RIGHT) {
