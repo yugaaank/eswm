@@ -33,7 +33,9 @@ xdg_popup is a short-lived surface attached to a parent (xdg_toplevel or another
 **RED**: Write a test that verifies popup receives initial configure with correct position/size within 1 frame of creation.
 
 **GREEN**: In `new_popup`, send `xdg_popup.configure` with:
-- Position: parent position + popup's requested offset
+- Position: xdg_positioner rules resolved against the parent window geometry
+  (anchor_rect + anchor + gravity + offset, then flip/slide/resize against the
+  work area) — see BUG-2026-11-18T160939; offset alone is not the position
 - Size: popup's requested size
 - Serial for acknowledgement
 
@@ -78,6 +80,9 @@ xdg_popup is a short-lived surface attached to a parent (xdg_toplevel or another
 - [ ] Click outside popup geometry dismisses it
 - [ ] Popup destruction cleans up grab and parent reference
 - [ ] All 5 tasks pass; cargo test passes; preflight green
+
+Status (2026-11-18): implemented and unit-tested (positioner math, hit-testing);
+runtime acceptance still needs a TTY session — see BUG-2026-11-18T160939.
 
 ## References
 

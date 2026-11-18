@@ -1114,13 +1114,33 @@ const BORDER_PX: i32 = 2;
 /// hit for `Pointer.motion`, or None when over empty space.
 /// If a popup has an active grab, all pointer events go to the popup surface.
 fn pointer_focus(state: &mut State, pos: Point<f64, Logical>) -> Option<(wl_surface::WlSurface, Point<f64, Logical>)> {
-    // Popup grab takes priority: route all pointer input to the grabbed popup
-    if let Some(popup) = &state.popup_grab {
-        // Find the popup data to get its wl_surface
-        if let Some(popup_data) = state.popups.iter().find(|p| p.surface == *popup) {
+    // Popup grab takes priority: route pointer input to the grabbed popup only
+    // while the pointer is over it. Outside the popup we return None so the
+    // motion does not leak into the surface underneath (the button handler
+    // turns an outside press into a dismissal).
+    if let Some(popup) = state.popup_grab.clone() {
+        let rect = crate::popup_screen_rect(state, &popup)?;
+        if crate::rect_contains(rect, pos.x, pos.y) {
             return Some((
-                popup_data.surface.wl_surface().clone(),
-                Point::from((0.0, 0.0)),
+                popup.wl_surface().clone(),
+                // smithay computes surface-local coords as `event.location - loc`,
+                // so this must be the popup's screen origin.
+                Point::from((rect.x as f64, rect.y as f64)),
+            ));
+        }
+        return None;
+    }
+
+    // Non-grabbed popups (tooltips, some menus) still need pointer input:
+    // hit-test them topmost-first by their resolved screen rect.
+    for popup in state.popups.iter().rev() {
+        if !popup.surface.alive() || !popup.mapped {
+            continue;
+        }
+        if crate::rect_contains(popup.screen_rect, pos.x, pos.y) {
+            return Some((
+                popup.surface.wl_surface().clone(),
+                Point::from((popup.screen_rect.x as f64, popup.screen_rect.y as f64)),
             ));
         }
     }
@@ -1327,13 +1347,47 @@ impl State {
                     pointer.frame(self);
 
                     let mods = self.udev.as_ref().unwrap().last_mods;
-                    // Popup grab active: dismiss on click outside, forward to popup on click inside.
-                    // Since we don't track popup screen geometry yet, dismiss on any press
-                    // while grab is active; the popup client receives the button event via
-                    // pointer_focus routing if the click landed on it.
-                    if self.popup_grab.is_some() {
-                        self.popup_grab.take();
-                        tracing::info!("popup dismissed on click outside (grab released) at ({:.0},{:.0})", location.x, location.y);
+                    // Popup grab active: clicks inside the popup belong to it, a
+                    // click anywhere else dismisses it (xdg-shell popup grab). This
+                    // port follows Hyprland's seat-grab behaviour: outside press ->
+                    // popup_done + focus back to the owning toplevel.
+                    if let Some(popup) = self.popup_grab.clone() {
+                        let inside = crate::popup_screen_rect(self, &popup)
+                            .map(|rect| crate::rect_contains(rect, location.x, location.y))
+                            .unwrap_or(false);
+                        if inside {
+                            // motion() above already targeted the popup surface, so
+                            // the button is delivered to the client with popup-local
+                            // coordinates.
+                            let pointer = self.seat.get_pointer().unwrap();
+                            pointer.button(
+                                self,
+                                &ButtonEvent {
+                                    button,
+                                    state: button_state.try_into().unwrap(),
+                                    serial: SCOUNTER.next_serial(),
+                                    time: event.time_msec(),
+                                },
+                            );
+                            pointer.frame(self);
+                            return;
+                        }
+                        // Outside: dismiss. popup_done tells the client its menu was
+                        // closed; without it GTK keeps waiting for input that never
+                        // comes (and the whole app looks like it froze — fun times).
+                        // Then give keyboard focus back to the toplevel.
+                        if popup.alive() {
+                            popup.send_popup_done();
+                        }
+                        self.popup_grab = None;
+                        let owner = crate::popup_owner_window(self, &popup);
+                        keyboard_focus_set(self, owner.or(self.wm.focused_id()));
+                        self.redraw_needed = true;
+                        tracing::info!(
+                            "popup dismissed on click outside at ({:.0},{:.0}) owner={owner:?}",
+                            location.x,
+                            location.y
+                        );
                         // Don't forward this click to any surface — the popup is gone.
                         let pointer = self.seat.get_pointer().unwrap();
                         pointer.button(
@@ -2284,6 +2338,10 @@ impl State {
         if border_size > 0 || titlebar_height > 0 {
             let bp = border_size as f64;
             for (ws, x, y, id, focused, rect) in &placed {
+                // Popups are not wm windows: no server-side border or titlebar.
+                // They render as a plain surface tree at the positioner-resolved
+                // origin (GTK draws its own menu frame and shadow).
+                let is_popup = *id == crate::POPUP_FAKE_ID;
                 let mode = self.wm.window(*id).map(|w| w.mode).unwrap_or(wm::WindowMode::Tiled);
                 // Smithay draws input[0] last (on top), so the focused window
                 // (first in `placed`) paints on top overall. Within each window
@@ -2300,7 +2358,7 @@ impl State {
                 // per-frame MemoryRenderBuffer allocations. One element per edge,
                 // re-created when color/size changes (no persistent cache needed
                 // because SolidColorRenderElement is cheap to construct).
-                if !matches!(mode, wm::WindowMode::Fullscreen) && border_size > 0 {
+                if !is_popup && !matches!(mode, wm::WindowMode::Fullscreen) && border_size > 0 {
                     let color = if *focused { &color_focused } else { &color_unfocused };
                     let color32f = Color32F::new(
                         color[0] as f32 / 255.0,
@@ -2359,7 +2417,7 @@ impl State {
                 // Borders pushed first -> index 0 -> drawn last -> on top (capture titlebar edges).
                 elements.extend(border_elements);
                 // Titlebar strip (middle layer: on top of surface, under borders).
-                if titlebar_height > 0 && !matches!(mode, wm::WindowMode::Fullscreen) {
+                if !is_popup && titlebar_height > 0 && !matches!(mode, wm::WindowMode::Fullscreen) {
                     let tb_w = rect.width as u32;
                     let tb_h = titlebar_height;
                     let tb_px = if *focused { titlebar_color_focused } else { titlebar_color_unfocused };

@@ -28,7 +28,7 @@ use smithay::{
                 Kind, RenderElementStates,
             },
             gles::GlesRenderer,
-            utils::{draw_render_elements, on_commit_buffer_handler},
+            utils::{draw_render_elements, on_commit_buffer_handler, with_renderer_surface_state},
             Color32F, Frame, Renderer,
         },
     },
@@ -127,37 +127,69 @@ impl XdgShellHandler for State {
     }
 
     fn new_popup(&mut self, surface: PopupSurface, positioner: PositionerState) {
-        // Resolve parent toplevel from popup's parent surface
-        let parent = surface.get_parent_surface()
-            .and_then(|parent_surface| {
-                self.xdg_shell_state.toplevel_surfaces().iter()
-                    .find(|t| t.alive() && t.wl_surface() == &parent_surface)
-                    .cloned()
-            });
+        // Immediate parent: a toplevel for a menu, another popup for a submenu.
+        let parent_surface = surface.get_parent_surface();
+        // Owner toplevel drives keyboard-focus restore when the menu closes
+        // (Hyprland CPopup::getT1Owner follows the popup chain for the same reason).
+        let parent = parent_surface.as_ref().and_then(|ps| {
+            self.xdg_shell_state
+                .toplevel_surfaces()
+                .iter()
+                .find(|t| t.alive() && t.wl_surface() == ps)
+                .cloned()
+                .or_else(|| {
+                    self.popups
+                        .iter()
+                        .find(|p| p.surface.wl_surface() == ps)
+                        .and_then(|p| p.parent.clone())
+                })
+        });
 
-        let (w, h) = (positioner.rect_size.w, positioner.rect_size.h);
+        let parent_coord = self.popup_parent_coord(parent_surface.as_ref());
+        let available = popup_constraint(self);
+        let geometry = popup_geometry(&positioner, parent_coord, available);
+        let screen_rect = wm::Rect {
+            x: parent_coord.0 + geometry.x,
+            y: parent_coord.1 + geometry.y,
+            ..geometry
+        };
+
         tracing::info!(
-            "xdg_popup new_popup: parent={:?} positioner_size=({},{})",
-            parent.is_some(), w, h
+            "xdg_popup new_popup: parent={:?} parent_coord={:?} anchor_rect={:?} anchor={:?} gravity={:?} offset={:?} rel={:?} screen={:?}",
+            parent.is_some(),
+            parent_coord,
+            (positioner.anchor_rect.loc.x, positioner.anchor_rect.loc.y, positioner.anchor_rect.size.w, positioner.anchor_rect.size.h),
+            positioner.anchor_edges,
+            positioner.gravity,
+            (positioner.offset.x, positioner.offset.y),
+            (geometry.x, geometry.y, geometry.width, geometry.height),
+            (screen_rect.x, screen_rect.y, screen_rect.width, screen_rect.height),
         );
 
         // Store popup with positioner and resolved parent
         self.popups.push(PopupData {
             surface: surface.clone(),
             parent,
+            parent_surface,
             positioner,
+            geometry,
+            screen_rect,
+            mapped: false,
         });
 
-        // Send initial configure with positioner geometry so the client
-        // knows the popup's size and position relative to its parent.
-        tracing::info!("xdg_popup sending configure: size=({},{})", w, h);
+        // Send the initial configure with the positioned geometry, exactly like
+        // Hyprland's applyPositioning -> configure at popup creation.
         surface.with_pending_state(|state| {
-            state.geometry = Rectangle::new((0, 0).into(), (w, h).into());
+            state.geometry = Rectangle::new(
+                (geometry.x, geometry.y).into(),
+                (geometry.width as i32, geometry.height as i32).into(),
+            );
         });
         match surface.send_configure() {
             Ok(serial) => tracing::info!("xdg_popup configure sent serial={serial:?}"),
             Err(e) => tracing::warn!("xdg_popup configure failed: {e:?}"),
         }
+        self.redraw_needed = true;
     }
 
     fn grab(&mut self, surface: PopupSurface, _seat: wl_seat::WlSeat, _serial: Serial) {
@@ -169,12 +201,65 @@ impl XdgShellHandler for State {
         if let Some(keyboard) = self.seat.get_keyboard() {
             keyboard.set_focus(self, Some(surface.wl_surface().clone()), crate::udev::SCOUNTER.next_serial());
         }
+        self.redraw_needed = true;
     }
 
-    fn reposition_request(&mut self, surface: PopupSurface, positioner: PositionerState, _token: u32) {
+    fn popup_destroyed(&mut self, surface: PopupSurface) {
+        // Client closed the menu itself (Escape, item activated, unmap). Without
+        // this cleanup the popup stayed in the list and the grab/focus could
+        // stay pointed at a dead surface (Hyprland: onPopupDestroy + setGrab(None)).
+        let owner = self
+            .popups
+            .iter()
+            .find(|p| p.surface == surface)
+            .and_then(|p| p.parent.as_ref())
+            .and_then(|t| window_id_of(t.wl_surface()));
+        let was_grab = self.popup_grab.as_ref().map(|g| *g == surface).unwrap_or(false);
+
+        self.popups.retain(|p| p.surface != surface);
+        if was_grab {
+            self.popup_grab = None;
+            crate::udev::keyboard_focus_set(self, owner.or(self.wm.focused_id()));
+        }
+        self.redraw_needed = true;
+        tracing::info!("xdg_popup destroyed: grab_released={was_grab} owner={owner:?}");
+    }
+
+    fn reposition_request(&mut self, surface: PopupSurface, positioner: PositionerState, token: u32) {
+        let parent_surface = self
+            .popups
+            .iter()
+            .find(|p| p.surface == surface)
+            .and_then(|p| p.parent_surface.clone());
+        let parent_coord = self.popup_parent_coord(parent_surface.as_ref());
+        let available = popup_constraint(self);
+        let geometry = popup_geometry(&positioner, parent_coord, available);
+        let screen_rect = wm::Rect {
+            x: parent_coord.0 + geometry.x,
+            y: parent_coord.1 + geometry.y,
+            ..geometry
+        };
+
         if let Some(popup) = self.popups.iter_mut().find(|p| p.surface == surface) {
             popup.positioner = positioner;
+            popup.geometry = geometry;
+            popup.screen_rect = screen_rect;
         }
+
+        surface.with_pending_state(|state| {
+            state.geometry = Rectangle::new(
+                (geometry.x, geometry.y).into(),
+                (geometry.width as i32, geometry.height as i32).into(),
+            );
+        });
+        // The protocol requires an ack for the client's token or the client waits
+        // forever (Hyprland CXDGPopupResource::repositioned).
+        surface.send_repositioned(token);
+        self.redraw_needed = true;
+        tracing::info!(
+            "xdg_popup repositioned: token={token} rel=({},{} {}x{})",
+            geometry.x, geometry.y, geometry.width, geometry.height
+        );
     }
 }
 
@@ -239,32 +324,127 @@ pub fn placed_windows(state: &mut State) -> Vec<(WlSurface, i32, i32, wm::Window
     }
     // Add popup surfaces at the front so they paint above toplevel windows.
     // Popups are modal and should render above their parent and all other windows.
-    // Position: parent's screen position + positioner offset (relative to parent).
-    let parent_pos: std::collections::HashMap<WlSurface, (i32, i32)> = placed
+    // Position: parent window-geometry origin + positioner geometry (anchor,
+    // gravity, offset, constraints). Recomputed every frame so a menu follows
+    // its parent window when it moves.
+    let mut parent_pos: std::collections::HashMap<WlSurface, (i32, i32)> = placed
         .iter()
-        .map(|(s, x, y, _, _, _)| (s.clone(), (*x, *y)))
+        .map(|(s, _, _, _, _, rect)| (s.clone(), (rect.x, rect.y)))
         .collect();
-    for popup in &state.popups {
-        let wl_surface = popup.surface.wl_surface().clone();
-        let (w, h) = popup.positioner_size().unwrap_or_default();
-        let (px, py) = popup
-            .parent
+    // Bar menus are popups parented to a layer surface, not a toplevel. Seed
+    // their origin too or the menu lands in the top-left corner of the output.
+    if let Some(output) = state.primary_output.clone() {
+        let map = layer_map_for_output(&output);
+        for layer in map.layers() {
+            if let Some(geom) = map.layer_geometry(layer) {
+                parent_pos.insert(layer.wl_surface().clone(), (geom.loc.x, geom.loc.y));
+            }
+        }
+    }
+    let available = popup_constraint(state);
+    let mut popup_positions: std::collections::HashMap<WlSurface, (i32, i32)> =
+        std::collections::HashMap::new();
+    for i in 0..state.popups.len() {
+        if !state.popups[i].surface.alive() {
+            continue;
+        }
+        let surface = state.popups[i].surface.wl_surface().clone();
+        let parent_surface = state.popups[i].parent_surface.clone();
+        let parent_coord = parent_surface
             .as_ref()
-            .and_then(|p| parent_pos.get(&p.wl_surface().clone()))
+            .and_then(|p| parent_pos.get(p).or_else(|| popup_positions.get(p)))
             .copied()
             .unwrap_or_default();
-        let ox = popup.positioner.offset.x;
-        let oy = popup.positioner.offset.y;
+        let positioner = state.popups[i].positioner;
+        let geometry = popup_geometry(&positioner, parent_coord, available);
+        let screen_rect = wm::Rect {
+            x: parent_coord.0 + geometry.x,
+            y: parent_coord.1 + geometry.y,
+            ..geometry
+        };
+        state.popups[i].geometry = geometry;
+        state.popups[i].screen_rect = screen_rect;
+        popup_positions.insert(surface.clone(), (screen_rect.x, screen_rect.y));
         placed.insert(0, (
-            wl_surface,
-            px + ox,
-            py + oy,
-            u64::MAX,
+            surface,
+            screen_rect.x,
+            screen_rect.y,
+            POPUP_FAKE_ID,
             false,
-            wm::Rect { x: 0, y: 0, width: w as u32, height: h as u32 },
+            screen_rect,
         ));
     }
     placed
+}
+
+/// Sentinel WindowId for popup entries in the render list: popups are not wm
+/// windows and must not get server-side borders or titlebars.
+pub const POPUP_FAKE_ID: wm::WindowId = u64::MAX;
+
+/// Rect the popup is constrained to: the tiling work area (excludes bars), or
+/// the output geometry when no work area is known yet.
+fn popup_constraint(state: &State) -> wm::Rect {
+    state
+        .wm
+        .work_area
+        .or_else(|| {
+            state
+                .wm
+                .primary_output_id()
+                .and_then(|id| state.wm.output(id))
+                .map(|output| output.geometry)
+        })
+        .unwrap_or(wm::Rect { x: 0, y: 0, width: 1920, height: 1080 })
+}
+
+/// Resolve the xdg_positioner rules to a rect relative to the parent's window
+/// geometry origin, constrained to `available` (global screen coordinates).
+///
+/// Smithay implements the same anchor/gravity/offset + flip/slide/resize rules
+/// that Hyprland hand-rolls in `CXDGPositionerRules::getPosition`, so the
+/// positioner state is the single source of truth here instead of just
+/// `offset` (which is zero for a typical GTK context menu).
+pub fn popup_geometry(positioner: &PositionerState, parent: (i32, i32), available: wm::Rect) -> wm::Rect {
+    // The target rect must be in the same coordinate space as the returned
+    // geometry, i.e. relative to the parent window geometry.
+    let target = Rectangle::new(
+        (available.x - parent.0, available.y - parent.1).into(),
+        (available.width.max(1) as i32, available.height.max(1) as i32).into(),
+    );
+    let geo = positioner.get_unconstrained_geometry(target);
+    wm::Rect {
+        x: geo.loc.x,
+        y: geo.loc.y,
+        width: geo.size.w.max(1) as u32,
+        height: geo.size.h.max(1) as u32,
+    }
+}
+
+/// True when the logical point lies inside `rect`.
+pub fn rect_contains(rect: wm::Rect, x: f64, y: f64) -> bool {
+    x >= rect.x as f64
+        && y >= rect.y as f64
+        && x < (rect.x + rect.width as i32) as f64
+        && y < (rect.y + rect.height as i32) as f64
+}
+
+/// Screen rect of a tracked popup, used for pointer hit-testing.
+pub fn popup_screen_rect(state: &State, popup: &PopupSurface) -> Option<wm::Rect> {
+    state
+        .popups
+        .iter()
+        .find(|p| p.surface == *popup)
+        .map(|p| p.screen_rect)
+}
+
+/// Toplevel that owns a popup; keyboard focus returns here on dismissal.
+pub fn popup_owner_window(state: &State, popup: &PopupSurface) -> Option<wm::WindowId> {
+    state
+        .popups
+        .iter()
+        .find(|p| p.surface == *popup)
+        .and_then(|p| p.parent.as_ref())
+        .and_then(|t| window_id_of(t.wl_surface()))
 }
 
 fn toplevel_for_window(state: &State, id: wm::WindowId) -> Option<ToplevelSurface> {
@@ -345,6 +525,37 @@ impl XdgDecorationHandler for State {
 }
 
 impl State {
+    /// Global origin of the parent surface a popup positions against: the
+    /// toplevel's window-geometry origin, or another popup's own origin.
+    fn popup_parent_coord(&self, parent_surface: Option<&WlSurface>) -> (i32, i32) {
+        let Some(parent_surface) = parent_surface else { return (0, 0) };
+        if let Some(id) = window_id_of(parent_surface) {
+            if let Some(window) = self.wm.window(id) {
+                return (window.target_rect.x, window.target_rect.y);
+            }
+        }
+        if let Some(parent) = self
+            .popups
+            .iter()
+            .find(|p| p.surface.wl_surface() == parent_surface)
+        {
+            return (parent.screen_rect.x, parent.screen_rect.y);
+        }
+        // Layer-surface parent (bar menu): use its committed layer geometry.
+        if let Some(output) = self.primary_output.clone() {
+            let map = layer_map_for_output(&output);
+            if let Some(layer) = map
+                .layers()
+                .find(|l| l.wl_surface() == parent_surface)
+            {
+                if let Some(geom) = map.layer_geometry(layer) {
+                    return (geom.loc.x, geom.loc.y);
+                }
+            }
+        }
+        (0, 0)
+    }
+
     /// Map unmapped layer surfaces into the primary output's LayerMap
     /// (sends proper anchored configures), re-arrange, and hand keyboard focus
     /// to a layer surface that requests exclusive keyboard interactivity
@@ -430,6 +641,22 @@ impl CompositorHandler for State {
     fn commit(&mut self, surface: &WlSurface) {
         on_commit_buffer_handler::<Self>(surface);
         self.map_layer_surfaces();
+        // Popup lifecycle evidence: log the map/unmap transition so a run from
+        // a TTY proves whether the client actually attached a buffer.
+        if let Some(i) = self.popups.iter().position(|p| p.surface.wl_surface() == surface) {
+            let has_buffer = with_renderer_surface_state(surface, |state| state.buffer().is_some())
+                .unwrap_or(false);
+            if has_buffer != self.popups[i].mapped {
+                self.popups[i].mapped = has_buffer;
+                let rect = self.popups[i].screen_rect;
+                tracing::info!(
+                    "xdg_popup {}: screen=({},{} {}x{})",
+                    if has_buffer { "mapped (buffer committed)" } else { "unmapped (no buffer)" },
+                    rect.x, rect.y, rect.width, rect.height
+                );
+                self.redraw_needed = true;
+            }
+        }
         // Demand for frames. Compared against frames presented it separates
         // "client stopped committing" from "we dropped or refused the frame".
         if let Some(u) = self.udev.as_mut() {
@@ -523,15 +750,17 @@ struct State {
 #[derive(Debug, Clone)]
 pub struct PopupData {
     pub surface: PopupSurface,
+    /// Owning toplevel, used to restore keyboard focus when the popup closes.
     pub parent: Option<ToplevelSurface>,
+    /// Immediate parent surface: a toplevel, or another popup for submenus.
+    pub parent_surface: Option<WlSurface>,
     pub positioner: PositionerState,
-}
-
-impl PopupData {
-    fn positioner_size(&self) -> Option<(i32, i32)> {
-        // PositionerState.rect_size is public in smithay 0.7
-        Some((self.positioner.rect_size.w, self.positioner.rect_size.h))
-    }
+    /// Position relative to the parent window geometry, after constraints.
+    pub geometry: wm::Rect,
+    /// Same rect in global screen coordinates (updated every placement pass).
+    pub screen_rect: wm::Rect,
+    /// Whether the client has committed a buffer (popup is visible).
+    pub mapped: bool,
 }
 
 fn install_diag_logging() {
@@ -1175,5 +1404,150 @@ mod tests {
         // Initially no popups to dismiss
         assert_eq!(state.popups.len(), 0);
         assert!(state.popup_grab.is_none());
+    }
+
+    // --- xdg_positioner geometry (bug-2026-11-18t160939) -------------------
+    // Reference behaviour: Hyprland CXDGPositionerRules::getPosition. The math
+    // is delegated to smithay's get_unconstrained_geometry; these tests pin the
+    // semantics eswm relies on (anchor point, gravity, flip, slide).
+
+    use wayland_protocols::xdg::shell::server::xdg_positioner::{
+        Anchor, ConstraintAdjustment, Gravity,
+    };
+
+    fn test_positioner(
+        anchor_rect: (i32, i32, i32, i32),
+        anchor: Anchor,
+        gravity: Gravity,
+        adjustment: ConstraintAdjustment,
+    ) -> PositionerState {
+        PositionerState {
+            rect_size: (284, 336).into(),
+            anchor_rect: Rectangle::new(
+                (anchor_rect.0, anchor_rect.1).into(),
+                (anchor_rect.2, anchor_rect.3).into(),
+            ),
+            anchor_edges: anchor,
+            gravity,
+            constraint_adjustment: adjustment,
+            ..Default::default()
+        }
+    }
+
+    fn full_hd() -> wm::Rect {
+        wm::Rect { x: 0, y: 0, width: 1920, height: 1080 }
+    }
+
+    #[test]
+    fn popup_positioner_context_menu_at_cursor() {
+        // GTK context menu: 1x1 anchor rect at the click point, anchored at its
+        // top-left, gravity bottom-right, zero offset. The menu's top-left must
+        // land on the click point (the old code used offset only, so the menu
+        // appeared at the parent window origin instead).
+        let p = test_positioner(
+            (100, 120, 1, 1),
+            Anchor::TopLeft,
+            Gravity::BottomRight,
+            ConstraintAdjustment::empty(),
+        );
+        let geo = popup_geometry(&p, (0, 0), full_hd());
+        assert_eq!((geo.x, geo.y), (100, 120));
+        assert_eq!((geo.width, geo.height), (284, 336));
+    }
+
+    #[test]
+    fn popup_positioner_flips_at_right_edge() {
+        // Near the right edge the menu flips to the left of the anchor instead
+        // of being clipped by the work area.
+        let p = test_positioner(
+            (1900, 100, 1, 1),
+            Anchor::TopLeft,
+            Gravity::BottomRight,
+            ConstraintAdjustment::FlipX,
+        );
+        let geo = popup_geometry(&p, (0, 0), full_hd());
+        assert_eq!(geo.x, 1617, "flipped popup right edge sits on the anchor");
+        assert!(geo.x + geo.width as i32 <= 1920);
+    }
+
+    #[test]
+    fn popup_positioner_slides_inside_work_area() {
+        // No flip allowed: slide left until the popup is fully inside.
+        let p = test_positioner(
+            (1900, 100, 1, 1),
+            Anchor::TopLeft,
+            Gravity::BottomRight,
+            ConstraintAdjustment::SlideX,
+        );
+        let geo = popup_geometry(&p, (0, 0), full_hd());
+        assert_eq!(geo.x, 1920 - 284);
+    }
+
+    #[test]
+    fn popup_positioner_flips_at_bottom_edge() {
+        let p = test_positioner(
+            (100, 900, 1, 1),
+            Anchor::TopLeft,
+            Gravity::BottomRight,
+            ConstraintAdjustment::FlipY,
+        );
+        let geo = popup_geometry(&p, (0, 0), full_hd());
+        assert_eq!(geo.y, 565, "flipped popup bottom edge sits on the anchor");
+        assert!(geo.y + geo.height as i32 <= 1080);
+    }
+
+    #[test]
+    fn popup_positioner_slides_up_from_bottom_edge() {
+        let p = test_positioner(
+            (100, 900, 1, 1),
+            Anchor::TopLeft,
+            Gravity::BottomRight,
+            ConstraintAdjustment::SlideY,
+        );
+        let geo = popup_geometry(&p, (0, 0), full_hd());
+        assert_eq!(geo.y, 1080 - 336);
+    }
+
+    #[test]
+    fn popup_positioner_respects_work_area_offset() {
+        // A top bar (work area starting at y=40) pushes a flipped menu down so
+        // it does not hide under the bar.
+        let area = wm::Rect { x: 0, y: 40, width: 1920, height: 1040 };
+        let p = test_positioner(
+            (100, 50, 1, 1),
+            Anchor::BottomLeft,
+            Gravity::TopRight,
+            ConstraintAdjustment::FlipY,
+        );
+        let geo = popup_geometry(&p, (0, 0), area);
+        assert!(geo.y >= 40, "popup stays below the bar, got {}", geo.y);
+    }
+
+    #[test]
+    fn popup_positioner_geometry_is_parent_relative() {
+        // The positioner result is relative to the parent window geometry;
+        // adding the parent's screen origin gives the screen rect. This is what
+        // placed_windows and new_popup rely on so a menu follows its window.
+        let p = test_positioner(
+            (50, 60, 1, 1),
+            Anchor::TopLeft,
+            Gravity::BottomRight,
+            ConstraintAdjustment::empty(),
+        );
+        let parent = (400, 300);
+        let geo = popup_geometry(&p, parent, full_hd());
+        assert_eq!((geo.x, geo.y), (50, 60));
+        assert_eq!((parent.0 + geo.x, parent.1 + geo.y), (450, 360));
+    }
+
+    #[test]
+    fn rect_contains_edges_and_outside() {
+        let r = wm::Rect { x: 10, y: 20, width: 100, height: 50 };
+        assert!(rect_contains(r, 10.0, 20.0));
+        assert!(rect_contains(r, 109.9, 69.9));
+        assert!(!rect_contains(r, 110.0, 40.0), "right edge is exclusive");
+        assert!(!rect_contains(r, 50.0, 70.0), "bottom edge is exclusive");
+        assert!(!rect_contains(r, 9.9, 40.0));
+        assert!(!rect_contains(r, 50.0, 19.9));
     }
 }

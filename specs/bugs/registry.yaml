@@ -156,3 +156,40 @@ bug-2026-11-17t141711:
     3. Replace inline border edge construction in udev.rs with the shared helper.
   verify: |
     cargo test; cargo clippy
+
+bug-2026-11-18t160939:
+  id: bug-2026-11-18t160939
+  title: xdg_popup misplaced and input focus stranded after dismissal
+  severity: medium
+  status: fixed
+  reported_by: user_report
+  fixed_date: "2026-11-18T17:05:00+05:30"
+  risk_level: medium
+  security_impact: none
+  files:
+    - src/main.rs
+    - src/udev.rs
+  description: |
+    Right-click context menus (GTK4 xdg_popup) are placed at the parent window
+    origin instead of the cursor because only positioner.offset is applied and
+    anchor_rect/anchor/gravity are ignored. Dismissal drops the internal grab
+    but never sends xdg_popup.popup_done, popup_destroyed is unimplemented
+    (stale popup, stuck grab, keyboard focus never restored), grabbed pointer
+    events carry absolute screen coordinates, and reposition requests are never
+    acknowledged.
+  fix_plan: |
+    1. Port Hyprland's positioner rules (anchor point, gravity, offset,
+       flip/slide/resize against the work area) as a pure helper with tests.
+    2. Use the resolved parent-relative geometry for the initial configure and
+       for rendering; recompute per frame so popups follow the parent window.
+    3. Store each popup's screen rect; hit-test grabbed popups against it and
+       pass popup-local coordinates to the pointer.
+    4. Send popup_done and restore the parent window's keyboard focus on
+       outside-click dismissal.
+    5. Implement popup_destroyed: remove the popup, clear its grab, restore
+       focus, redraw.
+    6. Acknowledge reposition requests with send_repositioned(token).
+    7. Skip server-side borders/titlebars for popup entries; log popup
+       geometry/mapped/dismissed at info level.
+  verify: |
+    cargo test; cargo clippy; cargo build
