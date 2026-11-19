@@ -1196,6 +1196,14 @@ pub fn keyboard_focus_set(state: &mut State, id: Option<wm::WindowId>) {
     }
 }
 
+/// Clear tracked toplevel keyboard focus when a layer surface holds wl_keyboard
+/// focus (e06s03).
+pub fn keyboard_focus_set_layer(state: &mut State) {
+    if let Some(udev) = state.udev.as_mut() {
+        udev.keyboard_focus = None;
+    }
+}
+
 /// Advance an in-flight move/resize and return the dragged window id.
 fn drag_update(state: &mut State, pos: Point<f64, Logical>) -> Option<wm::WindowId> {
     let drag = state.udev.as_ref().unwrap().drag?;
