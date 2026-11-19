@@ -1128,19 +1128,19 @@ fn pointer_focus(state: &mut State, pos: Point<f64, Logical>) -> Option<(wl_surf
 
     crate::prune_dead_windows(state);
     let dragging = state.udev.as_ref().unwrap().drag;
-    let id = dragging.map(|drag| drag.window).or_else(|| state.wm.window_at((pos.x, pos.y), state.wm.border_size()));
+    let (id, origin) = if let Some(drag) = dragging {
+        let id = drag.window;
+        let rect = state.wm.window(id)?.target_rect;
+        (id, Point::from((rect.x as f64, rect.y as f64)))
+    } else {
+        let (id, local) = state.wm.surface_under((pos.x, pos.y))?;
+        (id, Point::from((pos.x - local.0, pos.y - local.1)))
+    };
     if let Some(udev) = state.udev.as_mut() {
-        udev.pointer_focus = id;
+        udev.pointer_focus = Some(id);
     }
-    let id = id?;
     let toplevel = crate::toplevel_for_window(state, id)?;
-    let rect = state.wm.window(id)?.target_rect;
-    Some((
-        toplevel.wl_surface().clone(),
-        // smithay computes surface-local coords as `event.location - loc`,
-        // so this must be the window origin, which is where we now render.
-        Point::from((rect.x as f64, rect.y as f64)),
-    ))
+    Some((toplevel.wl_surface().clone(), origin))
 }
 
 /// Send wl_keyboard leave/enter for `id`; None => just leave.

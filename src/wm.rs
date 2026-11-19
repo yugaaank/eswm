@@ -715,13 +715,47 @@ impl WindowManager {
     /// Find the topmost mapped window whose client surface accepts pointer
     /// input at `pos` (global coords), respecting wl_surface input regions.
     /// Returns (window id, surface-local point in buffer/surface coords).
+    /// Server-side decorations (titlebar, border) are not part of the client
+    /// surface and never match here.
     pub fn surface_under(&self, pos: (f64, f64)) -> Option<(WindowId, (f64, f64))> {
-        // RED(e06s02t2): input-region-aware lookup not implemented yet.
-        let id = self.window_at(pos, 0)?;
-        let window = self.window(id)?;
-        let render_x = window.target_rect.x - window.xdg_offset.0;
-        let render_y = window.target_rect.y - window.xdg_offset.1;
-        Some((id, (pos.0 - render_x as f64, pos.1 - render_y as f64)))
+        let primary = self.primary_output_id()?;
+        let output_state = self.outputs.get(&primary)?;
+        let workspace = self.workspaces.get(&output_state.active_workspace)?;
+        let focused = workspace.focused;
+        let mut ordered: Vec<WindowId> = Vec::new();
+        if let Some(f) = focused {
+            ordered.push(f);
+        }
+        for id in workspace.windows.iter().rev() {
+            if focused != Some(*id) {
+                ordered.push(*id);
+            }
+        }
+        for id in ordered {
+            let Some(window) = self.windows.get(&id) else { continue };
+            if !window.mapped || window.target_rect.width == 0 || window.target_rect.height == 0 {
+                continue;
+            }
+            let r = window.target_rect;
+            // Hit only the client content rect; decorations live outside it.
+            let inside_rect = pos.0 >= r.x as f64
+                && pos.1 >= r.y as f64
+                && pos.0 < r.x as f64 + r.width as f64
+                && pos.1 < r.y as f64 + r.height as f64;
+            if !inside_rect {
+                continue;
+            }
+            let render_x = r.x - window.xdg_offset.0;
+            let render_y = r.y - window.xdg_offset.1;
+            let local_x = pos.0 - render_x as f64;
+            let local_y = pos.1 - render_y as f64;
+            // Input regions are in surface-local coordinates. Default (None)
+            // means the whole surface accepts input.
+            if window.input_region.contains(local_x as i32, local_y as i32) {
+                return Some((id, (local_x, local_y)));
+            }
+        }
+        None
     }
 
     /// Highest-most mapped window of the active workspace at pos (newest first).
