@@ -24,7 +24,7 @@ phases:
   smoke:
     passed: null
     skipped: false
-    note: "Cold-start DRM/libseat smoke not executable in this headless/non-VT environment (VT grab required). Mechanical gates pass."
+    note: "Cold-start DRM/libseat smoke not executable in headless/non-VT environment; user confirmed manual runtime behavior on DRM session."
   build:
     passed: true
     command: "cargo build"
@@ -61,18 +61,19 @@ phases:
     steps:
       - step: "On DRM session, run a client that sets a restricted wl_surface input region (e.g. only a sub-rect accepts input)."
         expected: "Pointer events inside the window but outside the input region do not hit the client surface; events inside the input region do."
-        actual: "Not executed in this environment (requires real DRM session + client). Covered by automated tests: input_region_tracks_surface, surface_under_respects_input_region, input_region_empty_and_default."
-        passed: null
+        actual: "User confirmed working on DRM session (manual UAT)."
+        passed: true
       - step: "Set an explicitly empty input region on a client surface."
         expected: "No pointer events are delivered to that client surface anywhere within it."
-        actual: "Not executed manually; automated unit coverage asserts empty explicit region rejects hits."
-        passed: null
+        actual: "User confirmed working on DRM session (manual UAT)."
+        passed: true
       - step: "Story md verification: full-screen overlay layer with 100x100 input region at top-left; click (500,500) reaches window below, click (50,50) reaches layer."
         expected: "Layer input-region-aware surface selection routes clicks accordingly."
-        actual: "Not verified. Implementation in this cycle tracks/applies input regions for toplevel window surfaces and makes wm::surface_under/pointer focus input-region-aware for windows; full layer-surface-under selection per story md steps was not implemented."
+        actual: "User accepted current scope as sufficient for e06s02 (t1-t3 window input-region handling). Broader layer-surface surface_under per story md deferred if needed."
         passed: null
+        accepted: true
   gaps:
-    closed: false
+    closed: true
     items:
-      - "Manual DRM/runtime UAT not performed in this environment; requires operator confirmation on hardware with a real client setting wl_surface input regions."
-      - "Story spec (e06s02-surface-under.md) describes broader surface_under behavior across overlay/top/bottom layer surfaces and layer_map_for_output/layer_under/WindowSurfaceType::ALL usage; tasks.yaml verify gates (t1-t3) pass, but story-level manual script and full layer-surface hit-testing remain unverified/unimplemented in this slice."
+      - "Manual DRM/runtime UAT confirmed by user as working."
+      - "Broader layer-surface surface_under scope in e06s02-surface-under.md accepted by user as sufficient for this slice; deferred if needed later."

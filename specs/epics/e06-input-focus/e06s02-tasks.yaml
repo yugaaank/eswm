@@ -1,6 +1,6 @@
 story_id: e06s02
 title: surface_under with input regions for pointer focus
-status: passing
+status: completed
 bcps: 3
 delta: ADDED
 tasks:
