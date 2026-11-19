@@ -712,6 +712,18 @@ impl WindowManager {
         Rect { x, y, width, height }
     }
 
+    /// Find the topmost mapped window whose client surface accepts pointer
+    /// input at `pos` (global coords), respecting wl_surface input regions.
+    /// Returns (window id, surface-local point in buffer/surface coords).
+    pub fn surface_under(&self, pos: (f64, f64)) -> Option<(WindowId, (f64, f64))> {
+        // RED(e06s02t2): input-region-aware lookup not implemented yet.
+        let id = self.window_at(pos, 0)?;
+        let window = self.window(id)?;
+        let render_x = window.target_rect.x - window.xdg_offset.0;
+        let render_y = window.target_rect.y - window.xdg_offset.1;
+        Some((id, (pos.0 - render_x as f64, pos.1 - render_y as f64)))
+    }
+
     /// Highest-most mapped window of the active workspace at pos (newest first).
     /// Iterates in render order — the focused window first, then the rest
     /// newest-first — so a click on an overlap hits the topmost rendered window.
@@ -1975,5 +1987,32 @@ mod tests {
         assert_eq!(assigned[0].1, Rect { x: 0, y: 0, width: 1080, height: 945 });
         assert_eq!(assigned[1].1, Rect { x: 0, y: 975, width: 1080, height: 945 });
         // Window 2's titlebar at y=945-975, window 1's client ends at y=945. No overlap.
+    }
+
+    #[test]
+    fn surface_under_respects_input_region() {
+        let mut wm = WindowManager::new();
+        let out = wm.add_output("out", Rect { x: 0, y: 0, width: 1920, height: 1080 });
+        let id = wm.add_window(out, "app", "t").expect("window");
+        let win = wm.windows.get_mut(&id).unwrap();
+        win.target_rect = Rect { x: 100, y: 100, width: 200, height: 200 };
+        win.rect = win.target_rect;
+        win.mapped = true;
+        win.xdg_offset = (0, 0);
+        // Restrict input to a sub-rect in surface-local coords.
+        win.input_region = super::InputRegion {
+            rects: Some(vec![(true, Rect { x: 10, y: 10, width: 40, height: 40 })]),
+        };
+
+        // Inside the input region: hit.
+        let hit = wm.surface_under((115.0, 115.0));
+        assert_eq!(hit.map(|(wid, _)| wid), Some(id), "point inside input region should hit");
+
+        // Inside window rect but outside input region: no hit.
+        let miss = wm.surface_under((160.0, 160.0));
+        assert!(miss.is_none(), "point outside input region must not hit the surface");
+
+        // Outside window entirely: no hit.
+        assert!(wm.surface_under((50.0, 50.0)).is_none());
     }
 }
