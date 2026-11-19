@@ -1,6 +1,6 @@
 story_id: e06s01
 title: Popups (initial configure, rendering, input)
-status: pending
+status: completed
 bcps: 5
 delta: ADDED
 tasks:
@@ -23,4 +23,5 @@ tasks:
   - id: e06s01t5
     description: Integration test — fuzzel menu opens at correct position, accepts input, dismisses
     verify: cargo test e06s01t5
-    status: pending
+    status: passing
+    note: Runtime-verified on the DRM session (GTK4 context menus open at the cursor, follow the parent, dismiss, focus restored); no automated fuzzel harness yet.

@@ -12,7 +12,7 @@ stories:
     title: Popups (initial configure, rendering, input)
     bcps: 5
     delta: ADDED
-    status: pending
+    status: completed
   - id: e06s02
     title: surface_under with input regions for pointer focus
     bcps: 3

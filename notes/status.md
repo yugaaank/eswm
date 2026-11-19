@@ -1,20 +1,21 @@
-# eswm working notes — current state (2026-11-14)
+# eswm working notes — current state (2026-11-19)
 
 ## Repo
 
 - **Branch:** `main` (only branch; `feature/standalone-tacit` merged and deleted)
 - **Remote:** `origin` = `https://github.com/yugaaank/eswm.git`, `main` pushed and up to date
-- **HEAD:** `36c0374` docs: update notes to reflect current project state (3 commits ahead of origin/main)
-- **Last feature commit:** `99aa59e` feat: es.bind_cmd() to run arbitrary commands on keypress
+- **HEAD:** `aea9141` fix(input): xdg_popup positioning, dismissal and focus restore (2 commits ahead of origin/main)
+- **Working tree:** titlebar maximize/unmaximize fix (BUG-2026-11-19T235000) plus viewporter/maximized-state WIP, uncommitted
+- **Last feature commit:** `aea9141` xdg_popup positioning, dismissal and focus restore
 
 ## Build / run
 
-- `cargo build` — green, 40 warnings (pre-existing), no new ones
-- `cargo test` — 25/25 pass (22 unit + 3 integration: control, globals, ipc)
+- `cargo build` — green, warning-only (no errors)
+- `cargo test` — 87/87 pass (all inline in `src/main.rs`, `src/wm.rs`, `src/udev.rs`; no `tests/` crate)
 - Native DRM is the default backend: `./target/debug/eswm` from a TTY (grabs the VT; Ctrl+Alt+F1/F3 to leave/return)
 - Nested dev backend: `TACIT_COMP_BACKEND=winit ./target/debug/eswm` then `WAYLAND_DISPLAY=eswm-dev kitty`
 - Wayland socket: `$XDG_RUNTIME_DIR/eswm-<wayland-display>.sock` (default `eswm-test`)
-- Logs: `/tmp/eswm.log` (info+), `/tmp/eswm-panic.log`, `/tmp/<name>-spawn.log` per spawned program
+- Logs: `$XDG_STATE_HOME/eswm/eswm.log` (mode 0600; moved off world-readable `/tmp/eswm.log` by the e001 security fix), `$XDG_STATE_HOME/eswm/eswm-panic.log`, `/tmp/<name>-spawn.log` per spawned program
 - No special build config needed — libdisplay-info is provided by the system (0.3.x, ABI-compatible enough for smithay 0.7's usage). `.cargo/config.toml` is essentially empty.
 
 ## Configuration (Lua-only)
@@ -63,6 +64,9 @@ es.bind_cmd("Super+r", "rofi -show drun")
 - M5 window management: complete — master-stack tiling, floating, workspaces, focus cycle, click-to-focus verified on DRM, visible focus borders (winit + DRM), gaps, window rules (app_id → workspace/mode), layer-surface exclusive-zone tiling (windows inset below waybar/panels)
 - Config: complete — Lua-only autostart and keybinds
 - Wayland protocols: xdg_output added alongside wl_output, xdg_shell, layer_shell, seat, compositor, shm, viewporter, data_device, dmabuf
+- Core loop & rendering (e05): event-driven calloop loop, dirty-gated layout, redraw-gated rendering, one-frame-in-flight pacing, damage-aware frame callbacks
+- Popups (e06s01): xdg_popup positioner rules (anchor/gravity/offset + flip/slide/resize), parent-relative geometry recomputed per frame, grab hit-testing with popup-local coords, `popup_done` on outside click, focus restore, `send_repositioned`
+- Window controls: server-side titlebar close/maximize/minimize now route through `apply_layout` (BUG-2026-11-19T235000), so the client is reconfigured on both maximize and restore
 - Animations: not implemented
 
 ## Open defects / known limits
@@ -72,12 +76,14 @@ es.bind_cmd("Super+r", "rofi -show drun")
 - Tiling-to-floating focus change bug (parked): after Super+Space on focused window, Super+arrows may not change focus to tiled windows
 - IPC `CompCmd::GotoWorkspace`/`CloseWindow` no-ops in winit path; not drained in DRM path
 - Focus borders on DRM: fixed green overlay (borders now render as thin ring behind windows, not filled rect on cursor plane)
+- Master-layout single-window side borders stop short of the bottom border (BUG-2026-11-17T141711, open, fix plan written)
 - xdg_output (`zxdg_output_manager_v1`) now advertised — waybar starts and connects (was crashing exit 1 without it)
 - Tiling respects layer-surface exclusive zones: `wm.work_area` set from `LayerMap::non_exclusive_zone()` on each commit, so tiled windows are inset below waybar/panels instead of covering them
 - Floating placement now uses `work_area` (not raw output geometry), so new floating windows no longer spawn over panels
 - Tiled inner rect inset by `border_size` (all sides) + `titlebar_height` (top) so drawn frames never overlap top panels
 - Dock strip hit-test uses `work_area` bottom instead of raw dock geometry, matching the render side
-- Added tracing logs: layer mapped events + work_area updates in `main.rs`; key-press debug in `udev.rs`
+- Uncommitted WIP in `src/main.rs`: xdg Maximized/Fullscreen state sync + viewporter `dst` scaling (not yet in any story)
+- Key presses are never logged above trace (e001 security fix); logs live in `$XDG_STATE_HOME/eswm/`, mode 0600
 
 ## Documentation
 

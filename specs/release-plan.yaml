@@ -14,7 +14,7 @@ epics:
       Xwayland.
   - id: e03
     slug: tiling-layouts-master-equal
-    title: Tiling Layouts: Master + Equal
+    title: "Tiling Layouts: Master + Equal"
     wsjf_rank: 2
     status: completed
     stories: []
@@ -46,7 +46,7 @@ epics:
     slug: input-focus
     title: Input, Popups & Focus
     wsjf_rank: 5
-    status: planned
+    status: in_progress
     stories: []
     description: |
       Implement popups, input regions, layer-surface keyboard focus, and clipboard

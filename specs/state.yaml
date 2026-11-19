@@ -1,6 +1,6 @@
 active_flow: e06-input-focus
 bug_cycle: {}
-active_story: e06s01
+active_story: none
 handoff:
   next_skill: develop-tdd
 decisions:
@@ -22,3 +22,14 @@ decisions:
   - story: e06s01
     note: "xdg_popup complete (BUG-2026-11-18T160939): positioner rules (anchor_rect/anchor/gravity/offset + flip/slide/resize) resolved via smithay's get_unconstrained_geometry against the work area, verified to match Hyprland CXDGPositionerRules::getPosition semantics; popup_geometry() returns parent-relative rects recomputed every frame so menus follow their window; new_popup configures with resolved geometry; popup_destroyed clears grab and restores keyboard focus to the owning toplevel; reposition_request sends send_repositioned(token); pointer_focus routes grab hit-testing against screen_rect with popup-local coords and dismisses outside clicks with send_popup_done(); render loop skips borders/titlebars for POPUP_FAKE_ID entries. Tests: popup_positioner_* (8), rect_contains, xdg_popup_handler_compiles_and_tracks_popups, xdg_popup_grab_tracks_active_popup, placed_windows_includes_popups, popup_dismissed_on_outside_click. Runtime verified on TTY: GTK4 context menus open at cursor, follow parent, dismiss with popup_done, focus restored. Preflight green."
     added: "popup_geometry(), popup_constraint(), rect_contains(), popup_screen_rect(), popup_owner_window(), POPUP_FAKE_ID, PopupData.parent_surface/geometry/screen_rect/mapped, popup_parent_coord(), commit popup map/unmap logging, udev pointer_focus/button dismissal/render popup guard"
+    merged: "aea9141 fix(input): xdg_popup positioning, dismissal and focus restore -> main"
+  - story: BUG-2026-11-19T235000
+    note: "Titlebar maximize frame-outgrows-content fixed: the pointer handler mutated the WM (toggle_maximized / toggle_minimize / remove_window) without running apply_layout, the only path that sends xdg_toplevel.configure and wm.set_rect. Rendering reads target_rect, so the frame grew around an unconfigured client; the Super+maximize keybind worked because it does call apply_layout. Fix routes close/maximize/minimize through udev::apply_titlebar_action (action -> apply_layout -> redraw) and extracts the click hit test into pure wm::titlebar_button_at. Tests: titlebar_button_at_maps_close_maximize_minimize, titlebar_maximize_click_configures_client_and_requests_redraw. 86/86, clippy and build green."
+    added: "TitlebarButton enum, titlebar_button_at(), udev::apply_titlebar_action()"
+  - story: BUG-2026-11-19T235000
+    note: "Follow-up on the same bug: un-maximize left the client at the maximized size inside a shrunken frame. toggle_maximized's restore branch set rect = target_rect, which is apply_layout's already-applied marker, so no xdg configure was sent. The branch now sets target_rect only and leaves the stale rect as the pending-confirm signal. Test: toggle_maximized_restore_forces_size_configure. 87/87, clippy and build green."
+    added: "restore path leaves rect stale so apply_layout configures the saved size"
+  - story: BUG-2026-11-19T235000
+    note: "Operator confirmed on the DRM session: the titlebar maximize button now resizes the client surface, and clicking it again restores the original size. bug_cycle closed (steps 1-4 done; step 5 landing pending because the working tree also holds unrelated viewporter/maximized-state WIP and no commit was made)."
+  - story: e06s01
+    note: "Story closed out: popups t1-t5 complete (t5 runtime-verified on DRM rather than automated). Planning bookkeeping synced across epic.yaml, e06s01-tasks.yaml, release-plan.yaml and execution-status.yaml: e06 is in_progress, e06s01 completed, only e06s02 (surface_under/input regions), e06s03 (keyboard focus) and e06s04 (clipboard) remain."
