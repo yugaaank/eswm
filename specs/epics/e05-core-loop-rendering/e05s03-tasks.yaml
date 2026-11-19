@@ -8,7 +8,7 @@ tasks:
     description: Give WindowManager a dirty flag; every change (add, remove, mode, focus, output, work area) sets it
     verify: cargo build
     risk: P3
-    status: completed
+    status: passing
     allure:
       severity: normal
       categories: ["unit", "core-loop"]
@@ -16,7 +16,7 @@ tasks:
     description: Lay out only when dirty; clear the flag there
     verify: cargo build
     risk: P3
-    status: completed
+    status: passing
     allure:
       severity: normal
       categories: ["unit", "core-loop"]
@@ -24,7 +24,7 @@ tasks:
     description: placed_windows only reads; does not trigger layout
     verify: cargo build && cargo test
     risk: P3
-    status: completed
+    status: passing
     allure:
       severity: normal
       categories: ["unit", "core-loop"]
@@ -32,7 +32,7 @@ tasks:
     description: In apply_layout, set size and states with toplevel.with_pending_state(...), then call send_pending_configure()
     verify: cargo build && cargo test
     risk: P3
-    status: completed
+    status: passing
     allure:
       severity: normal
       categories: ["unit", "core-loop"]

@@ -29,7 +29,7 @@ stories:
     title: Close protocol and window lifecycle
     bcps: 5
     delta: ADDED
-    status: planned
+    status: pending
   - id: e02s05
     title: Tiler/floating integration with state model
     bcps: 5

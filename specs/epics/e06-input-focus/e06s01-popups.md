@@ -26,7 +26,7 @@ xdg_popup is a short-lived surface attached to a parent (xdg_toplevel or another
 - `grab`: Handle keyboard/pointer grab for modal popups
 - `reposition`: Update popup position when parent moves
 
-**verify**: `cargo test e06s01t1`
+**verify**: `cargo test --bin eswm xdg_popup_handler_compiles_and_tracks_popups`
 
 ### e06s01t2: Wire popup initial configure
 
@@ -39,7 +39,7 @@ xdg_popup is a short-lived surface attached to a parent (xdg_toplevel or another
 - Size: popup's requested size
 - Serial for acknowledgement
 
-**verify**: `cargo test e06s01t2`
+**verify**: `cargo test --bin eswm popup_positioner`
 
 ### e06s01t3: Render popup surfaces in correct stacking order
 
@@ -50,7 +50,7 @@ xdg_popup is a short-lived surface attached to a parent (xdg_toplevel or another
 - Before overlay/top layer surfaces
 - Use popup's geometry from LayerMap or direct positioning
 
-**verify**: `cargo test e06s01t3`
+**verify**: `cargo test --bin eswm placed_windows_includes_popups`
 
 ### e06s01t4: Forward input to popup when grab active; dismiss on outside click
 
@@ -62,7 +62,7 @@ xdg_popup is a short-lived surface attached to a parent (xdg_toplevel or another
 - In keyboard handler: if grab active, forward keys to popup surface
 - On dismiss: cleanup grab, destroy popup
 
-**verify**: `cargo test e06s01t4`
+**verify**: `cargo test --bin eswm xdg_popup_grab_tracks_active_popup`
 
 ### e06s01t5: Integration test: fuzzel menu works end-to-end
 
@@ -70,7 +70,7 @@ xdg_popup is a short-lived surface attached to a parent (xdg_toplevel or another
 
 **GREEN**: Use existing test fixture (UnixStream + insert_client) to simulate fuzzel creating popup. Verify full lifecycle.
 
-**verify**: `cargo test e06s01t5`
+**verify**: `cargo test --bin eswm popup_dismissed_on_outside_click`
 
 ## Acceptance Criteria
 

@@ -1,7 +1,7 @@
 id: e09
 slug: design-decisions
 title: Design Decisions (Window Model, Outputs, IPC, Lua)
-status: planned
+status: pending
 wsjf_rank: 8
 bcps_total: 8
 core_value: |
@@ -10,22 +10,22 @@ core_value: |
   Lua config shape.
 stories:
   - id: e09s01
-    title: Window state model: split WindowMode into layout + state flags
+    title: "Window state model: split WindowMode into layout + state flags"
     bcps: 2
     delta: MODIFIED
     status: pending
   - id: e09s02
-    title: Output model: position, scale, work area, LayerMap per output; focused output
+    title: "Output model: position, scale, work area, LayerMap per output; focused output"
     bcps: 2
     delta: MODIFIED
     status: pending
   - id: e09s03
-    title: IPC protocol: events stream, subscribe semantics, security
+    title: "IPC protocol: events stream, subscribe semantics, security"
     bcps: 2
     delta: ADDED
     status: pending
   - id: e09s04
-    title: Lua config shape: declarative es.config{}, es.bind with function/action
+    title: "Lua config shape: declarative es.config{}, es.bind with function/action"
     bcps: 2
     delta: MODIFIED
     status: pending

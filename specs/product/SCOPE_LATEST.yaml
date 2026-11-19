@@ -16,53 +16,56 @@ summary: |
   Hyprland's input/focus model, which eswm lacks.
 
 in_scope:
-  - Popup support: xdg_popup lifecycle (initial configure, commit handling,
-    rendering at correct position relative to parent, input forwarding).
-    Maps to e06s01.
-  - Input regions for pointer focus: surface_under uses wl_surface input_region
-    to determine which surface receives pointer events, not just opaque geometry.
-    Maps to e06s02.
-  - Keyboard focus isolation: layer surfaces with keyboard_interactivity get
-    focus without stealing it from toplevel windows; update_keyboard_focus
-    correctly routes focus between toplevels and layers. Maps to e06s03.
-  - Clipboard and primary selection: wl_data_device_manager with data_source
-    and data_offer; focus tracking so clipboard follows keyboard focus.
-    Maps to e06s04.
-  - Protocol additions: zwlr_layer_shell_v1 popup support, wl_data_device_manager,
-    input_region extension, seat keyboard/pointer focus handling.
+  - >-
+    Popup support: xdg_popup lifecycle (initial configure, commit handling, rendering at correct position relative to parent, input forwarding). Maps to e06s01.
+  - >-
+    Input regions for pointer focus: surface_under uses wl_surface input_region to determine which surface receives pointer events, not just opaque geometry. Maps to e06s02.
+  - >-
+    Keyboard focus isolation: layer surfaces with keyboard_interactivity get focus without stealing it from toplevel windows; update_keyboard_focus correctly routes focus between toplevels and layers. Maps to e06s03.
+  - >-
+    Clipboard and primary selection: wl_data_device_manager with data_source and data_offer; focus tracking so clipboard follows keyboard focus. Maps to e06s04.
+  - >-
+    Protocol additions: zwlr_layer_shell_v1 popup support, wl_data_device_manager, input_region extension, seat keyboard/pointer focus handling.
 
 out_of_scope:
-  - Animations (Phase 4): deferred. Input/focus stability required first.
-  - Touch input and gestures: deferred. Not needed for Tacit's desktop shell.
-  - Clipboard history manager: deferred. Core clipboard (single item) is in scope.
-  - Foreign toplevel management (zwlr_foreign_toplevel_manager_v1): deferred to
-    Tacit integration phase (e09). e06 provides focus/clipboard prerequisites.
-  - Screencopy (wlr_screencopy_manager_v1): deferred to Tacit integration phase.
-  - Session lock (ext_session_lock_v1): deferred to Tacit integration phase.
-  - Fractional scale (wp_fractional_scale_v1): deferred to e08.
-  - XWayland support: deferred, optional build/runtime option.
+  - >-
+    Animations (Phase 4): deferred. Input/focus stability required first.
+  - >-
+    Touch input and gestures: deferred. Not needed for Tacit's desktop shell.
+  - >-
+    Clipboard history manager: deferred. Core clipboard (single item) is in scope.
+  - >-
+    Foreign toplevel management (zwlr_foreign_toplevel_manager_v1): deferred to Tacit integration phase (e09). e06 provides focus/clipboard prerequisites.
+  - >-
+    Screencopy (wlr_screencopy_manager_v1): deferred to Tacit integration phase.
+  - >-
+    Session lock (ext_session_lock_v1): deferred to Tacit integration phase.
+  - >-
+    Fractional scale (wp_fractional_scale_v1): deferred to e08.
+  - >-
+    XWayland support: deferred, optional build/runtime option.
 
 constraints:
-  - Rust 2024; dependencies: smithay 0.7, wayland-server 0.31, winit (dev only),
-    mlua. No new dependencies introduced in this initiative.
+  - >-
+    Rust 2024; dependencies: smithay 0.7, wayland-server 0.31, winit (dev only), mlua. No new dependencies introduced in this initiative.
   - Lua-only configuration at ~/.config/eswm/config.lua; no JSON config path.
   - DRM/libseat is the default runtime path; Winit is the nested dev backend only.
   - Never copy Pinnacle source, assets, or distinctive implementation
     (reference only).
   - Preflight (cargo clippy && cargo test && cargo build) must be green before
     forward work.
-  - eswm easy brand: short, grep-unique names; no clever abbreviations.
+  - >-
+    eswm easy brand: short, grep-unique names; no clever abbreviations.
 
 success_criteria:
   - Popup (fuzzel menu) opens at correct position relative to parent, accepts
     keyboard and pointer input, dismisses on outside click.
-  - Pointer focus respects input_region: transparent parts of a window pass
-    clicks through to surfaces below.
-  - Keyboard focus: layer surface with keyboard_interactivity (fuzzel) gets
-    focus; toplevel on same output does not steal it; focus returns to toplevel
-    when layer closes.
-  - Clipboard: copy/paste works between eswm clients; primary selection (middle
-    click paste) works; clipboard follows keyboard focus.
+  - >-
+    Pointer focus respects input_region: transparent parts of a window pass clicks through to surfaces below.
+  - >-
+    Keyboard focus: layer surface with keyboard_interactivity (fuzzel) gets focus; toplevel on same output does not steal it; focus returns to toplevel when layer closes.
+  - >-
+    Clipboard: copy/paste works between eswm clients; primary selection (middle click paste) works; clipboard follows keyboard focus.
   - All 4 stories implemented; cargo test passes; preflight green.
 
 references:

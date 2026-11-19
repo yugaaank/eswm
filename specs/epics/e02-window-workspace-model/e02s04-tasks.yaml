@@ -1,6 +1,6 @@
 story_id: e02s04
 title: Close protocol and window lifecycle
-status: planned
+status: pending
 bcps: 5
 delta: ADDED
 tasks:
@@ -8,7 +8,7 @@ tasks:
     description: Add Lifecycle (Open/CloseRequested/Closing) to Window; request_close() sets CloseRequested
     verify: cargo test --bin eswm wm::tests
     risk: P1
-    status: planned
+    status: pending
     allure:
       severity: high
       categories: ["unit", "wm"]
@@ -16,7 +16,7 @@ tasks:
     description: Client acknowledges close via destroy handler; timeout forces removal if no ack
     verify: cargo test --bin eswm wm::tests
     risk: P1
-    status: planned
+    status: pending
     allure:
       severity: high
       categories: ["unit", "wm"]
@@ -24,7 +24,7 @@ tasks:
     description: Close button calls send_close(); let client's destroy remove window; do not remove from WM directly
     verify: cargo test --bin eswm wm::tests
     risk: P2
-    status: planned
+    status: pending
     allure:
       severity: normal
       categories: ["unit", "wm"]

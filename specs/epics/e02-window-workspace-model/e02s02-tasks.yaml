@@ -8,15 +8,15 @@ tasks:
     description: Add mode (Tiling/Floating), layout (Master/Dwindle/EqualSplit), tiling_order (Vec<WindowId>), focus_history (MRU Vec<WindowId>) to Workspace
     verify: cargo test --bin eswm wm::tests
     risk: P1
-    status: completed
+    status: passing
     allure:
       severity: high
       categories: ["unit", "wm"]
   - id: e02s02t2
-    description: Add per-layout state: master_ratio/master_count/master_position, dwindle_tree, equal_orientation to Workspace
+    description: "Add per-layout state: master_ratio/master_count/master_position, dwindle_tree, equal_orientation to Workspace"
     verify: cargo test --bin eswm wm::tests
     risk: P1
-    status: completed
+    status: passing
     allure:
       severity: high
       categories: ["unit", "wm"]
@@ -24,7 +24,7 @@ tasks:
     description: Add default workspace per output on startup; assign created windows to active workspace of their output
     verify: cargo test --bin eswm wm::tests
     risk: P1
-    status: completed
+    status: passing
     allure:
       severity: high
       categories: ["unit", "wm"]

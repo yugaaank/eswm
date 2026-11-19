@@ -6,13 +6,13 @@ delta: ADDED
 tasks:
   - id: e06s02t1
     description: Implement wl_surface.input_region handler — track region per surface in Window data
-    verify: cargo test e06s02t1
+    verify: cargo test --bin eswm input_region_tracks_surface
     status: pending
   - id: e06s02t2
     description: Modify surface_under / window_at to use input_region for hit-testing instead of opaque rect
-    verify: cargo test e06s02t2
+    verify: cargo test --bin eswm surface_under
     status: pending
   - id: e06s02t3
     description: Handle empty input_region (no pointer events) and None (default full rect)
-    verify: cargo test e06s02t3
+    verify: cargo test --bin eswm input_region_empty_and_default
     status: pending

@@ -1,7 +1,7 @@
 id: e08
 slug: panics-correctness
 title: Panics & Correctness
-status: planned
+status: pending
 wsjf_rank: 7
 bcps_total: 13
 core_value: |
@@ -10,12 +10,12 @@ core_value: |
   CSD geometry, scale/cursors, input settings).
 stories:
   - id: e08s01
-    title: Panics: dock underflow, floating_target underflow, connector modes, renderer errors
+    title: "Panics: dock underflow, floating_target underflow, connector modes, renderer errors"
     bcps: 5
     delta: MODIFIED
     status: pending
   - id: e08s02
-    title: Correctness: close button, dock layering, fullscreen layering, CSD geometry
+    title: "Correctness: close button, dock layering, fullscreen layering, CSD geometry"
     bcps: 5
     delta: MODIFIED
     status: pending

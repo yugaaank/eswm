@@ -5,26 +5,26 @@ bcps: 5
 delta: MODIFIED
 tasks:
   - id: e02s05t1
-    description: Audit arrange_output filters windows to output_state.active_workspace; excluded: minimized, maximized, fullscreen, floating
+    description: "Audit arrange_output filters windows to output_state.active_workspace; excluded: minimized, maximized, fullscreen, floating"
     verify: cargo test --bin eswm wm::tests
     risk: P2
-    status: completed
+    status: passing
     allure:
       severity: normal
       categories: ["unit", "wm"]
   - id: e02s05t2
-    description: Master layout: gap only between master column and stack column; no gaps between stack windows
+    description: "Master layout: gap only between master column and stack column; no gaps between stack windows"
     verify: cargo test --bin eswm wm::tests
     risk: P2
-    status: completed
+    status: passing
     allure:
       severity: normal
       categories: ["unit", "wm"]
   - id: e02s05t3
-    description: Equal layout: equal-sized cells with inner gaps between all cells; vertical gap includes titlebar_height
+    description: "Equal layout: equal-sized cells with inner gaps between all cells; vertical gap includes titlebar_height"
     verify: cargo test --bin eswm wm::tests
     risk: P2
-    status: completed
+    status: passing
     allure:
       severity: normal
       categories: ["unit", "wm"]
@@ -32,7 +32,7 @@ tasks:
     description: Layout switching keeps tiling order and each layout's saved state (master ratio, dwindle tree, equal orientation)
     verify: cargo test --bin eswm wm::tests
     risk: P2
-    status: completed
+    status: passing
     allure:
       severity: normal
       categories: ["unit", "wm"]

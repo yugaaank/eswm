@@ -1,6 +1,6 @@
 story_id: e04s01
 title: Stop logging key presses; secure log file location and permissions
-status: passing
+status: completed
 bcps: 3
 delta: MODIFIED
 tasks:
@@ -37,7 +37,7 @@ tasks:
       severity: low
       categories: ["unit"]
   - id: e04s01t5
-    description: Unit test: log file is created at $XDG_STATE_HOME/eswm/eswm.log with mode 0600
+    description: "Unit test: log file is created at $XDG_STATE_HOME/eswm/eswm.log with mode 0600"
     verify: cargo test
     risk: P1
     status: passing
@@ -45,7 +45,7 @@ tasks:
       severity: high
       categories: ["security", "unit"]
   - id: e04s01t6
-    description: Unit test: no key press data appears in any log output at info level
+    description: "Unit test: no key press data appears in any log output at info level"
     verify: cargo test
     risk: P1
     status: passing

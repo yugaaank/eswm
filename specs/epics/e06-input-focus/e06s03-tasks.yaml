@@ -6,17 +6,17 @@ delta: ADDED
 tasks:
   - id: e06s03t1
     description: Implement update_keyboard_focus — prefer keyboard_interactive layer surface over toplevel
-    verify: cargo test e06s03t1
+    verify: cargo test --bin eswm update_keyboard_focus
     status: pending
   - id: e06s03t2
     description: On layer surface commit with keyboard_interactivity=true, move wl_keyboard focus to it
-    verify: cargo test e06s03t2
+    verify: cargo test --bin eswm layer_keyboard_interactive
     status: pending
   - id: e06s03t3
     description: On layer surface destroy/unmap, restore focus to last-focused toplevel on same output
-    verify: cargo test e06s03t3
+    verify: cargo test --bin eswm keyboard_focus_restored
     status: pending
   - id: e06s03t4
     description: Integration test — fuzzel opens, gets focus; type in fuzzel; close fuzzel, focus returns to terminal
-    verify: cargo test e06s03t4
+    verify: cargo test --bin eswm keyboard_focus
     status: pending

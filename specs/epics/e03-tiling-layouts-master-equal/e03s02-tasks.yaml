@@ -1,6 +1,6 @@
 story_id: e03s02
 title: Equal tiling layout algorithm
-status: passing
+status: completed
 bcps: 5
 delta: ADDED
 tasks:
@@ -13,7 +13,7 @@ tasks:
       severity: high
       categories: ["unit", "wm"]
   - id: e03s02t2
-    description: Unit test: equal_split arranges N windows with equal-sized rects covering work area
+    description: "Unit test: equal_split arranges N windows with equal-sized rects covering work area"
     verify: cargo test --bin eswm equal_split_layout
     risk: P2
     status: passing
@@ -21,7 +21,7 @@ tasks:
       severity: normal
       categories: ["unit", "wm"]
   - id: e03s02t3
-    description: Unit test: equal_split gives every window the same width and height
+    description: "Unit test: equal_split gives every window the same width and height"
     verify: cargo test --bin eswm equal_split_layout
     risk: P2
     status: passing

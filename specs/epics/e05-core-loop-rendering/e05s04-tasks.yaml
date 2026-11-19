@@ -8,7 +8,7 @@ tasks:
     description: Keep redraw_needed flag per output; set on surface commit, layout change, cursor motion, running animation
     verify: cargo build
     risk: P3
-    status: completed
+    status: passing
     allure:
       severity: normal
       categories: ["unit", "core-loop"]
@@ -16,7 +16,7 @@ tasks:
     description: Render only from vblank handler or idle callback when flag set and no frame pending
     verify: cargo build
     risk: P3
-    status: completed
+    status: passing
     allure:
       severity: normal
       categories: ["unit", "core-loop"]
@@ -24,7 +24,7 @@ tasks:
     description: Send frame callbacks only to surfaces drawn this frame, with throttle
     verify: cargo build
     risk: P3
-    status: completed
+    status: passing
     allure:
       severity: normal
       categories: ["unit", "core-loop"]
@@ -32,7 +32,7 @@ tasks:
     description: Use SolidColorRenderElement for borders (one Id per window, bump on color/size change)
     verify: cargo build
     risk: P3
-    status: completed
+    status: passing
     allure:
       severity: normal
       categories: ["unit", "core-loop"]
@@ -40,7 +40,7 @@ tasks:
     description: Use one PixelShaderElement for rounded corners, compiled once
     verify: cargo build
     risk: P3
-    status: completed
+    status: passing
     allure:
       severity: normal
       categories: ["unit", "core-loop"]
@@ -48,7 +48,7 @@ tasks:
     description: Cache titlebar and button buffers per window, keyed by size/title/focus
     verify: cargo build
     risk: P3
-    status: completed
+    status: passing
     allure:
       severity: normal
       categories: ["unit", "core-loop"]
@@ -56,7 +56,7 @@ tasks:
     description: Move pruning into toplevel_destroyed callback
     verify: cargo build
     risk: P3
-    status: completed
+    status: passing
     allure:
       severity: normal
       categories: ["unit", "core-loop"]

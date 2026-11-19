@@ -5,10 +5,10 @@ bcps: 3
 delta: ADDED
 tasks:
   - id: e05s01t1
-    description: Add State construction path without renderer or DRM (udev: None) for tests
+    description: "Add State construction path without renderer or DRM (udev: None) for tests"
     verify: cargo build
     risk: P2
-    status: completed
+    status: passing
     allure:
       severity: normal
       categories: ["unit", "test-fixture"]
@@ -16,7 +16,7 @@ tasks:
     description: Connect wayland client over UnixStream::pair via insert_client
     verify: cargo build
     risk: P2
-    status: completed
+    status: passing
     allure:
       severity: normal
       categories: ["unit", "test-fixture"]
@@ -24,7 +24,7 @@ tasks:
     description: Add roundtrip() helper dispatching both sides until neither has work
     verify: cargo build
     risk: P2
-    status: completed
+    status: passing
     allure:
       severity: normal
       categories: ["unit", "test-fixture"]
@@ -32,7 +32,7 @@ tasks:
     description: Point tests/globals.rs at a temp dir
     verify: cargo test
     risk: P2
-    status: completed
+    status: passing
     allure:
       severity: normal
       categories: ["unit", "test-fixture"]
@@ -40,7 +40,7 @@ tasks:
     description: Test client binds xdg_wm_base, creates a toplevel, sets app_id, commits; WM then has one window with that app_id
     verify: cargo test
     risk: P1
-    status: completed
+    status: passing
     allure:
       severity: high
       categories: ["unit", "test-fixture"]

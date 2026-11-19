@@ -1,6 +1,6 @@
 story_id: e04s02
 title: Fix Arch CI build (smithay-drm-extras / libdisplay-info)
-status: passing
+status: completed
 bcps: 5
 delta: ADDED
 tasks:

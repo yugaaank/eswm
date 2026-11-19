@@ -9,13 +9,13 @@
 ## Steps
 
 1. Add integration test: spawn nested compositor, open two windows, send IPC `window.move` to workspace 2, assert window appears on workspace 2 and source workspace is empty -> verify: `cargo test --test control`
-2. Add unit test for `move_window_to_workspace` when target workspace is on a different output (must fail) -> verify: `cargo test --lib wm::tests`
+2. Add unit test for `move_window_to_workspace` when target workspace is on a different output (must fail) -> verify: `cargo test --bin eswm wm::tests`
 3. Confirm `move_window_to_workspace` keybind documented in `config.default.lua` (`Super+Shift+1` ... `Super+Shift+9`) -> verify: `test -f config.default.lua`
 
 ## Verification Script (Step-by-Step)
 
 1. Run `cargo test --test control` and confirm window-move integration tests pass.
-2. Run `cargo test --lib wm::tests` and confirm `workspace_move_keeps_windows_separate` passes.
+2. Run `cargo test --bin eswm wm::tests` and confirm `workspace_move_keeps_windows_separate` passes.
 3. Confirm `config.default.lua` contains `move_window_to_workspace` binds.
 
 ## Out of scope

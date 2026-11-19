@@ -1,6 +1,6 @@
 story_id: e03s03
 title: Wire equal into arrange_output
-status: passing
+status: completed
 bcps: 5
 delta: MODIFIED
 tasks:
@@ -13,7 +13,7 @@ tasks:
       severity: high
       categories: ["unit", "wm"]
   - id: e03s03t2
-    description: Unit test: arrange_output uses equal rects when output mode is equal
+    description: "Unit test: arrange_output uses equal rects when output mode is equal"
     verify: cargo test --bin eswm wm::tests
     risk: P2
     status: passing

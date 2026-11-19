@@ -8,7 +8,7 @@ tasks:
     description: Insert ListeningSocketSource whose callback calls insert_client
     verify: cargo build
     risk: P3
-    status: completed
+    status: passing
     allure:
       severity: normal
       categories: ["unit", "core-loop"]
@@ -16,7 +16,7 @@ tasks:
     description: Generic source on display poll fd for dispatch_clients — implemented via None timeout + post-dispatch dispatch_clients() (Display not in State, so a separate Generic source isn't feasible without restructuring)
     verify: cargo build
     risk: P3
-    status: completed
+    status: passing
     allure:
       severity: normal
       categories: ["unit", "core-loop"]
@@ -24,7 +24,7 @@ tasks:
     description: Dispatch with no fixed timeout; call flush_clients after each dispatch
     verify: cargo build
     risk: P3
-    status: completed
+    status: passing
     allure:
       severity: normal
       categories: ["unit", "core-loop"]
@@ -32,7 +32,7 @@ tasks:
     description: Log per-client errors and carry on; on loop error, log and exit status 1
     verify: cargo build
     risk: P3
-    status: completed
+    status: passing
     allure:
       severity: normal
       categories: ["unit", "core-loop"]

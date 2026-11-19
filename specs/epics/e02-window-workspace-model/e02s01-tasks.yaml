@@ -8,7 +8,7 @@ tasks:
     description: Split WindowMode into LayoutMode (Tiling/Floating) on workspace, Presentation (Normal/Maximized/Fullscreen), Visibility (Visible/Minimized), Lifecycle (Open/CloseRequested/Closing) on window
     verify: cargo test --bin eswm wm::tests
     risk: P1
-    status: completed
+    status: passing
     allure:
       severity: high
       categories: ["unit", "wm"]
@@ -16,7 +16,7 @@ tasks:
     description: Add placement_override, float_geometry, pending_geometry, committed_geometry, min_size, max_size, tiling_slot, sticky, always_on_top, decorated, modal, urgent, opacity fields to Window
     verify: cargo test --bin eswm wm::tests
     risk: P1
-    status: completed
+    status: passing
     allure:
       severity: high
       categories: ["unit", "wm"]
@@ -24,7 +24,7 @@ tasks:
     description: Add effective_placement(), is_visible(), effective_rect() functions to WindowManager
     verify: cargo test --bin eswm wm::tests
     risk: P2
-    status: completed
+    status: passing
     allure:
       severity: normal
       categories: ["unit", "wm"]
