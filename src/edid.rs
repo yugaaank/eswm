@@ -23,9 +23,9 @@ pub fn edid_manufacturer_name(edid: &[u8]) -> Option<String> {
     }
     let b8 = edid[8];
     let b9 = edid[9];
-    let c1 = ((b8 >> 2) & 0x1F) as u8;
-    let c2 = (((b8 & 0x03) << 3) | ((b9 >> 5) & 0x07)) as u8;
-    let c3 = (b9 & 0x1F) as u8;
+    let c1 = (b8 >> 2) & 0x1F;
+    let c2 = ((b8 & 0x03) << 3) | ((b9 >> 5) & 0x07);
+    let c3 = b9 & 0x1F;
     if c1 == 0 || c2 == 0 || c3 == 0 {
         return None;
     }

@@ -393,18 +393,15 @@ impl WindowManager {
             .and_then(|output| self.workspaces.get(&output.active_workspace))
             .map(|workspace| workspace.windows.is_empty())
             .unwrap_or(true);
-        if active_is_empty {
-            if let Some(workspace) = self
+        if active_is_empty
+            && let Some(workspace) = self
                 .workspaces
                 .values()
                 .find(|workspace| workspace.output == survivor && !workspace.windows.is_empty())
                 .map(|workspace| workspace.id)
-            {
-                if let Some(output) = self.outputs.get_mut(&survivor) {
+                && let Some(output) = self.outputs.get_mut(&survivor) {
                     output.active_workspace = workspace;
                 }
-            }
-        }
         if let Some(active) = self.outputs.get(&survivor).map(|o| o.active_workspace) {
             self.focus_workspace(survivor, active);
         }
@@ -418,10 +415,6 @@ impl WindowManager {
 
     pub fn window(&self, id: WindowId) -> Option<&Window> {
         self.windows.get(&id)
-    }
-
-    pub fn window_mut(&mut self, id: WindowId) -> Option<&mut Window> {
-        self.windows.get_mut(&id)
     }
 
     pub fn primary_output_id(&self) -> Option<OutputId> {
@@ -451,13 +444,6 @@ impl WindowManager {
             return true;
         }
         false
-    }
-
-    pub fn set_xdg_offset(&mut self, id: WindowId, offset: (i32, i32)) {
-        if let Some(window) = self.windows.get_mut(&id) {
-            window.xdg_offset = offset;
-            self.dirty = true;
-        }
     }
 
     pub fn set_activated_sent(&mut self, id: WindowId, sent: bool) {
@@ -531,10 +517,6 @@ impl WindowManager {
         true
     }
 
-    pub fn wm_mode(&self) -> WmMode {
-        self.wm_mode
-    }
-
     pub fn set_wm_mode(&mut self, mode: WmMode) {
         self.wm_mode = mode;
         self.dirty = true;
@@ -555,17 +537,9 @@ impl WindowManager {
         self.dirty = true;
     }
 
-    pub fn outer(&self) -> u32 {
-        self.outer
-    }
-
     pub fn set_inner(&mut self, inner: u32) {
         self.inner = inner;
         self.dirty = true;
-    }
-
-    pub fn inner(&self) -> u32 {
-        self.inner
     }
 
     pub fn set_border_size(&mut self, size: u32) {
@@ -609,10 +583,6 @@ impl WindowManager {
         self.dirty = true;
     }
 
-    pub fn titlebar_height(&self) -> u32 {
-        self.titlebar_height
-    }
-
     pub fn set_dock_height(&mut self, height: u32) {
         self.dock_height = height;
         self.dirty = true;
@@ -643,7 +613,7 @@ impl WindowManager {
             return Vec::new();
         };
         let focused = workspace.focused;
-        let mut entries: Vec<DockEntry> = workspace
+        let entries: Vec<DockEntry> = workspace
             .windows
             .iter()
             .filter_map(|id| self.windows.get(id).map(|w| (id, w)))
@@ -661,6 +631,7 @@ impl WindowManager {
         entries
     }
 
+    #[cfg_attr(not(test), allow(dead_code))] // rules arrive via Lua config
     pub fn add_window_rule(&mut self, rule: WindowRule) {
         self.rules.push(rule);
     }
@@ -711,7 +682,7 @@ impl WindowManager {
             ordered.push(f);
         }
         for id in workspace.windows.iter().rev() {
-            if focused.map_or(true, |f| *id != f) {
+            if focused != Some(*id) {
                 ordered.push(*id);
             }
         }
@@ -779,7 +750,7 @@ impl WindowManager {
                     .map(|o| o.active_workspace)
                     .unwrap_or(1)
             });
-        let mode = rule_mode.unwrap_or_else(|| match self.wm_mode {
+        let mode = rule_mode.unwrap_or(match self.wm_mode {
             WmMode::Tiling => WindowMode::Tiled,
             WmMode::Floating => WindowMode::Floating,
         });
@@ -811,10 +782,9 @@ impl WindowManager {
             },
         );
         self.dirty = true;
-        if let Some(target) = self.workspaces.get_mut(&workspace) {
+        {
+            let target = self.workspaces.get_mut(&workspace)?;
             target.windows.push(id);
-        } else {
-            return None;
         }
         self.workspaces.get_mut(&workspace)?.focused = Some(id);
         self.focus_window(id);
@@ -932,8 +902,8 @@ impl WindowManager {
             WindowMode::Maximized => {
                 // Restore the saved floating rect so the window returns to
                 // its previous position (Windows-like maximise/unmaximise).
-                if let Some(w) = self.windows.get_mut(&id) {
-                    if let Some(saved) = w.saved_rect.take() {
+                if let Some(w) = self.windows.get_mut(&id)
+                    && let Some(saved) = w.saved_rect.take() {
                         w.mode = WindowMode::Floating;
                         w.target_rect = saved;
                         // Deliberately leave `rect` at the maximized size: it is
@@ -943,7 +913,6 @@ impl WindowManager {
                         // stays enormous inside a shrunken frame.
                         // (BUG-2026-11-19T235000: the window kept its old suit.)
                     }
-                }
                 self.dirty = true;
                 self.arrange_output(output);
                 true
@@ -1012,11 +981,10 @@ impl WindowManager {
         let was_mapped = window.mapped;
 
         // Restore from minimized state if needed.
-        if !was_mapped {
-            if let Some(w) = self.windows.get_mut(&id) {
+        if !was_mapped
+            && let Some(w) = self.windows.get_mut(&id) {
                 w.mapped = true;
             }
-        }
 
         self.focus_window(id);
 
@@ -1355,7 +1323,7 @@ pub fn equal_split(
     let mut best_ratio_dev = f64::INFINITY;
     let screen_ratio = rect.width as f64 / rect.height as f64;
     for rows in 1..=n {
-        let cols = (n + rows - 1) / rows; // ceil(n / rows)
+        let cols = n.div_ceil(rows); // ceil(n / rows)
         let max_dim = rows.max(cols);
         let cell_ratio = screen_ratio * (rows as f64 / cols as f64);
         let ratio_dev = (cell_ratio - 1.0).abs();
@@ -1388,7 +1356,7 @@ pub fn equal_split(
 
 #[cfg(test)]
 mod tests {
-    use super::{Rect, Output, TilingLayout, WindowManager, WindowMode, WindowRule, equal_split, titlebar_button_at, TitlebarButton};
+    use super::{Rect, TilingLayout, WindowManager, WindowMode, WindowRule, equal_split, titlebar_button_at, TitlebarButton};
 
     fn manager() -> (WindowManager, u64) {
         let mut manager = WindowManager::new();
@@ -1500,7 +1468,7 @@ mod tests {
 
         assert!(manager.move_window_to_workspace(second, 2));
         assert_eq!(manager.focused_id(), Some(first));
-        assert!(manager.window(second).unwrap().focused == false);
+        assert!(!manager.window(second).unwrap().focused);
     }
 
     #[test]

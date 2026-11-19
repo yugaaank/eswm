@@ -13,8 +13,7 @@ use std::{
 };
 
 pub use smithay::utils::SERIAL_COUNTER as SCOUNTER;
-use smithay::desktop::{layer_map_for_output, LayerMap, WindowSurfaceType};
-use smithay::utils::IsAlive;
+use smithay::desktop::{layer_map_for_output, WindowSurfaceType};
 use smithay::wayland::shell::wlr_layer::Layer as WlrLayer;
 use smithay::{
     backend::{
@@ -34,17 +33,17 @@ use smithay::{
         egl::{self, context::ContextPriority, EGLDevice, EGLDisplay},
         input::{
             self, AbsolutePositionEvent as _, Event as _, InputBackend, InputEvent, KeyboardKeyEvent, PointerAxisEvent,
-            PointerButtonEvent, PointerMotionAbsoluteEvent, PointerMotionEvent,
+            PointerButtonEvent, PointerMotionEvent,
         },
         libinput::{LibinputInputBackend, LibinputSessionInterface},
         renderer::{
-            damage::{Error as OutputDamageTrackerError, OutputDamageTracker},
+            damage::Error as OutputDamageTrackerError,
             element::{
                 Id,
                 memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement},
                 solid::SolidColorRenderElement,
                 surface::{render_elements_from_surface_tree, WaylandSurfaceRenderElement},
-                Kind, RenderElementStates, render_elements,
+                Kind, render_elements,
             },
             gles::GlesRenderer,
             multigpu::{gbm::GbmGlesBackend, GpuManager, MultiRenderer},
@@ -140,17 +139,11 @@ pub struct UdevData {
     pub session: LibSeatSession,
     pub primary_gpu: DrmNode,
     pub dmabuf_primary_gpu: DrmNode, // first GPU with hw accel; clients allocate here
-    pub gpu_nodes: Vec<DrmNode>,
     pub gpus: GpuManager<GbmGlesBackend<GlesRenderer, DrmDeviceFd>>,
     pub backends: HashMap<DrmNode, BackendData>,
     pub dmabuf_state: Option<(DmabufState, DmabufGlobal)>,
     cursor_images: Vec<xcursor::parser::Image>,
     cursor_buffer: Option<(MemoryRenderBuffer, (f64, f64))>, // (buffer, hotspot)
-    border_focused: Option<MemoryRenderBuffer>,
-    border_unfocused: Option<MemoryRenderBuffer>,
-    /// Cache of border render buffers keyed by (window_id, rect, color, corner_radius)
-    /// to avoid reallocating per-frame buffers for static windows.
-    border_buffer_cache: HashMap<(u64, Rect, [u8; 4], u32), Vec<MemoryRenderBuffer>>,
     /// Cache of titlebar background render buffers keyed by (window_id, rect, color, titlebar_height)
     /// to avoid reallocating per-frame buffers for static windows.
     titlebar_buffer_cache: HashMap<(u64, Rect, [u8; 4], u32), MemoryRenderBuffer>,
@@ -292,7 +285,7 @@ fn load_cursor_images() -> Vec<xcursor::parser::Image> {
 pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
     let mut event_loop = EventLoop::<'static, State>::try_new()?;
     let handle = event_loop.handle();
-    let mut display: Display<State> = Display::new()?;
+    let display: Display<State> = Display::new()?;
     let mut display_handle = display.handle();
 
     // Grab the seat before any DRM access (libseat/logind).
@@ -316,7 +309,7 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
             })
     };
     // Collect all GPU nodes for fallback hardware acceleration
-    let gpu_nodes = if let Ok(var) = std::env::var("TACIT_DRM_DEVICE") {
+    let gpu_nodes = if let Ok(_var) = std::env::var("TACIT_DRM_DEVICE") {
         vec![primary_gpu]
     } else {
         let mut nodes = all_gpus(&seat_name)
@@ -325,13 +318,11 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
             .filter_map(|x| DrmNode::from_path(&x).ok())
             .collect::<Vec<_>>();
         // Also add the render node of the primary GPU if different
-        if let Some(render) = primary_gpu.node_with_type(NodeType::Render) {
-            if let Ok(r) = render {
-                if !nodes.iter().any(|n| n.dev_id() == r.dev_id() && n.ty() == r.ty()) {
+        if let Some(render) = primary_gpu.node_with_type(NodeType::Render)
+            && let Ok(r) = render
+                && !nodes.iter().any(|n| n.dev_id() == r.dev_id() && n.ty() == r.ty()) {
                     nodes.push(r);
                 }
-            }
-        }
         nodes
     };
     info!("Using {primary_gpu} as primary gpu; all GPUs: {gpu_nodes:?}");
@@ -341,15 +332,11 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         session,
         primary_gpu,
         dmabuf_primary_gpu: primary_gpu, // will be updated after hw accel detection
-        gpu_nodes,
         gpus: GpuManager::new(GbmGlesBackend::with_context_priority(ContextPriority::High))?,
         backends: HashMap::new(),
         dmabuf_state: None,
         cursor_images,
         cursor_buffer: None,
-        border_focused: None,
-        border_unfocused: None,
-        border_buffer_cache: HashMap::new(),
         titlebar_buffer_cache: HashMap::new(),
         pointer_location: (0.0, 0.0).into(),
         last_mods: ModifiersState::default(),
@@ -390,23 +377,22 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         .handle()
         .insert_source(libinput_backend, move |mut event, _, data: &mut State| {
             if let InputEvent::DeviceAdded { device } = &mut event {
-                if device.has_capability(DeviceCapability::Keyboard) {
-                    if let Some(led_state) = data.seat.get_keyboard().map(|key| key.led_state()) {
+                if device.has_capability(DeviceCapability::Keyboard)
+                    && let Some(led_state) = data.seat.get_keyboard().map(|key| key.led_state()) {
                         device.led_update(led_state.into());
                     }
-                }
                 // Touchpad usability: libinput's defaults leave tap-to-click,
                 // tap-drag and disable-while-typing off, and the cursor drifts
                 // at low accel. Configure touchpads here (ref: wm-wayland
                 // applies its config as each device appears, so hotplug works).
                 if device.config_tap_finger_count() > 0 {
                     use smithay::reexports::input::ScrollMethod;
-                    device.config_tap_set_enabled(true);
-                    device.config_tap_set_drag_enabled(true);
-                    device.config_tap_set_drag_lock_enabled(true);
-                    device.config_dwt_set_enabled(true);
-                    device.config_scroll_set_method(ScrollMethod::TwoFinger);
-                    device.config_accel_set_speed(0.7);
+                    let _ = device.config_tap_set_enabled(true);
+                    let _ = device.config_tap_set_drag_enabled(true);
+                    let _ = device.config_tap_set_drag_lock_enabled(true);
+                    let _ = device.config_dwt_set_enabled(true);
+                    let _ = device.config_scroll_set_method(ScrollMethod::TwoFinger);
+                    let _ = device.config_accel_set_speed(0.7);
                     info!("touchpad configured: {} (tap, dwt, two-finger scroll)", device.name());
                 }
             }
@@ -481,7 +467,7 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
         };
-        if let Err(err) = state.device_added(node, &path) {
+        if let Err(err) = state.device_added(node, path) {
             warn!("skipping device {device_id}: {err:?}");
         }
     }
@@ -659,15 +645,14 @@ let lua_config_path = std::env::var("XDG_CONFIG_HOME")
     .join("eswm")
     .join("config.lua");
 
-if lua_config_path.exists() {
-    if let Some(lua) = &state.lua {
+if lua_config_path.exists()
+    && let Some(lua) = &state.lua {
         let snapshot = state.ipc.as_ref().unwrap().snapshot.clone();
         let cmd_tx = state.ipc.as_ref().unwrap().cmd_tx.clone();
         if let Err(e) = crate::lua_state::_do_file(lua, lua_config_path.to_str().unwrap(), snapshot, &cmd_tx) {
             tracing::warn!("Failed to load Lua config {}: {e}", lua_config_path.display());
         }
     }
-}
 
 
     while !state.udev.as_ref().unwrap().quit.load(Ordering::SeqCst) {
@@ -682,7 +667,7 @@ let cmds: Vec<crate::ipc::CompCmd> = if let Some(ipc) = &state.ipc {
 } else {
     Vec::new()
 };
-let mut ipc_opt = state.ipc.take();
+let ipc_opt = state.ipc.take();
 if let Some(ref ipc) = ipc_opt {
     for cmd in cmds {
         ipc::apply_cmd(&mut state, ipc, cmd);
@@ -828,6 +813,7 @@ fn render_stats_tick(u: &mut UdevData) {
 // (render_now, keep_pending): a deferred redraw must survive the in-flight
 // window, otherwise the commit is silently dropped (Hyprland learned this the
 // hard way — see its "pending damage must keep the frame alive" comment).
+#[cfg_attr(not(test), allow(dead_code))] // exercised by the redraw tests
 fn next_redraw_state(redraw_needed: bool, frame_in_flight: bool) -> (bool, bool) {
     if should_render(redraw_needed, frame_in_flight) {
         (true, false)
@@ -922,37 +908,37 @@ fn parse_key(name: &str) -> Option<u32> {
     use xkbcommon::xkb::keysyms;
     let name = name.to_lowercase();
     match name.as_str() {
-        "return" | "enter" => Some(keysyms::KEY_Return as u32),
-        "q" => Some(keysyms::KEY_q as u32),
-        "f" => Some(keysyms::KEY_f as u32),
-        "m" => Some(keysyms::KEY_m as u32),
-        "space" => Some(keysyms::KEY_space as u32),
-        "backspace" => Some(keysyms::KEY_BackSpace as u32),
-        "left" => Some(keysyms::KEY_Left as u32),
-        "right" => Some(keysyms::KEY_Right as u32),
-        "up" => Some(keysyms::KEY_Up as u32),
-        "down" => Some(keysyms::KEY_Down as u32),
-        "1" => Some(keysyms::KEY_1 as u32),
-        "2" => Some(keysyms::KEY_2 as u32),
-        "3" => Some(keysyms::KEY_3 as u32),
-        "4" => Some(keysyms::KEY_4 as u32),
-        "5" => Some(keysyms::KEY_5 as u32),
-        "6" => Some(keysyms::KEY_6 as u32),
-        "7" => Some(keysyms::KEY_7 as u32),
-        "8" => Some(keysyms::KEY_8 as u32),
-        "9" => Some(keysyms::KEY_9 as u32),
-        "vt1" => Some(keysyms::KEY_XF86Switch_VT_1 as u32),
-        "vt2" => Some(keysyms::KEY_XF86Switch_VT_2 as u32),
-        "vt3" => Some(keysyms::KEY_XF86Switch_VT_3 as u32),
-        "vt4" => Some(keysyms::KEY_XF86Switch_VT_4 as u32),
-        "vt5" => Some(keysyms::KEY_XF86Switch_VT_5 as u32),
-        "vt6" => Some(keysyms::KEY_XF86Switch_VT_6 as u32),
-        "vt7" => Some(keysyms::KEY_XF86Switch_VT_7 as u32),
-        "vt8" => Some(keysyms::KEY_XF86Switch_VT_8 as u32),
-        "vt9" => Some(keysyms::KEY_XF86Switch_VT_9 as u32),
-        "vt10" => Some(keysyms::KEY_XF86Switch_VT_10 as u32),
-        "vt11" => Some(keysyms::KEY_XF86Switch_VT_11 as u32),
-        "vt12" => Some(keysyms::KEY_XF86Switch_VT_12 as u32),
+        "return" | "enter" => Some(keysyms::KEY_Return),
+        "q" => Some(keysyms::KEY_q),
+        "f" => Some(keysyms::KEY_f),
+        "m" => Some(keysyms::KEY_m),
+        "space" => Some(keysyms::KEY_space),
+        "backspace" => Some(keysyms::KEY_BackSpace),
+        "left" => Some(keysyms::KEY_Left),
+        "right" => Some(keysyms::KEY_Right),
+        "up" => Some(keysyms::KEY_Up),
+        "down" => Some(keysyms::KEY_Down),
+        "1" => Some(keysyms::KEY_1),
+        "2" => Some(keysyms::KEY_2),
+        "3" => Some(keysyms::KEY_3),
+        "4" => Some(keysyms::KEY_4),
+        "5" => Some(keysyms::KEY_5),
+        "6" => Some(keysyms::KEY_6),
+        "7" => Some(keysyms::KEY_7),
+        "8" => Some(keysyms::KEY_8),
+        "9" => Some(keysyms::KEY_9),
+        "vt1" => Some(keysyms::KEY_XF86Switch_VT_1),
+        "vt2" => Some(keysyms::KEY_XF86Switch_VT_2),
+        "vt3" => Some(keysyms::KEY_XF86Switch_VT_3),
+        "vt4" => Some(keysyms::KEY_XF86Switch_VT_4),
+        "vt5" => Some(keysyms::KEY_XF86Switch_VT_5),
+        "vt6" => Some(keysyms::KEY_XF86Switch_VT_6),
+        "vt7" => Some(keysyms::KEY_XF86Switch_VT_7),
+        "vt8" => Some(keysyms::KEY_XF86Switch_VT_8),
+        "vt9" => Some(keysyms::KEY_XF86Switch_VT_9),
+        "vt10" => Some(keysyms::KEY_XF86Switch_VT_10),
+        "vt11" => Some(keysyms::KEY_XF86Switch_VT_11),
+        "vt12" => Some(keysyms::KEY_XF86Switch_VT_12),
         _ => None,
     }
 }
@@ -969,7 +955,7 @@ fn find_lua_keybind<'a>(
             && kb_mods.ctrl == mods.ctrl
             && kb_mods.alt == mods.alt
             && kb_mods.shift == mods.shift;
-        let key_match = parse_key(&kb.key).map_or(false, |k| k == raw);
+        let key_match = parse_key(&kb.key) == Some(raw);
         mods_match && key_match
     })
 }
@@ -980,11 +966,10 @@ fn execute_keybind(state: &mut State, kb: &lua_state::Keybind) -> FilterResult<(
         "spawn_terminal" => crate::spawn_terminal(),
         "spawn_fuzzel" => crate::spawn_on_socket("fuzzel", &[]),
         "close_window" => {
-            if let Some(id) = state.wm.focused_id() {
-                if let Some(toplevel) = crate::toplevel_for_window(state, id) {
+            if let Some(id) = state.wm.focused_id()
+                && let Some(toplevel) = crate::toplevel_for_window(state, id) {
                     toplevel.send_close();
                 }
-            }
         }
         "switch_workspace" => {
             if let Some(ws) = kb.arg {
@@ -992,12 +977,11 @@ fn execute_keybind(state: &mut State, kb: &lua_state::Keybind) -> FilterResult<(
             }
         }
         "move_window_to_workspace" => {
-            if let Some(ws) = kb.arg {
-                if let Some(id) = state.wm.focused_id() {
+            if let Some(ws) = kb.arg
+                && let Some(id) = state.wm.focused_id() {
                     state.wm.move_window_to_workspace(id, ws);
                     crate::apply_layout(state);
                 }
-            }
         }
         "cycle_focus_prev" => {
             if state.wm.cycle_focus(-1) {
@@ -1057,7 +1041,7 @@ fn execute_keybind(state: &mut State, kb: &lua_state::Keybind) -> FilterResult<(
             if let Some(cmd) = &kb.cmd {
                 let (program, args) = crate::parse_cmd(cmd);
                 if !program.is_empty() {
-                    crate::spawn_on_socket(&program, &args);
+                    crate::spawn_on_socket(program, &args);
                 }
             }
         }
@@ -1071,11 +1055,10 @@ fn execute_keybind(state: &mut State, kb: &lua_state::Keybind) -> FilterResult<(
                 .store(true, Ordering::SeqCst);
         }
         "change_vt" => {
-            if let Some(vt) = kb.arg {
-                if let Err(err) = state.udev.as_mut().unwrap().session.change_vt(vt) {
+            if let Some(vt) = kb.arg
+                && let Err(err) = state.udev.as_mut().unwrap().session.change_vt(vt) {
                     warn!("failed to switch to vt {vt}: {err:?}");
                 }
-            }
         }
         _ => {
             warn!("unknown keybind action: {}", kb.action);
@@ -1107,8 +1090,6 @@ fn process_shortcut(state: &mut State, mods: &ModifiersState, keysym: KeysymHand
 // Linux input event codes for mouse buttons
 const BTN_LEFT: u32 = 0x110;
 const BTN_RIGHT: u32 = 0x111;
-/// Focus frame width drawn behind every placed window.
-const BORDER_PX: i32 = 2;
 
 /// Recompute pointer (hover/drag) focus from `pos` and return the surface-local
 /// hit for `Pointer.motion`, or None when over empty space.
@@ -1428,9 +1409,9 @@ impl State {
                         return;
                     }
                     // Super+button starts a move/resize drag on a floating window
-                    if mods.logo && (button == BTN_LEFT || button == BTN_RIGHT) {
-                        if let Some(id) = self.wm.window_at((location.x, location.y), self.wm.border_size()) {
-                            if self.wm.window(id).map(|w| w.mode) == Some(wm::WindowMode::Floating) {
+                    if mods.logo && (button == BTN_LEFT || button == BTN_RIGHT)
+                        && let Some(id) = self.wm.window_at((location.x, location.y), self.wm.border_size())
+                            && self.wm.window(id).map(|w| w.mode) == Some(wm::WindowMode::Floating) {
                                 let rect = self.wm.window(id).unwrap().target_rect;
                                 self.udev.as_mut().unwrap().drag = Some(DragState {
                                     window: id,
@@ -1444,13 +1425,11 @@ impl State {
                                     button,
                                 });
                             }
-                        }
-                    }
                     // Titlebar button clicks: close / maximize / minimize.
                     // Clicking the titlebar itself (not a button) drags a floating window.
                     let titlebar_height = self.decoration.lock().unwrap().titlebar_height;
-                    if titlebar_height > 0 {
-                        if let Some(id) = self.wm.window_at((location.x, location.y), self.wm.border_size()) {
+                    if titlebar_height > 0
+                        && let Some(id) = self.wm.window_at((location.x, location.y), self.wm.border_size()) {
                             let window = self.wm.window(id).unwrap();
                             let rect = window.target_rect;
                             let mode = window.mode;
@@ -1476,7 +1455,6 @@ impl State {
                                 }
                             }
                         }
-                    }
                     // Dock bar click-to-focus / toggle-minimize (bottom strip of primary output).
                     let dec = self.decoration.lock().unwrap();
                     let dock_height = dec.dock_height;
@@ -1491,8 +1469,8 @@ impl State {
                         ))
                     });
                     drop(dec);
-                    if dock_height > 0 {
-                        if let Some((gx, gy, gw, gh)) = dock {
+                    if dock_height > 0
+                        && let Some((gx, _gy, gw, gh)) = dock {
                             // Dock strip sits inside the non-exclusive zone (above
                             // any bottom-anchored layer like waybar), matching the
                             // render side; work_area already has dock_h subtracted.
@@ -1537,7 +1515,6 @@ impl State {
                                 }
                             }
                         }
-                    }
                     // click to focus + wl_keyboard enter (empty clicks keep focus)
                     let id = self.wm.window_at((location.x, location.y), self.wm.border_size());
                     if let Some(id) = id {
@@ -1848,8 +1825,8 @@ impl State {
         self.wm.focus_workspace(wm_output, 1);
 
         output.user_data().insert_if_missing(|| UdevOutputId {
-            crtc,
             device_id: node,
+            crtc,
         });
         self.primary_output = Some(output.clone());
 
@@ -1874,12 +1851,10 @@ impl State {
 
         let surface = SurfaceData {
             dh: self.dh.clone(),
-            device_id: node,
             render_node: device.render_node,
             global: Some(global),
             output: output.clone(),
             drm_output,
-            damage_tracker: OutputDamageTracker::from_output(&output),
             last_presentation_time: None,
             vblank_throttle_timer: None,
             frame_in_flight: false,
@@ -1957,7 +1932,7 @@ impl State {
             self.connector_disconnected(node, connector, crtc);
         }
 
-        if let Some(mut backend_data) = self.udev.as_mut().unwrap().backends.remove(&node) {
+        if let Some(backend_data) = self.udev.as_mut().unwrap().backends.remove(&node) {
             if let Some(render_node) = backend_data.render_node {
                 self.udev.as_mut().unwrap().gpus.as_mut().remove_node(&render_node);
             }
@@ -2036,8 +2011,8 @@ impl State {
             frame_duration.saturating_sub(clock.saturating_sub(last))
         });
 
-        if let Some(vblank_remaining_time) = vblank_remaining_time {
-            if vblank_remaining_time > frame_duration / 2 {
+        if let Some(vblank_remaining_time) = vblank_remaining_time
+            && vblank_remaining_time > frame_duration / 2 {
                 static WARN_ONCE: std::sync::Once = std::sync::Once::new();
                 WARN_ONCE.call_once(|| {
                     warn!("display running faster than expected, throttling vblanks");
@@ -2074,7 +2049,6 @@ impl State {
                 }
                 return;
             }
-        }
 
         if let Some(surface) = self
             .udev
@@ -2240,7 +2214,7 @@ impl State {
             )
         };
 
-        let time_ms = now(self); // must precede the mutable udev borrow below
+        let _time_ms = now(self); // must precede the mutable udev borrow below
         let udev = self.udev.as_mut().unwrap();
         let mut renderer = if primary_gpu == render_node {
             udev.gpus.single_renderer(&render_node)
@@ -2345,7 +2319,7 @@ impl State {
         let titlebar_color_focused = self.wm.titlebar_color_focused();
         let titlebar_color_unfocused = self.wm.titlebar_color_unfocused();
         let dec = self.decoration.lock().unwrap();
-        let corner_radius = dec.corner_radius;
+        let _corner_radius = dec.corner_radius;
         let titlebar_height = dec.titlebar_height;
         drop(dec);
         // Titlebar height and border size are independent: a titlebar can be
@@ -2353,7 +2327,7 @@ impl State {
         // strip overlaps the top of the client surface by design (the client
         // fills target_rect; its top zone is hidden behind the titlebar).
         if border_size > 0 || titlebar_height > 0 {
-            let bp = border_size as f64;
+            let _bp = border_size as f64;
             for (ws, x, y, id, focused, rect) in &placed {
                 // Popups are not wm windows: no server-side border or titlebar.
                 // They render as a plain surface tree at the positioner-resolved
@@ -2435,7 +2409,7 @@ impl State {
                 elements.extend(border_elements);
                 // Titlebar strip (middle layer: on top of surface, under borders).
                 if !is_popup && titlebar_height > 0 && !matches!(mode, wm::WindowMode::Fullscreen) {
-                    let tb_w = rect.width as u32;
+                    let tb_w = rect.width;
                     let tb_h = titlebar_height;
                     let tb_px = if *focused { titlebar_color_focused } else { titlebar_color_unfocused };
                     let tb_px = [tb_px[0], tb_px[1], tb_px[2], tb_px[3]];
@@ -2487,12 +2461,12 @@ impl State {
                     // Borders pushed earlier are at low index (on top). Buttons next,
                     // then titlebar background last (below buttons, above surface).
                     elements.extend(button_elements);
-                    if let Some(elem) = MemoryRenderBufferRenderElement::from_buffer(
+                    if let Ok(elem) = MemoryRenderBufferRenderElement::from_buffer(
                         &mut renderer,
                         Point::from((rect.x as f64, rect.y as f64 - titlebar_height as f64)),
                         &tb_buf,
                         None, None, None, Kind::Unspecified,
-                    ).ok() {
+                    ) {
                         elements.push(EswmRenderElements::Cursor(elem));
                     }
                 }
@@ -2512,7 +2486,7 @@ impl State {
                 );
             }
         } else {
-            for (ws, x, y, _, _, rect) in &placed {
+            for (ws, x, y, _, _, _rect) in &placed {
                 let tree_elements = render_elements_from_surface_tree(
                     &mut renderer,
                     ws,
@@ -2587,18 +2561,18 @@ impl State {
         let dock_height = dec.dock_height;
         drop(dec);
         tracing::debug!("dock debug: dock_height={} mode_size={:?} entries={}", dock_height, mode_size.map(|s| (s.w, s.h)), self.wm.dock_entries().len());
-        if dock_height > 0 {
-            if let Some(size) = mode_size {
+        if dock_height > 0
+            && let Some(size) = mode_size {
                 let loc = output.current_location();
                 let entries = self.wm.dock_entries();
                 let n = entries.len() as u32;
-                tracing::debug!("dock debug: drawing dock at y={} h={} n={} size={}x{} loc={:?}", loc.y + size.h as i32 - dock_height as i32, dock_height, n, size.w, size.h, loc);
+                tracing::debug!("dock debug: drawing dock at y={} h={} n={} size={}x{} loc={:?}", loc.y + size.h - dock_height as i32, dock_height, n, size.w, size.h, loc);
                 if n > 0 {
                     let dock_y = self.wm.work_area
                         .map(|wa| (wa.y + wa.height as i32) as f64)
-                        .unwrap_or((loc.y + size.h as i32 - dock_height as i32) as f64);
+                        .unwrap_or((loc.y + size.h - dock_height as i32) as f64);
                     let dock_h = dock_height as i32;
-                    let total_w = size.w as i32;
+                    let total_w = size.w;
                     let seg_w = total_w / n as i32;
 
                     // Z-order (smithay: earlier index = on top): segments are
@@ -2711,19 +2685,18 @@ impl State {
                             } else {
                                 Point::from((loc.x as f64, dock_y))
                             };
-                            if let Some(elem) = MemoryRenderBufferRenderElement::from_buffer(
+                            if let Ok(elem) = MemoryRenderBufferRenderElement::from_buffer(
                                 &mut renderer,
                                 pos,
                                 buf,
                                 None, None, None, Kind::Unspecified,
-                            ).ok() {
+                            ) {
                                 dock_elements.push(EswmRenderElements::Cursor(elem));
                             }
                         }
                     }
                 }
             }
-        }
         // Dock on top of windows: index 0 renders last (on top).
         elements.splice(0..0, dock_elements);
 
@@ -2875,7 +2848,7 @@ impl State {
                 .current_mode()
                 .map(|m| callback_min_gap_ms(m.refresh as u32))
                 .unwrap_or(16);
-            self.frame_callbacks(gap, drawn_surfaces.iter().map(|s| *s));
+            self.frame_callbacks(gap, drawn_surfaces.iter().copied());
         }
 
         if reschedule {
@@ -2975,7 +2948,6 @@ impl State {
 
 struct SurfaceData {
     dh: DisplayHandle,
-    device_id: DrmNode,
     render_node: Option<DrmNode>,
     global: Option<GlobalId>,
     output: Output,
@@ -2985,7 +2957,6 @@ struct SurfaceData {
         Option<OutputPresentationFeedback>,
         DrmDeviceFd,
     >,
-    damage_tracker: OutputDamageTracker,
     last_presentation_time: Option<Duration>,
     vblank_throttle_timer: Option<RegistrationToken>,
     /// True between queue_frame and the matching vblank (see frame_finish).
@@ -3003,7 +2974,7 @@ impl Drop for SurfaceData {
     }
 }
 
-struct BackendData {
+pub(crate) struct BackendData {
     surfaces: HashMap<crtc::Handle, SurfaceData>,
     drm_output_manager: DrmOutputManager<
         GbmAllocator<DrmDeviceFd>,
@@ -3017,6 +2988,7 @@ struct BackendData {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)] // payloads exist to make hotplug failure logs useful
 enum DeviceAddError {
     DeviceOpen(String),
     DrmDevice(DrmError),
@@ -3231,15 +3203,19 @@ mod tests {
             cmd: None,
             action: "quit".into(),
         };
-        let mut mods = ModifiersState::default();
-        mods.logo = true;
-        mods.alt = true;
-        let raw = xkbcommon::xkb::keysyms::KEY_BackSpace as u32;
+        let mods = ModifiersState {
+            logo: true,
+            alt: true,
+            ..Default::default()
+        };
+        let raw = xkbcommon::xkb::keysyms::KEY_BackSpace;
         let matched = find_lua_keybind(std::slice::from_ref(&kb), &mods, raw);
         assert!(matched.is_some(), "Super+Alt+Backspace should match quit keybind");
         // Wrong modifiers must not match.
-        let mut wrong = ModifiersState::default();
-        wrong.logo = true;
+        let wrong = ModifiersState {
+            logo: true,
+            ..Default::default()
+        };
         assert!(find_lua_keybind(std::slice::from_ref(&kb), &wrong, raw).is_none());
     }
 }

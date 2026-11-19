@@ -1,4 +1,4 @@
-/// Minimal Lua embed for eswm config API (M3/M4).
+// Minimal Lua embed for eswm config API (M3/M4).
 // Provides: Lua state init, API registration, and do_file/do_chunk.
 // Bridges `Snapshot` and `CompCmd` so Lua scripts can keybind, reload,
 // and query state — matching Hyprland's `hl.bind`, `hl.define_submap`, `hl.dsp.*`, `hl.config{}`.

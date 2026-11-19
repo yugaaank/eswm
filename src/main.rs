@@ -15,34 +15,22 @@ mod lua_state;
 mod udev;
 mod wm;
 use ipc::Ipc;
-use lua_state::{init, register_api, _do_file, _do_chunk};
-use mlua::Lua;
 
 use smithay::{
-    backend::{
-        allocator::Fourcc,
-        renderer::{
-            element::{
-                memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement},
-                surface::{render_elements_from_surface_tree, WaylandSurfaceRenderElement},
-                Kind, RenderElementStates,
-            },
-            gles::GlesRenderer,
-            utils::{draw_render_elements, on_commit_buffer_handler, with_renderer_surface_state},
-            Color32F, Frame, Renderer,
+    backend::renderer::{
+            utils::{on_commit_buffer_handler, with_renderer_surface_state},
         },
-    },
     output::{Mode, Output, PhysicalProperties, Subpixel},
-    desktop::{layer_map_for_output, LayerMap, WindowSurfaceType},
+    desktop::{layer_map_for_output, WindowSurfaceType},
     utils::IsAlive,
     delegate_compositor, delegate_data_device, delegate_layer_shell, delegate_output, delegate_seat,
     delegate_shm, delegate_viewporter, delegate_xdg_decoration, delegate_xdg_shell,
-    input::{keyboard::FilterResult, Seat, SeatHandler, SeatState},
+    input::{Seat, SeatHandler, SeatState},
         reexports::{
         calloop::LoopHandle,
-        wayland_server::{protocol::wl_seat, Display, DisplayHandle, ListeningSocket},
+        wayland_server::{protocol::wl_seat, DisplayHandle},
     },
-    utils::{Point, Logical, Rectangle, Size, Serial, Transform},
+    utils::{Rectangle, Serial},
     wayland::{
         output::{OutputHandler, OutputManagerState},
         buffer::BufferHandler,
@@ -56,7 +44,7 @@ use smithay::{
         },
         shell::xdg::{
             decoration::{XdgDecorationHandler, XdgDecorationState},
-            PopupSurface, PositionerState, SurfaceCachedState, ToplevelSurface, XdgShellHandler,
+            PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler,
             XdgShellState, XdgToplevelSurfaceData,
         },
         shell::wlr_layer::{Layer, LayerSurface, WlrLayerShellHandler, WlrLayerShellState},
@@ -272,7 +260,8 @@ pub fn window_id_of(surface: &WlSurface) -> Option<wm::WindowId> {
 // M5 placement, shared by the udev and winit render loops: active-workspace,
 // mapped windows at their wm target_rect.
 // (surface, x, y, id, focused, rect)
-pub fn placed_windows(state: &mut State) -> Vec<(WlSurface, i32, i32, wm::WindowId, bool, wm::Rect)> {
+#[allow(clippy::mutable_key_type)] // WlSurface hashes by identity; the map is rebuilt every frame
+pub(crate) fn placed_windows(state: &mut State) -> Vec<(WlSurface, i32, i32, wm::WindowId, bool, wm::Rect)> {
     // Render windows in stack order (workspace.windows order) so that a floating
     // window brought to the front on focus/click renders above the others.
     // smithay draws render elements back-to-front, so the first element here
@@ -316,12 +305,11 @@ pub fn placed_windows(state: &mut State) -> Vec<(WlSurface, i32, i32, wm::Window
     // element last). workspace.windows order is intentionally left untouched so
     // that focus cycling (Super+arrow) visits every window, including floating
     // ones, in a stable order.
-    if let Some(pos) = placed.iter().position(|(_, _, _, _, focused, _)| *focused) {
-        if pos != 0 {
+    if let Some(pos) = placed.iter().position(|(_, _, _, _, focused, _)| *focused)
+        && pos != 0 {
             let focused_win = placed.remove(pos);
             placed.insert(0, focused_win);
         }
-    }
     // Add popup surfaces at the front so they paint above toplevel windows.
     // Popups are modal and should render above their parent and all other windows.
     // Position: parent window-geometry origin + positioner geometry (anchor,
@@ -429,7 +417,7 @@ pub fn rect_contains(rect: wm::Rect, x: f64, y: f64) -> bool {
 }
 
 /// Screen rect of a tracked popup, used for pointer hit-testing.
-pub fn popup_screen_rect(state: &State, popup: &PopupSurface) -> Option<wm::Rect> {
+pub(crate) fn popup_screen_rect(state: &State, popup: &PopupSurface) -> Option<wm::Rect> {
     state
         .popups
         .iter()
@@ -438,7 +426,7 @@ pub fn popup_screen_rect(state: &State, popup: &PopupSurface) -> Option<wm::Rect
 }
 
 /// Toplevel that owns a popup; keyboard focus returns here on dismissal.
-pub fn popup_owner_window(state: &State, popup: &PopupSurface) -> Option<wm::WindowId> {
+pub(crate) fn popup_owner_window(state: &State, popup: &PopupSurface) -> Option<wm::WindowId> {
     state
         .popups
         .iter()
@@ -529,11 +517,10 @@ impl State {
     /// toplevel's window-geometry origin, or another popup's own origin.
     fn popup_parent_coord(&self, parent_surface: Option<&WlSurface>) -> (i32, i32) {
         let Some(parent_surface) = parent_surface else { return (0, 0) };
-        if let Some(id) = window_id_of(parent_surface) {
-            if let Some(window) = self.wm.window(id) {
+        if let Some(id) = window_id_of(parent_surface)
+            && let Some(window) = self.wm.window(id) {
                 return (window.target_rect.x, window.target_rect.y);
             }
-        }
         if let Some(parent) = self
             .popups
             .iter()
@@ -547,11 +534,9 @@ impl State {
             if let Some(layer) = map
                 .layers()
                 .find(|l| l.wl_surface() == parent_surface)
-            {
-                if let Some(geom) = map.layer_geometry(layer) {
+                && let Some(geom) = map.layer_geometry(layer) {
                     return (geom.loc.x, geom.loc.y);
                 }
-            }
         }
         (0, 0)
     }
@@ -572,7 +557,7 @@ impl State {
             }
         }
         map.arrange();
-        for layer in map.layers() {
+        for _layer in map.layers() {
             // Layer mapping was logged at creation time in new_layer_surface
         }
         // Insent tiled windows from exclusive layer-surface zones (waybar, panels)
@@ -687,18 +672,29 @@ impl SeatHandler for State {
     fn cursor_image(&mut self, _seat: &Seat<Self>, _image: smithay::input::pointer::CursorImageStatus) {}
 }
 
-struct State {
+/// Dock strip render signature: output geometry + per-entry visual state.
+/// Rebuild the cached buffers only when this changes.
+type DockBufferSignature = (u32, i32, i32, Vec<(u64, bool, bool, char)>);
+
+pub(crate) struct State {
     compositor_state: CompositorState,
     xdg_shell_state: XdgShellState,
     layer_shell_state: WlrLayerShellState,
+    // These protocol states are never read directly, but dropping them would
+    // leave live globals pointing at freed handler data, so they are owned here
+    // for their lifetime side effect. (Yes, that is an unusual kind of field.)
+    #[allow(dead_code)]
     decoration_state: XdgDecorationState,
     shm_state: ShmState,
+    #[allow(dead_code)]
     viewporter_state: ViewporterState,
     seat_state: SeatState<Self>,
+    #[allow(dead_code)]
     output_state: OutputManagerState,
     data_device_state: DataDeviceState,
 
     seat: Seat<Self>,
+    #[allow(dead_code)] // owns the wl_output global's backing data
     output: Output,
     pub wm: wm::WindowManager,
     pub dh: DisplayHandle,
@@ -717,7 +713,7 @@ struct State {
     // states. Reusing the same MemoryRenderBuffer across frames lets smithay
     // cache the GPU texture; rebuilding buffers every frame uploaded ~230KB+
     // per frame and made the compositor lag.
-    pub dock_buffers: std::sync::Mutex<Option<((u32, i32, i32, Vec<(u64, bool, bool, char)>), Vec<smithay::backend::renderer::element::memory::MemoryRenderBuffer>)>>,
+    pub dock_buffers: std::sync::Mutex<Option<(DockBufferSignature, Vec<smithay::backend::renderer::element::memory::MemoryRenderBuffer>)>>,
     // M4: real DRM backend data; None in nested (winit) mode
     udev: Option<udev::UdevData>,
     // M4: calloop scheduling handle (timers, idle); None in nested mode
@@ -805,9 +801,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // The standalone DRM/libinput backend is the product runtime. Winit is kept
     // behind an explicit setting for nested development and protocol tests.
-    match std::env::var("TACIT_COMP_BACKEND").as_deref() {
-        _ => crate::udev::run_udev(),
-    }
+    crate::udev::run_udev()
 }
 
 fn socket_name() -> String {
@@ -876,7 +870,7 @@ fn new_state(
         shm_state,
         viewporter_state,
         seat_state,
-        output_state: OutputManagerState::new_with_xdg_output::<State>(&dh),
+        output_state: OutputManagerState::new_with_xdg_output::<State>(dh),
         data_device_state: DataDeviceState::new::<State>(dh),
         seat,
         output,
@@ -905,7 +899,7 @@ fn new_state(
 /// Reap WM entries whose toplevel disappeared without a compositor callback (for
 /// example after a client lost its display socket). Stale entries otherwise hold
 /// master/stack slots forever.
-pub fn prune_dead_windows(state: &mut State) -> usize {
+pub(crate) fn prune_dead_windows(state: &mut State) -> usize {
     let dead: Vec<wm::WindowId> = state
         .wm
         .window_ids()
@@ -948,7 +942,7 @@ fn apply_decoration_to_wm(state: &mut State) {
 }
 
 // M5: push target rects to clients as xdg_toplevel size configures, then mark applied.
-pub fn apply_layout(state: &mut State) {
+pub(crate) fn apply_layout(state: &mut State) {
     apply_decoration_to_wm(state);
     // Refresh the dock entries cache (active + minimized windows on the active
     // workspace) so frontends can read it via es.dock.entries().
@@ -1058,7 +1052,7 @@ pub fn spawn_on_socket(program: &str, args: &[&str]) {
             Ok(file) => cmd.stderr(Stdio::from(file)),
             Err(_) => cmd.stderr(Stdio::null()),
         };
-        cmd.pre_exec(|| unsafe {
+        cmd.pre_exec(|| {
             // detach from the compositor process group so VT signals don't hit it
             libc::setsid();
             Ok(())
@@ -1121,11 +1115,14 @@ delegate_data_device!(State);
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Imported here, not at module scope: only the tests construct a Display,
+    // so a crate-level import is dead weight (and clippy --fix deletes it).
+    use smithay::reexports::wayland_server::Display;
     use crate::control::handle_request;
     use serde_json::Value;
 
     fn test_state() -> State {
-        let mut display: Display<State> = Display::new().expect("create test display");
+        let display: Display<State> = Display::new().expect("create test display");
         let dh = display.handle();
         let mut state = new_state("test", &dh, true);
         state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
@@ -1181,7 +1178,7 @@ mod tests {
     // (new_toplevel -> wm.add_window -> apply_layout sends configure.)
     #[test]
     fn fixture_client_creates_toplevel_wm_sees_app_id() {
-        let mut display: Display<State> = Display::new().expect("create test display");
+        let display: Display<State> = Display::new().expect("create test display");
         let dh = display.handle();
         let mut state = new_state("test", &dh, true);
         state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
@@ -1329,7 +1326,7 @@ mod tests {
     #[test]
     fn xdg_popup_handler_compiles_and_tracks_popups() {
         // RED: verifies xdg_popup handler is wired and popups vec is accessible
-        let mut display: Display<State> = Display::new().expect("create test display");
+        let display: Display<State> = Display::new().expect("create test display");
         let dh = display.handle();
         let mut state = new_state("test", &dh, true);
         state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
@@ -1352,7 +1349,7 @@ mod tests {
     fn placed_windows_includes_popups() {
         // RED: verifies popup surfaces are included in placed_windows for rendering
         // GREEN: placed_windows iterates state.popups and adds them to the render list
-        let mut display: Display<State> = Display::new().expect("create test display");
+        let display: Display<State> = Display::new().expect("create test display");
         let dh = display.handle();
         let mut state = new_state("test", &dh, true);
         state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
@@ -1378,7 +1375,7 @@ mod tests {
     fn xdg_popup_grab_tracks_active_popup() {
         // RED: verifies popup grab tracking for modal input forwarding
         // GREEN: grab() sets state.popup_grab; release clears it
-        let mut display: Display<State> = Display::new().expect("create test display");
+        let display: Display<State> = Display::new().expect("create test display");
         let dh = display.handle();
         let mut state = new_state("test", &dh, true);
         state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
@@ -1396,7 +1393,7 @@ mod tests {
     fn popup_dismissed_on_outside_click() {
         // RED: verifies click outside popup sends xdg_popup.dismissed
         // GREEN: pointer button handler checks grab + hit-test, sends dismissed
-        let mut display: Display<State> = Display::new().expect("create test display");
+        let display: Display<State> = Display::new().expect("create test display");
         let dh = display.handle();
         let mut state = new_state("test", &dh, true);
         state.seat.add_keyboard(Default::default(), 200, 200).unwrap();

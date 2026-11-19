@@ -1,3 +1,7 @@
+// Historical prototype (Hyprland-compatible IPC). Kept for reference and the
+// event socket; not part of the product goal. Dead code here is expected.
+#![allow(dead_code)]
+
 // M2: hyprctl-compatible IPC server. Compat contract (see notes/status.md):
 // eswm shells out to the `hyprctl` binary, which finds us through
 // $HYPRLAND_INSTANCE_SIGNATURE -> $XDG_RUNTIME_DIR/hypr/<sig>/.socket.sock.
@@ -112,9 +116,8 @@ pub fn apply_cmd(state: &mut State, ipc: &Ipc, cmd: CompCmd) {
     match cmd {
         CompCmd::Reload => ipc.sinks.emit("configreloaded", ""),
         CompCmd::GotoWorkspace(ws) => {
-            let output = state.wm.primary_output_id();
-            if output.is_some() {
-                state.wm.focus_workspace(output.unwrap(), ws);
+            if let Some(output) = state.wm.primary_output_id() {
+                state.wm.focus_workspace(output, ws);
                 crate::apply_layout(state);
             }
         }
@@ -218,11 +221,10 @@ impl Ipc {
         let cmd_path = dir.join(".socket.sock");
         let event_path = dir.join(".socket2.sock");
         for p in [&cmd_path, &event_path] {
-            if let Ok(md) = std::fs::metadata(p) {
-                if md.file_type().is_socket() {
+            if let Ok(md) = std::fs::metadata(p)
+                && md.file_type().is_socket() {
                     std::fs::remove_file(p).ok();
                 }
-            }
         }
         let cmd_l = UnixListener::bind(&cmd_path).expect("bind .socket.sock");
         let event_l = UnixListener::bind(&event_path).expect("bind .socket2.sock");
@@ -300,17 +302,6 @@ pub fn handle_request(request: &str, snap: &Arc<Mutex<Snapshot>>, cmd_tx: &flume
     let path = cmd.split_whitespace().next().unwrap_or_default().to_owned();
     let args = cmd[path.len()..].trim().to_owned();
 
-    // reload is the one request with a side effect before a reply; the main
-    // loop drains the channel and emits `configreloaded` when it processes it
-    macro_rules! requires {
-        ($variant:expr) => {
-            match cmd_tx.send($variant) {
-                Ok(()) => "ok".to_string(),
-                Err(_) => "compositor loop gone".into(),
-            }
-        };
-    }
-
     let snap = snap.lock().unwrap();
     match (j, r, path.as_str()) {
         (true, _, "monitors") => serde_json::to_string(&monitors_json(&snap)).unwrap(),
@@ -383,7 +374,7 @@ pub fn handle_request(request: &str, snap: &Arc<Mutex<Snapshot>>, cmd_tx: &flume
         }
         (false, _, "define_submap") => {
             // Parse "map_name" from args; send as CompCmd
-            let map_name = args.trim().split_whitespace().next().unwrap_or("").to_string();
+            let map_name = args.split_whitespace().next().unwrap_or("").to_string();
             let _ = cmd_tx.send(CompCmd::Unsupported(format!("define_submap {}", map_name)));
             "ok".to_string()
         }
@@ -394,7 +385,7 @@ pub fn handle_request(request: &str, snap: &Arc<Mutex<Snapshot>>, cmd_tx: &flume
 }
 
 fn parse_ws(args: &str) -> i32 {
-    args.trim().split_whitespace().next().and_then(|w| w.replace("special:", "r").parse().ok()).unwrap_or(1)
+    args.split_whitespace().next().and_then(|w| w.replace("special:", "r").parse().ok()).unwrap_or(1)
 }
 
 /// hyprctl -j version: Hyprland field shape, our own identity. Clients parse
@@ -574,7 +565,7 @@ fn active_window(snap: &Snapshot) -> Value {
 fn workspace_obj(ws: (i32, String), snap: &Snapshot) -> Value {
     let (id, name) = ws;
     let count = snap.clients.iter().filter(|c| c.workspace_id == Some(id)).count();
-    let last = snap.clients.iter().filter(|c| c.workspace_id == Some(id)).last();
+    let last = snap.clients.iter().rev().find(|c| c.workspace_id == Some(id));
     json!({
         "address": id.to_string(),
         "id": id,

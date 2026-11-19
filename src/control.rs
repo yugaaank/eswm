@@ -35,11 +35,10 @@ pub struct Control {
 impl Control {
     pub fn start(socket: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let path = socket_path(socket);
-        if let Ok(meta) = std::fs::symlink_metadata(&path) {
-            if meta.file_type().is_socket() {
+        if let Ok(meta) = std::fs::symlink_metadata(&path)
+            && meta.file_type().is_socket() {
                 std::fs::remove_file(&path)?;
             }
-        }
         let listener = UnixListener::bind(&path)?;
         let (tx, rx) = flume::unbounded::<Request>();
         std::thread::Builder::new()
