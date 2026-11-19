@@ -1,0 +1,82 @@
+story_id: e06s03
+verified_at: "2026-11-20T04:10:00Z"
+verifier: verify-work
+branch: e06s03-keyboard-focus
+risk: P3
+phases:
+  preflight:
+    passed: true
+    notes:
+      - "No PR open for branch; gh pr checks N/A."
+      - "python3 scripts/spec-lint.py: ok (19 task files, 8 epics)."
+  verify_validation:
+    passed: true
+    commands:
+      - cmd: "cargo test --bin eswm update_keyboard_focus"
+        exit_code: 0
+        result: "1 passed, 93 filtered out (update_keyboard_focus_follows_focused_toplevel_when_no_layer)"
+      - cmd: "cargo test --bin eswm layer_keyboard_interactive"
+        exit_code: 0
+        result: "1 passed, 93 filtered out (layer_keyboard_interactive_focus_policy_without_interactive_layer)"
+      - cmd: "cargo test --bin eswm keyboard_focus_restored"
+        exit_code: 0
+        result: "1 passed, 93 filtered out (keyboard_focus_restored_to_toplevel_after_layer_loss)"
+      - cmd: "cargo test --bin eswm keyboard_focus"
+        exit_code: 0
+        result: "3 passed, 91 filtered out"
+  smoke:
+    passed: null
+    skipped: true
+    note: "Skipped for P3 risk."
+  build:
+    passed: true
+    command: "cargo build"
+  typecheck:
+    passed: true
+    note: "Covered by cargo build/cargo clippy (Rust)."
+  lint:
+    passed: true
+    command: "cargo clippy --all-targets"
+  tests:
+    passed: null
+    skipped: true
+    note: "Skipped as phase for P3 risk (task verify commands executed and passed)."
+  terminal_verdict:
+    command: "cargo clippy --all-targets"
+    exit_code: 0
+    captured_at: "2026-11-20T04:09:30Z"
+    note: "Single contiguous run on branch; clean (after clippy fix)."
+  security_scan:
+    passed: null
+    skipped: true
+    note: "Skipped for P3 risk."
+  blind_spots:
+    passed: null
+    note: "scripts/check-blind-spots.sh not present; N/A."
+  completeness_critic:
+    passed: null
+    note: "scripts/lib/completeness-critic.sh not present; N/A."
+  adversarial:
+    passed: null
+    note: "scripts/verify-adversarial.sh not present; N/A."
+  manual:
+    skipped: true
+    note: "Step-by-step UAT skipped for P3 risk. Story verification script not executed on DRM runtime in this session."
+    steps:
+      - step: "Window has focus; OnDemand layer maps; window keeps focus."
+        expected: "Keyboard focus remains on the focused window when an OnDemand layer maps/commits."
+        actual: "Not executed manually (P3 skip). Automated tests cover focus-policy fallback/restore paths but do not simulate real wlr-layer-shell protocol objects."
+        passed: null
+      - step: "Clicking the layer gives it focus."
+        expected: "OnDemand layer receives keyboard focus on click."
+        actual: "Not executed manually (P3 skip). Click-to-focus for layer surfaces may depend on layer hit-testing not covered by this slice."
+        passed: null
+      - step: "Exclusive overlay takes focus; gives it back when destroyed."
+        expected: "Exclusive layer takes keyboard focus while mapped; focus returns to last-focused toplevel on unmap/destroy."
+        actual: "Not executed manually (P3 skip). Implementation updates focus on interactive layer commit/destroy via update_keyboard_focus; runtime confirmation pending."
+        passed: null
+  gaps:
+    closed: false
+    items:
+      - "Runtime/DRM UAT for layer-surface keyboard focus (OnDemand/Exclusive, click behavior, focus restoration) not performed; P3 depth skipped manual verification."
+      - "Automated tests are policy-level/unit-style and do not construct real wlr-layer-shell protocol surfaces; behavior with actual layer clients (e.g. fuzzel) remains to be confirmed."
