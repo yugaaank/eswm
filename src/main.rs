@@ -436,6 +436,57 @@ pub(crate) fn popup_owner_window(state: &State, popup: &PopupSurface) -> Option<
         .and_then(|t| window_id_of(t.wl_surface()))
 }
 
+/// Convert a smithay RegionAttributes into our wm input-region representation.
+pub(crate) fn region_attrs_to_input(attrs: &smithay::wayland::compositor::RegionAttributes) -> wm::InputRegion {
+    use smithay::wayland::compositor::RectangleKind;
+    wm::InputRegion {
+        rects: Some(
+            attrs
+                .rects
+                .iter()
+                .map(|(kind, rect)| {
+                    let add = matches!(kind, RectangleKind::Add);
+                    (
+                        add,
+                        wm::Rect {
+                            x: rect.loc.x,
+                            y: rect.loc.y,
+                            width: rect.size.w.max(0) as u32,
+                            height: rect.size.h.max(0) as u32,
+                        },
+                    )
+                })
+                .collect(),
+        ),
+    }
+}
+
+/// Apply a committed input region to a window (None = default whole surface).
+pub(crate) fn apply_window_input_region(
+    _state: &mut State,
+    _window_id: wm::WindowId,
+    _attrs: Option<&smithay::wayland::compositor::RegionAttributes>,
+) {
+    // RED(e06s02t1): conversion/storage wired in the implementation commit.
+}
+
+/// Sync committed input region from a wl_surface onto its wm window, if any.
+pub(crate) fn sync_window_input_region(state: &mut State, surface: &WlSurface) {
+    let Some(window_id) = window_id_of(surface) else {
+        return;
+    };
+    let region = with_states(surface, |states| {
+        states
+            .cached_state
+            .get::<smithay::wayland::compositor::SurfaceAttributes>()
+            .current()
+            .input_region
+            .clone()
+    });
+    apply_window_input_region(state, window_id, region.as_ref());
+}
+
+
 fn toplevel_for_window(state: &State, id: wm::WindowId) -> Option<ToplevelSurface> {
     state
         .xdg_shell_state
@@ -1126,7 +1177,7 @@ mod tests {
 
     fn test_state() -> State {
         let display: Display<State> = Display::new().expect("create test display");
-        let dh = display.handle();
+        let mut dh = display.handle();
         let mut state = new_state("test", &dh, true);
         state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
         state
@@ -1137,7 +1188,7 @@ mod tests {
     fn fixture_inserts_client_over_unixstream() {
         use std::os::unix::net::UnixStream;
         let mut display: Display<State> = Display::new().expect("create test display");
-        let dh = display.handle();
+        let mut dh = display.handle();
         let mut state = new_state("test", &dh, true);
         state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
         let (server_end, client_end) = UnixStream::pair().expect("unix stream pair");
@@ -1182,7 +1233,7 @@ mod tests {
     #[test]
     fn fixture_client_creates_toplevel_wm_sees_app_id() {
         let display: Display<State> = Display::new().expect("create test display");
-        let dh = display.handle();
+        let mut dh = display.handle();
         let mut state = new_state("test", &dh, true);
         state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
 
@@ -1330,7 +1381,7 @@ mod tests {
     fn xdg_popup_handler_compiles_and_tracks_popups() {
         // RED: verifies xdg_popup handler is wired and popups vec is accessible
         let display: Display<State> = Display::new().expect("create test display");
-        let dh = display.handle();
+        let mut dh = display.handle();
         let mut state = new_state("test", &dh, true);
         state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
 
@@ -1353,7 +1404,7 @@ mod tests {
         // RED: verifies popup surfaces are included in placed_windows for rendering
         // GREEN: placed_windows iterates state.popups and adds them to the render list
         let display: Display<State> = Display::new().expect("create test display");
-        let dh = display.handle();
+        let mut dh = display.handle();
         let mut state = new_state("test", &dh, true);
         state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
 
@@ -1379,7 +1430,7 @@ mod tests {
         // RED: verifies popup grab tracking for modal input forwarding
         // GREEN: grab() sets state.popup_grab; release clears it
         let display: Display<State> = Display::new().expect("create test display");
-        let dh = display.handle();
+        let mut dh = display.handle();
         let mut state = new_state("test", &dh, true);
         state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
 
@@ -1397,7 +1448,7 @@ mod tests {
         // RED: verifies click outside popup sends xdg_popup.dismissed
         // GREEN: pointer button handler checks grab + hit-test, sends dismissed
         let display: Display<State> = Display::new().expect("create test display");
-        let dh = display.handle();
+        let mut dh = display.handle();
         let mut state = new_state("test", &dh, true);
         state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
 
@@ -1437,6 +1488,31 @@ mod tests {
     fn full_hd() -> wm::Rect {
         wm::Rect { x: 0, y: 0, width: 1920, height: 1080 }
     }
+
+    // e06s02t1: wl_surface.input_region is tracked per window on commit.
+    #[test]
+    fn input_region_tracks_surface() {
+        use smithay::wayland::compositor::{RectangleKind, RegionAttributes};
+
+        let mut state = test_state();
+        let output_id = state.wm.primary_output_id().unwrap();
+        let window_id = state.wm.add_window(output_id, "app", "t").expect("add window");
+
+        let attrs = RegionAttributes {
+            rects: vec![
+                (RectangleKind::Add, Rectangle::new((10, 20).into(), (100, 50).into())),
+                (RectangleKind::Subtract, Rectangle::new((30, 30).into(), (10, 10).into())),
+            ],
+        };
+        crate::apply_window_input_region(&mut state, window_id, Some(&attrs));
+
+        let w = state.wm.window(window_id).expect("window");
+        assert!(!w.input_region.is_default(), "input region should be tracked");
+        assert!(w.input_region.contains(15, 25), "inside added rect");
+        assert!(!w.input_region.contains(35, 35), "inside subtracted rect");
+        assert!(!w.input_region.contains(5, 5), "outside region");
+    }
+
 
     #[test]
     fn popup_positioner_context_menu_at_cursor() {

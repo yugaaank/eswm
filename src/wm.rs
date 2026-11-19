@@ -39,6 +39,40 @@ pub enum TilingLayout {
     Equal,
 }
 
+/// Input region in surface-local coordinates, as committed by wl_surface.
+/// `None` means the default: the whole surface accepts input.
+/// `Some(rects)` means only those rects accept input (empty = no input at all).
+/// Rects follow RegionAttributes semantics (add/subtract in order).
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct InputRegion {
+    /// None = infinite/default surface; Some = explicit region ops applied in order.
+    pub rects: Option<Vec<(bool, Rect)>>, // (add=true/subtract=false, rect)
+}
+
+impl InputRegion {
+    pub fn is_default(&self) -> bool {
+        self.rects.is_none()
+    }
+
+    /// Test a point in surface-local coordinates against this region.
+    pub fn contains(&self, x: i32, y: i32) -> bool {
+        let Some(rects) = &self.rects else {
+            return true;
+        };
+        let mut inside = false;
+        for &(add, r) in rects {
+            let hit = x >= r.x
+                && y >= r.y
+                && x < r.x + r.width as i32
+                && y < r.y + r.height as i32;
+            if hit {
+                inside = add;
+            }
+        }
+        inside
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Window {
     pub id: WindowId,
@@ -58,6 +92,8 @@ pub struct Window {
     pub xdg_offset: (i32, i32),
     /// Focus state last sent to the client as xdg Activated; None = never sent.
     pub activated_sent: Option<bool>,
+    /// Committed wl_surface input region (surface-local). None/default = whole surface.
+    pub input_region: InputRegion,
 }
 
 #[derive(Clone, Debug)]
@@ -453,6 +489,14 @@ impl WindowManager {
         }
     }
 
+    pub fn set_window_input_region(&mut self, id: WindowId, region: InputRegion) -> bool {
+        let Some(window) = self.windows.get_mut(&id) else {
+            return false;
+        };
+        window.input_region = region;
+        true
+    }
+
     pub fn set_window_meta(&mut self, id: WindowId, app_id: String, title: String) -> bool {
         if let Some(window) = self.windows.get_mut(&id) {
             window.app_id = app_id;
@@ -779,6 +823,7 @@ impl WindowManager {
                 saved_rect: None,
                 activated_sent: None,
                 xdg_offset: (0, 0),
+                input_region: InputRegion::default(),
             },
         );
         self.dirty = true;
