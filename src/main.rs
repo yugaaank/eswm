@@ -1183,7 +1183,7 @@ mod tests {
 
     fn test_state() -> State {
         let display: Display<State> = Display::new().expect("create test display");
-        let mut dh = display.handle();
+        let dh = display.handle();
         let mut state = new_state("test", &dh, true);
         state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
         state
@@ -1194,7 +1194,7 @@ mod tests {
     fn fixture_inserts_client_over_unixstream() {
         use std::os::unix::net::UnixStream;
         let mut display: Display<State> = Display::new().expect("create test display");
-        let mut dh = display.handle();
+        let dh = display.handle();
         let mut state = new_state("test", &dh, true);
         state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
         let (server_end, client_end) = UnixStream::pair().expect("unix stream pair");
@@ -1239,7 +1239,7 @@ mod tests {
     #[test]
     fn fixture_client_creates_toplevel_wm_sees_app_id() {
         let display: Display<State> = Display::new().expect("create test display");
-        let mut dh = display.handle();
+        let dh = display.handle();
         let mut state = new_state("test", &dh, true);
         state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
 
@@ -1387,7 +1387,7 @@ mod tests {
     fn xdg_popup_handler_compiles_and_tracks_popups() {
         // RED: verifies xdg_popup handler is wired and popups vec is accessible
         let display: Display<State> = Display::new().expect("create test display");
-        let mut dh = display.handle();
+        let dh = display.handle();
         let mut state = new_state("test", &dh, true);
         state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
 
@@ -1410,7 +1410,7 @@ mod tests {
         // RED: verifies popup surfaces are included in placed_windows for rendering
         // GREEN: placed_windows iterates state.popups and adds them to the render list
         let display: Display<State> = Display::new().expect("create test display");
-        let mut dh = display.handle();
+        let dh = display.handle();
         let mut state = new_state("test", &dh, true);
         state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
 
@@ -1436,7 +1436,7 @@ mod tests {
         // RED: verifies popup grab tracking for modal input forwarding
         // GREEN: grab() sets state.popup_grab; release clears it
         let display: Display<State> = Display::new().expect("create test display");
-        let mut dh = display.handle();
+        let dh = display.handle();
         let mut state = new_state("test", &dh, true);
         state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
 
@@ -1454,7 +1454,7 @@ mod tests {
         // RED: verifies click outside popup sends xdg_popup.dismissed
         // GREEN: pointer button handler checks grab + hit-test, sends dismissed
         let display: Display<State> = Display::new().expect("create test display");
-        let mut dh = display.handle();
+        let dh = display.handle();
         let mut state = new_state("test", &dh, true);
         state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
 

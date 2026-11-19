@@ -1,6 +1,6 @@
 story_id: e06s02
 title: surface_under with input regions for pointer focus
-status: pending
+status: passing
 bcps: 3
 delta: ADDED
 tasks:
@@ -15,4 +15,4 @@ tasks:
   - id: e06s02t3
     description: Handle empty input_region (no pointer events) and None (default full rect)
     verify: cargo test --bin eswm input_region_empty_and_default
-    status: pending
+    status: passing

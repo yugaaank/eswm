@@ -50,6 +50,7 @@ pub struct InputRegion {
 }
 
 impl InputRegion {
+    #[cfg_attr(not(test), allow(dead_code))] // queried by tests and future callers
     pub fn is_default(&self) -> bool {
         self.rects.is_none()
     }
