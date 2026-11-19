@@ -1,6 +1,6 @@
 active_flow: e06-input-focus
 bug_cycle: {}
-active_story: none
+active_story: e06s02
 handoff:
   next_skill: develop-tdd
 decisions:

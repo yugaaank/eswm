@@ -7,7 +7,7 @@ tasks:
   - id: e06s02t1
     description: Implement wl_surface.input_region handler — track region per surface in Window data
     verify: cargo test --bin eswm input_region_tracks_surface
-    status: pending
+    status: passing
   - id: e06s02t2
     description: Modify surface_under / window_at to use input_region for hit-testing instead of opaque rect
     verify: cargo test --bin eswm surface_under
