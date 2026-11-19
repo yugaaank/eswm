@@ -463,11 +463,15 @@ pub(crate) fn region_attrs_to_input(attrs: &smithay::wayland::compositor::Region
 
 /// Apply a committed input region to a window (None = default whole surface).
 pub(crate) fn apply_window_input_region(
-    _state: &mut State,
-    _window_id: wm::WindowId,
-    _attrs: Option<&smithay::wayland::compositor::RegionAttributes>,
+    state: &mut State,
+    window_id: wm::WindowId,
+    attrs: Option<&smithay::wayland::compositor::RegionAttributes>,
 ) {
-    // RED(e06s02t1): conversion/storage wired in the implementation commit.
+    let region = match attrs {
+        Some(a) => region_attrs_to_input(a),
+        None => wm::InputRegion::default(),
+    };
+    state.wm.set_window_input_region(window_id, region);
 }
 
 /// Sync committed input region from a wl_surface onto its wm window, if any.
@@ -678,6 +682,8 @@ impl CompositorHandler for State {
     fn commit(&mut self, surface: &WlSurface) {
         on_commit_buffer_handler::<Self>(surface);
         self.map_layer_surfaces();
+        // e06s02t1: track committed input region for toplevel window surfaces.
+        crate::sync_window_input_region(self, surface);
         // Popup lifecycle evidence: log the map/unmap transition so a run from
         // a TTY proves whether the client actually attached a buffer.
         if let Some(i) = self.popups.iter().position(|p| p.surface.wl_surface() == surface) {
