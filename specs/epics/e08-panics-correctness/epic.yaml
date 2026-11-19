@@ -3,7 +3,7 @@ slug: panics-correctness
 title: Panics & Correctness
 status: pending
 wsjf_rank: 7
-bcps_total: 13
+bcps_total: 16
 core_value: |
   Fix panics (dock underflow, floating_target underflow, connector modes, renderer
   errors) and correctness bugs (close button, dock layering, fullscreen layering,
@@ -23,4 +23,9 @@ stories:
     title: Scale, cursors, input settings
     bcps: 3
     delta: MODIFIED
+    status: pending
+  - id: e08s04
+    title: Window state flags and content scaling
+    bcps: 3
+    delta: ADDED
     status: pending

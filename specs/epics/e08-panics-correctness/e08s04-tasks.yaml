@@ -1,0 +1,23 @@
+story_id: e08s04
+title: Window state flags and content scaling
+status: pending
+bcps: 3
+delta: ADDED
+notes: |
+  Candidate implementation exists uncommitted in src/main.rs (xdg
+  Maximized/Fullscreen states + viewport dst override). It was written to work
+  around BUG-2026-11-19T235000, whose real cause was a missing configure on the
+  titlebar path; re-evaluate the viewport half before keeping it.
+tasks:
+  - id: e08s04t1
+    description: Set xdg_toplevel Maximized/Fullscreen in the pending configure and clear them for other modes
+    verify: cargo test --bin eswm xdg_state_flags_follow_window_mode
+    status: pending
+  - id: e08s04t2
+    description: Verify on DRM that kitty, a GTK4 app and one other toolkit resize into a maximized rect on a plain size configure
+    verify: "manual: on a TTY, maximize each app from the titlebar and from Super+M, confirm content fills the rect"
+    status: pending
+  - id: e08s04t3
+    description: Keep the viewport dst override only if task 2 fails for a real client; otherwise delete it
+    verify: cargo test --bin eswm apply_layout
+    status: pending
