@@ -156,6 +156,49 @@ pub struct BorderFrame {
     pub right: Rect,
 }
 
+/// Server-side titlebar buttons, ordered right-to-left in the strip:
+/// close is rightmost, then maximize, then minimize.
+///
+/// BUG-2026-11-19T235000: pure hit-testing so the click handler cannot drift
+/// from the renderer again. (The maximize button used to work, honest — until
+/// nobody told the client about it.)
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TitlebarButton {
+    Close,
+    Maximize,
+    Minimize,
+}
+
+/// Resolve which titlebar button (if any) sits at screen-x `x`.
+///
+/// Returns `None` when `x` is outside the titlebar strip or in the free
+/// titlebar area left of the buttons (used for drag-to-move on floating
+/// windows). Button layout mirrors the renderer: right-aligned at
+/// `rect.x + rect.width`, each button `titlebar_height - 2` wide with a 4px gap.
+pub fn titlebar_button_at(rect: Rect, titlebar_height: u32, x: f64) -> Option<TitlebarButton> {
+    let right = rect.x as f64 + rect.width as f64;
+    if x < rect.x as f64 || x >= right {
+        return None;
+    }
+    let tb = titlebar_height as f64;
+    let btn_size = (tb - 2.0).max(0.0);
+    if btn_size <= 0.0 {
+        return None;
+    }
+    let btn_gap = 4.0;
+    let offset_from_right = right - x;
+    let slot = btn_size + btn_gap;
+    if offset_from_right < slot {
+        Some(TitlebarButton::Close)
+    } else if offset_from_right < 2.0 * slot {
+        Some(TitlebarButton::Maximize)
+    } else if offset_from_right < 3.0 * slot {
+        Some(TitlebarButton::Minimize)
+    } else {
+        None
+    }
+}
+
 /// Compute the border frame for a window's target_rect.
 /// The frame extends `border_size` pixels outward on all sides, plus
 /// `titlebar_height` pixels upward from the top edge.
@@ -893,7 +936,12 @@ impl WindowManager {
                     if let Some(saved) = w.saved_rect.take() {
                         w.mode = WindowMode::Floating;
                         w.target_rect = saved;
-                        w.rect = saved;
+                        // Deliberately leave `rect` at the maximized size: it is
+                        // the "already applied" marker apply_layout compares
+                        // against. Setting it here makes layout think the
+                        // restore is done, sends no configure, and the client
+                        // stays enormous inside a shrunken frame.
+                        // (BUG-2026-11-19T235000: the window kept its old suit.)
                     }
                 }
                 self.dirty = true;
@@ -1340,7 +1388,7 @@ pub fn equal_split(
 
 #[cfg(test)]
 mod tests {
-    use super::{Rect, Output, TilingLayout, WindowManager, WindowMode, WindowRule, equal_split};
+    use super::{Rect, Output, TilingLayout, WindowManager, WindowMode, WindowRule, equal_split, titlebar_button_at, TitlebarButton};
 
     fn manager() -> (WindowManager, u64) {
         let mut manager = WindowManager::new();
@@ -1612,6 +1660,33 @@ mod tests {
     }
 
     #[test]
+    fn titlebar_button_at_maps_close_maximize_minimize() {
+        // 100px-wide window at x=50, 30px titlebar -> btn_size 28, gap 4, slot 32.
+        let rect = Rect { x: 50, y: 100, width: 100, height: 200 };
+        let right = 150.0;
+        // Close occupies [118, 150), maximize [86, 118), minimize [54, 86).
+        assert_eq!(
+            titlebar_button_at(rect, 30, right - 1.0),
+            Some(TitlebarButton::Close)
+        );
+        assert_eq!(
+            titlebar_button_at(rect, 30, right - 33.0),
+            Some(TitlebarButton::Maximize)
+        );
+        assert_eq!(
+            titlebar_button_at(rect, 30, right - 65.0),
+            Some(TitlebarButton::Minimize)
+        );
+        // Left of the buttons: free titlebar area (drag zone), not a button.
+        assert_eq!(titlebar_button_at(rect, 30, 52.0), None);
+        // Outside the window rect entirely.
+        assert_eq!(titlebar_button_at(rect, 30, 150.0), None);
+        assert_eq!(titlebar_button_at(rect, 30, 49.0), None);
+        // No titlebar, no buttons.
+        assert_eq!(titlebar_button_at(rect, 0, right - 1.0), None);
+    }
+
+    #[test]
     fn toggle_maximized_saves_and_restores_rect() {
         let (mut manager, output) = manager();
         let window = manager.add_window(output, "kitty", "one").unwrap();
@@ -1624,6 +1699,36 @@ mod tests {
         let w = manager.window(window).unwrap();
         assert_eq!(w.mode, WindowMode::Floating);
         assert_eq!(w.target_rect, before);
+    }
+
+    #[test]
+    fn toggle_maximized_restore_forces_size_configure() {
+        let (mut manager, output) = manager();
+        let window = manager.add_window(output, "kitty", "one").unwrap();
+        manager.set_mode(window, WindowMode::Floating);
+        let original = Rect { x: 100, y: 100, width: 400, height: 300 };
+        manager.set_window_rect(window, original);
+        // The client acknowledged the original size (what apply_layout does).
+        manager.set_rect(window, original);
+
+        assert!(manager.toggle_maximized(window));
+        let maximized = manager.window(window).unwrap().target_rect;
+        assert!(maximized.width > original.width);
+        // Client acknowledged the maximized size.
+        manager.set_rect(window, maximized);
+
+        assert!(manager.toggle_maximized(window));
+        let w = manager.window(window).unwrap();
+        assert_eq!(w.mode, WindowMode::Floating);
+        assert_eq!(w.target_rect, original, "geometry returns to the saved rect");
+        // BUG-2026-11-19T235000 (restore half): if apply_layout thinks the
+        // geometry is already applied it sends no configure, so the frame
+        // shrinks and the client stays at the maximized size. A restore must
+        // leave a pending size change for apply_layout to push.
+        assert_ne!(
+            w.rect, w.target_rect,
+            "restore must leave a pending configure so the client resizes back"
+        );
     }
 
     #[test]

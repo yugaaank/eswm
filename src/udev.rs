@@ -1163,6 +1163,31 @@ fn pointer_focus(state: &mut State, pos: Point<f64, Logical>) -> Option<(wl_surf
 }
 
 /// Send wl_keyboard leave/enter for `id`; None => just leave.
+/// Perform a server-side titlebar button action and push the resulting state
+/// to clients.
+///
+/// BUG-2026-11-19T235000: every branch must go through `apply_layout`. The old
+/// inline handler called the WM directly, so the frame grew to the maximised
+/// rect while the client kept its old size — a window wearing a suit two sizes
+/// too big. (The suit has been tailored.)
+pub fn apply_titlebar_action(state: &mut State, id: wm::WindowId, button: wm::TitlebarButton) {
+    match button {
+        wm::TitlebarButton::Close => {
+            state.wm.remove_window(id);
+        }
+        wm::TitlebarButton::Maximize => {
+            state.wm.toggle_maximized(id);
+        }
+        wm::TitlebarButton::Minimize => {
+            state.wm.toggle_minimize(id);
+        }
+    }
+    // This is the actual fix: without it the WM rect changes but no configure
+    // reaches the client, so only the frame grows (BUG-2026-11-19T235000).
+    crate::apply_layout(state);
+    state.redraw_needed = true;
+}
+
 pub fn keyboard_focus_set(state: &mut State, id: Option<wm::WindowId>) {
     let changed = state
         .udev
@@ -1428,34 +1453,26 @@ impl State {
                         if let Some(id) = self.wm.window_at((location.x, location.y), self.wm.border_size()) {
                             let window = self.wm.window(id).unwrap();
                             let rect = window.target_rect;
+                            let mode = window.mode;
                             let tb = titlebar_height as f64;
                             // Titlebar is drawn above the client surface: y in [rect.y - tb, rect.y)
                             let in_titlebar = location.y >= rect.y as f64 - tb && location.y < rect.y as f64
                                 && location.x >= rect.x as f64 && location.x < rect.x as f64 + rect.width as f64;
                             if in_titlebar {
-                                let btn_size = (tb - 2.0).max(0.0);
-                                let btn_gap = 4.0;
-                                // Buttons are right-aligned at rect.x + rect.width.
-                                let offset_from_right = (rect.x as f64 + rect.width as f64) - location.x;
-                                if offset_from_right < btn_size + btn_gap {
-                                    // Close button (rightmost)
-                                    self.wm.remove_window(id);
-                                } else if offset_from_right < 2.0 * (btn_size + btn_gap) {
-                                    // Maximize button
-                                    self.wm.toggle_maximized(id);
-                                } else if offset_from_right < 3.0 * (btn_size + btn_gap) {
-                                    // Minimize button: hide window (with focus handling)
-                                    self.wm.toggle_minimize(id);
-                                } else if window.mode == wm::WindowMode::Floating {
-                                    // Titlebar drag: start move on floating window
-                                    let rect = self.wm.window(id).unwrap().target_rect;
-                                    self.udev.as_mut().unwrap().drag = Some(DragState {
-                                        window: id,
-                                        mode: DragMode::Move,
-                                        start: location,
-                                        orig_rect: rect,
-                                        button,
-                                    });
+                                match wm::titlebar_button_at(rect, titlebar_height, location.x) {
+                                    Some(button) => apply_titlebar_action(self, id, button),
+                                    None if mode == wm::WindowMode::Floating => {
+                                        // Titlebar drag: start move on floating window
+                                        let rect = self.wm.window(id).unwrap().target_rect;
+                                        self.udev.as_mut().unwrap().drag = Some(DragState {
+                                            window: id,
+                                            mode: DragMode::Move,
+                                            start: location,
+                                            orig_rect: rect,
+                                            button,
+                                        });
+                                    }
+                                    None => {}
                                 }
                             }
                         }

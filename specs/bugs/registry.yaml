@@ -157,6 +157,44 @@ bug-2026-11-17t141711:
   verify: |
     cargo test; cargo clippy
 
+bug-2026-11-19t235000:
+  id: bug-2026-11-19t235000
+  title: titlebar maximize button does not resize the client
+  severity: medium
+  status: fixed
+  reported_by: user_report
+  risk_level: low
+  security_impact: none
+  files:
+    - src/udev.rs
+    - src/wm.rs
+  description: |
+    Clicking the maximize button in the server-side titlebar grew the window
+    frame (borders + titlebar) to the maximized geometry, but the client surface
+    stayed at its previous size inside it. The Super+maximize keybind worked.
+  root_cause: |
+    The titlebar pointer handler called wm.toggle_maximized / toggle_minimize /
+    remove_window directly and never ran apply_layout, which is the only path
+    that sends xdg_toplevel.configure and calls wm.set_rect. target_rect was
+    updated by arrange_output and rendering reads target_rect, so the frame grew
+    around a client that was never configured. No redraw was requested either.
+  fix_plan: |
+    1. Extract the titlebar button hit test into a pure wm::titlebar_button_at
+       helper (with tests) so click routing cannot drift from the renderer.
+    2. Add udev::apply_titlebar_action: perform the WM action, then apply_layout
+       and request a redraw.
+    3. Route the pointer handler through it.
+  verify: |
+    cargo test titlebar (2 new tests); cargo test 86/86; cargo clippy; cargo build.
+    Live check on a DRM session: titlebar maximize resizes the client, not just
+    the frame.
+  followup: |
+    Restore half (same call site class): toggle_maximized's restore branch set
+    both rect and target_rect, so apply_layout saw rect == target, skipped the
+    configure, and the client stayed maximized inside a shrunken frame. The
+    branch now sets target_rect only. Test:
+    toggle_maximized_restore_forces_size_configure.
+
 bug-2026-11-18t160939:
   id: bug-2026-11-18t160939
   title: xdg_popup misplaced and input focus stranded after dismissal

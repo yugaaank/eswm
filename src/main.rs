@@ -1550,4 +1550,39 @@ mod tests {
         assert!(!rect_contains(r, 9.9, 40.0));
         assert!(!rect_contains(r, 50.0, 19.9));
     }
+
+    // BUG-2026-11-19T235000: the titlebar maximize button updated target_rect
+    // but never ran apply_layout, so the frame grew and the client did not.
+    #[test]
+    fn titlebar_maximize_click_configures_client_and_requests_redraw() {
+        let mut state = test_state();
+        let output_id = state.wm.primary_output_id().unwrap();
+        let id = state
+            .wm
+            .add_window(output_id, "test-app", "Test App")
+            .expect("add window");
+        // A floating window at a small size, as if the client had settled.
+        state.wm.set_mode(id, wm::WindowMode::Floating);
+        let small = wm::Rect { x: 10, y: 10, width: 400, height: 300 };
+        state.wm.set_window_rect(id, small);
+        let before = state.wm.window(id).unwrap().target_rect;
+        assert_eq!(before, small, "precondition: window starts at the small rect");
+        state.redraw_needed = false;
+
+        crate::udev::apply_titlebar_action(&mut state, id, wm::TitlebarButton::Maximize);
+
+        let after = state.wm.window(id).unwrap();
+        assert_eq!(after.mode, wm::WindowMode::Maximized);
+        assert!(
+            after.target_rect.width > before.width,
+            "maximize must widen the target rect: {:?} -> {:?}",
+            before,
+            after.target_rect
+        );
+        assert!(
+            state.redraw_needed,
+            "titlebar action must apply layout (and request a redraw), otherwise \
+             the client is never configured and the frame outgrows its content"
+        );
+    }
 }
