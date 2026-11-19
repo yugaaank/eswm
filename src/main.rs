@@ -1,4 +1,5 @@
-// M1 skeleton: nested (winit) compositor session with the shell protocol floor.
+// A Wayland compositor with a shell protocol floor. M1 ran nested in winit;
+// winit has since walked the plank, so this is the DRM standalone compositor.
 // Based on Smithay 0.7's examples/minimal.rs; everything not needed at M1 is left out.
 // M4: adds the real DRM/libinput backend (src/udev.rs), the default runtime.
 use std::{
@@ -257,7 +258,7 @@ pub fn window_id_of(surface: &WlSurface) -> Option<wm::WindowId> {
     })
 }
 
-// M5 placement, shared by the udev and winit render loops: active-workspace,
+// M5 placement, shared by the udev render loop and the test fixtures: active-workspace,
 // mapped windows at their wm target_rect.
 // (surface, x, y, id, focused, rect)
 #[allow(clippy::mutable_key_type)] // WlSurface hashes by identity; the map is rebuilt every frame
@@ -714,14 +715,14 @@ pub(crate) struct State {
     // cache the GPU texture; rebuilding buffers every frame uploaded ~230KB+
     // per frame and made the compositor lag.
     pub dock_buffers: std::sync::Mutex<Option<(DockBufferSignature, Vec<smithay::backend::renderer::element::memory::MemoryRenderBuffer>)>>,
-    // M4: real DRM backend data; None in nested (winit) mode
+    // M4: real DRM backend data; None only in the virtual-output test fixture
     udev: Option<udev::UdevData>,
-    // M4: calloop scheduling handle (timers, idle); None in nested mode
+    // M4: calloop scheduling handle (timers, idle); None only in tests
     handle: Option<LoopHandle<'static, State>>,
     // Native control channel (notes/tacit-integration.md); None if bind failed
     control: Option<control::Control>,
-    /// The smithay Output the DRM/winit backend renders on; layer surfaces are
-    /// arranged against it via LayerMap.
+    /// The smithay Output the backend renders on (DRM connector, or the test
+    /// virtual output); layer surfaces are arranged against it via LayerMap.
     primary_output: Option<Output>,
     /// desktop::LayerSurface wrappers, created once per layer surface (LayerMap
     /// needs the stable desktop wrapper, not the raw shell surface).
@@ -799,8 +800,8 @@ fn install_diag_logging() {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     install_diag_logging();
 
-    // The standalone DRM/libinput backend is the product runtime. Winit is kept
-    // behind an explicit setting for nested development and protocol tests.
+    // The standalone DRM/libinput backend is the only runtime. There is no
+    // nested window to fall back to; the virtual output below is test furniture.
     crate::udev::run_udev()
 }
 
@@ -823,9 +824,11 @@ fn new_state(
     let seat = seat_state.new_wl_seat(dh, seat_name);
     let mut wm = wm::WindowManager::new();
 
-    // In nested mode the winit window masquerades as one virtual output; the DRM
-    // backend attaches real outputs per connector instead.
+    // Tests fabricate one 1280x800 virtual output. The DRM backend attaches real
+    // outputs per connector instead (and does not call this with true).
     let output = if want_virtual_output {
+        // Named "winit" for historical reasons and because the IPC snapshot
+        // fixtures key on it. It is a test output, not a winit backend.
         let output = Output::new(
             "winit".into(),
             PhysicalProperties {

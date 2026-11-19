@@ -19,7 +19,7 @@ All planning documents, specifications, investigations, and verification outputs
 
 ## § Defensive Code Categories
 - Timeout — client IPC hangs, DRM pause/resume stalls
-- Graceful degradation — Winit dev-backend fallback, output hotplug failure
+- Graceful degradation — output hotplug failure, missing DRM node in CI
 - Retry — DRM device reopen, client reconnect
 - Rate limit — IPC message flooding from clients
 - Circuit breaker — not applied (overhead not justified at this scale)
@@ -29,7 +29,12 @@ eswm is the brand; "easy" means short, grep-unique names — no clever abbreviat
 
 ## § File Organization
 - Source under `src/`
-- Tests under `tests/`
+- Tests live inline in `src/*.rs` under `#[cfg(test)] mod tests`, not in `tests/`.
+  eswm is a single binary crate, so an integration test in `tests/` cannot see
+  `State` or any private helper — and most of what we verify is exactly that
+  (focus, placement, configures), driven through a fixture-built `State`.
+- `tests/` holds data fixtures only (`tests/fixtures/hyprctl-*.json`), read by
+  the inline tests through a relative path.
 - All planning under `specs/`
 - Config is Lua-only at `~/.config/eswm/config.lua`
 

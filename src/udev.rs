@@ -2175,7 +2175,8 @@ impl State {
             return false;
         }
         let render_started = Instant::now();
-        // Real tiling (M5): placement logic is shared with the winit loop (placed_windows).
+        // Real tiling (M5): placement logic lives in placed_windows, shared with the
+        // test fixtures. (The winit loop it once shared with has sailed away.)
         let placed = crate::placed_windows(self);
         // e05s04t3: collect surfaces that will be drawn this frame, so frame
         // callbacks go only to drawn surfaces (not hidden workspaces).

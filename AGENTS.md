@@ -4,7 +4,7 @@
 ## Project
 eswm is an independent, standalone Wayland compositor and window manager built to run Tacit.
 
-Stack: Rust 2024, smithay 0.7, wayland-server 0.31, winit, mlua.
+Stack: Rust 2024, smithay 0.7, wayland-server 0.31, mlua. DRM/libseat is the only backend.
 
 ## Commands
 | Action | Command |
@@ -16,7 +16,7 @@ Stack: Rust 2024, smithay 0.7, wayland-server 0.31, winit, mlua.
 | Preflight | `cargo clippy && cargo test && cargo build` |
 
 ## Architecture
-src/{control,ipc,lua_state,main,udev,wm}.rs plus tests/. Lua-only config via ~/.config/eswm/config.lua using the es API (es.bind, es.bind_cmd, es.dsp.*). DRM/libseat is the default runtime path; Winit is the nested dev backend.
+src/{control,ipc,lua_state,main,udev,wm}.rs plus tests/. Lua-only config via ~/.config/eswm/config.lua using the es API (es.bind, es.bind_cmd, es.dsp.*). DRM/libseat is the only runtime path; the virtual output exists for tests (ADR-0002).
 
 ## Conventions
 - eswm is the brand; "easy" means short, grep-unique names, no clever abbreviations

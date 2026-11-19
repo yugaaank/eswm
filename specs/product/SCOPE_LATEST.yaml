@@ -47,7 +47,7 @@ out_of_scope:
 
 constraints:
   - >-
-    Rust 2024; dependencies: smithay 0.7, wayland-server 0.31, winit (dev only), mlua. No new dependencies introduced in this initiative.
+    Rust 2024; dependencies: smithay 0.7, wayland-server 0.31, mlua. No new dependencies introduced in this initiative; winit is not a dependency today (ADR-0002).
   - Lua-only configuration at ~/.config/eswm/config.lua; no JSON config path.
   - DRM/libseat is the default runtime path; Winit is the nested dev backend only.
   - Never copy Pinnacle source, assets, or distinctive implementation
