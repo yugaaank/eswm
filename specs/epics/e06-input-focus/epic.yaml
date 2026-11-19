@@ -17,7 +17,7 @@ stories:
     title: surface_under with input regions for pointer focus
     bcps: 3
     delta: ADDED
-    status: pending
+    status: completed
   - id: e06s03
     title: Keyboard focus that layers can't steal (update_keyboard_focus)
     bcps: 3
