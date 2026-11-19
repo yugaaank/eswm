@@ -537,24 +537,15 @@ impl WlrLayerShellHandler for State {
     }
 
     fn layer_destroyed(&mut self, surface: LayerSurface) {
-        let had_keyboard_focus = self
-            .seat
-            .get_keyboard()
-            .and_then(|kbd| kbd.current_focus())
-            .is_some_and(|surf| surf == *surface.wl_surface());
         let wrapper = self.layer_wrappers.iter().find(|l| l.layer_surface() == &surface).cloned();
         self.layer_wrappers.retain(|l| l.layer_surface() != &surface);
         if let (Some(output), Some(wrapper)) = (self.primary_output.clone(), wrapper) {
             layer_map_for_output(&output).unmap_layer(&wrapper);
         }
-        // e06s03t3: when a layer that held keyboard focus is destroyed/unmapped,
-        // restore focus to the last-focused toplevel on the same output.
-        if had_keyboard_focus {
-            self.update_keyboard_focus();
-        } else {
-            // If an exclusive layer went away, focus policy may need to change.
-            self.update_keyboard_focus();
-        }
+        // e06s03t3/t1: destroying/unmapping a layer may remove the current or
+        // an exclusive keyboard focus holder; re-evaluate focus policy (falls
+        // back to the last-focused toplevel on the same output).
+        self.update_keyboard_focus();
     }
 }
 
