@@ -1128,13 +1128,21 @@ fn pointer_focus(state: &mut State, pos: Point<f64, Logical>) -> Option<(wl_surf
 
     crate::prune_dead_windows(state);
     let dragging = state.udev.as_ref().unwrap().drag;
-    let (id, origin) = if let Some(drag) = dragging {
+    let hit = if let Some(drag) = dragging {
         let id = drag.window;
         let rect = state.wm.window(id)?.target_rect;
-        (id, Point::from((rect.x as f64, rect.y as f64)))
+        Some((id, Point::from((rect.x as f64, rect.y as f64))))
     } else {
-        let (id, local) = state.wm.surface_under((pos.x, pos.y))?;
-        (id, Point::from((pos.x - local.0, pos.y - local.1)))
+        state
+            .wm
+            .surface_under((pos.x, pos.y))
+            .map(|(id, local)| (id, Point::from((pos.x - local.0, pos.y - local.1))))
+    };
+    let Some((id, origin)) = hit else {
+        if let Some(udev) = state.udev.as_mut() {
+            udev.pointer_focus = None;
+        }
+        return None;
     };
     if let Some(udev) = state.udev.as_mut() {
         udev.pointer_focus = Some(id);
