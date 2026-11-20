@@ -12,7 +12,7 @@ stories:
     title: "Spawning: sh -c, XDG_CURRENT_DESKTOP, XDG_STATE_HOME logs, SIGCHLD"
     bcps: 5
     delta: MODIFIED
-    status: pending
+    status: completed
   - id: e07s02
     title: "Keybinds: xkb keysym names, raw sym matching, emergency quit always on"
     bcps: 3
