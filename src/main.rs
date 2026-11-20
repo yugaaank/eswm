@@ -1168,6 +1168,11 @@ pub(crate) fn apply_layout(state: &mut State) {
     state.redraw_needed = true;
 }
 
+/// Path to the unified spawn log inside an eswm state directory.
+fn spawn_log_path_in(state_home: &std::path::Path) -> std::path::PathBuf {
+    state_home.join("eswm").join("spawn.log")
+}
+
 // Compositor keybind helper: spawn a terminal client on our own socket.
 pub fn spawn_terminal() {
     spawn_on_socket("kitty", &[]);
