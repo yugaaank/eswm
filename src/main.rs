@@ -1505,6 +1505,31 @@ mod tests {
         assert_eq!(path, std::path::PathBuf::from("/tmp/xdg/eswm/spawn.log"));
     }
 
+    static SPAWN_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn spawn_shell_command_writes_stdout_stderr_to_unified_spawn_log() {
+        let _guard = SPAWN_ENV_LOCK.lock().unwrap();
+        let tmp = std::env::temp_dir().join(format!("eswm-spawn-shell-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let prev = std::env::var_os("XDG_STATE_HOME");
+        unsafe { std::env::set_var("XDG_STATE_HOME", &tmp) };
+
+        spawn_shell_command("printf out; printf err >&2").expect("spawn shell command");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let log = spawn_log_path_in(&tmp);
+        let contents = std::fs::read_to_string(&log).unwrap();
+        assert!(contents.contains("out"), "stdout missing: {contents:?}");
+        assert!(contents.contains("err"), "stderr missing: {contents:?}");
+
+        match prev {
+            Some(v) => unsafe { std::env::set_var("XDG_STATE_HOME", v) },
+            None => unsafe { std::env::remove_var("XDG_STATE_HOME") },
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
     #[test]
     fn spawn_log_path_from_env_falls_back_to_home_local_state() {
         let path = spawn_log_path_from_env(None, Some("/home/u"));
