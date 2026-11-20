@@ -941,51 +941,13 @@ fn parse_mods(mods: &[String]) -> ModifiersState {
     m
 }
 
-/// Map a key name string to its xkb keysym u32 value.
-fn parse_key(name: &str) -> Option<u32> {
-    use xkbcommon::xkb::keysyms;
-    let name = name.to_lowercase();
-    match name.as_str() {
-        "return" | "enter" => Some(keysyms::KEY_Return),
-        "q" => Some(keysyms::KEY_q),
-        "f" => Some(keysyms::KEY_f),
-        "m" => Some(keysyms::KEY_m),
-        "space" => Some(keysyms::KEY_space),
-        "backspace" => Some(keysyms::KEY_BackSpace),
-        "left" => Some(keysyms::KEY_Left),
-        "right" => Some(keysyms::KEY_Right),
-        "up" => Some(keysyms::KEY_Up),
-        "down" => Some(keysyms::KEY_Down),
-        "1" => Some(keysyms::KEY_1),
-        "2" => Some(keysyms::KEY_2),
-        "3" => Some(keysyms::KEY_3),
-        "4" => Some(keysyms::KEY_4),
-        "5" => Some(keysyms::KEY_5),
-        "6" => Some(keysyms::KEY_6),
-        "7" => Some(keysyms::KEY_7),
-        "8" => Some(keysyms::KEY_8),
-        "9" => Some(keysyms::KEY_9),
-        "vt1" => Some(keysyms::KEY_XF86Switch_VT_1),
-        "vt2" => Some(keysyms::KEY_XF86Switch_VT_2),
-        "vt3" => Some(keysyms::KEY_XF86Switch_VT_3),
-        "vt4" => Some(keysyms::KEY_XF86Switch_VT_4),
-        "vt5" => Some(keysyms::KEY_XF86Switch_VT_5),
-        "vt6" => Some(keysyms::KEY_XF86Switch_VT_6),
-        "vt7" => Some(keysyms::KEY_XF86Switch_VT_7),
-        "vt8" => Some(keysyms::KEY_XF86Switch_VT_8),
-        "vt9" => Some(keysyms::KEY_XF86Switch_VT_9),
-        "vt10" => Some(keysyms::KEY_XF86Switch_VT_10),
-        "vt11" => Some(keysyms::KEY_XF86Switch_VT_11),
-        "vt12" => Some(keysyms::KEY_XF86Switch_VT_12),
-        _ => None,
-    }
-}
 
-/// Return the first Lua keybind whose mods and key match the current event.
+/// Return the first Lua keybind whose mods and keysym match the current event.
+/// Compares bind-relevant modifiers only (logo/ctrl/alt/shift), ignoring Caps/Num Lock.
 fn find_lua_keybind<'a>(
     keybinds: &'a [lua_state::Keybind],
     mods: &ModifiersState,
-    raw: u32,
+    raw_sym: u32,
 ) -> Option<&'a lua_state::Keybind> {
     keybinds.iter().find(|kb| {
         let kb_mods = parse_mods(&kb.mods);
@@ -993,8 +955,7 @@ fn find_lua_keybind<'a>(
             && kb_mods.ctrl == mods.ctrl
             && kb_mods.alt == mods.alt
             && kb_mods.shift == mods.shift;
-        let key_match = parse_key(&kb.key) == Some(raw);
-        mods_match && key_match
+        mods_match && kb.keysym == raw_sym
     })
 }
 
@@ -1107,7 +1068,10 @@ fn execute_keybind(state: &mut State, kb: &lua_state::Keybind) -> FilterResult<(
 // process_shortcut checks Lua keybinds; anything not configured is forwarded to clients.
 fn process_shortcut(state: &mut State, mods: &ModifiersState, keysym: KeysymHandle) -> FilterResult<()> {
     crate::prune_dead_windows(state);
-    let raw = u32::from(keysym.modified_sym());
+    let Some(raw_sym) = keysym.raw_latin_sym_or_raw_current_sym() else {
+        return FilterResult::Forward;
+    };
+    let raw = raw_sym.raw();
 
     // Lua keybinds (from es.bind() in config.lua).
     let lua_kb = {

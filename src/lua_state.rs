@@ -25,6 +25,7 @@ pub fn init() -> Result<Lua, mlua::Error> {
 #[derive(Debug, Clone)]
 pub struct Keybind {
     pub mods: Vec<String>,
+    #[allow(dead_code)]
     pub key: String,
     pub keysym: u32,
     pub action: String,
