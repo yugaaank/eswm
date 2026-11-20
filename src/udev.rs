@@ -3381,4 +3381,33 @@ mod tests {
         assert_eq!(kb.action, "quit");
     }
 
+
+
+    #[test]
+    fn intercept_release_consumed_press_intercepts_matching_release() {
+        let mut intercepted = std::collections::HashSet::new();
+        let key_code = 42u32;
+
+        let press = key_filter_result(&mut intercepted, key_code, true, || FilterResult::Intercept(()));
+        assert!(matches!(press, FilterResult::Intercept(())));
+        assert!(intercepted.contains(&key_code));
+
+        let release = key_filter_result(&mut intercepted, key_code, false, || FilterResult::Forward);
+        assert!(matches!(release, FilterResult::Intercept(())));
+        assert!(!intercepted.contains(&key_code), "release must clear intercepted key");
+    }
+
+    #[test]
+    fn intercept_release_forwarded_press_does_not_intercept_release() {
+        let mut intercepted = std::collections::HashSet::new();
+        let key_code = 7u32;
+
+        let press = key_filter_result(&mut intercepted, key_code, true, || FilterResult::Forward);
+        assert!(matches!(press, FilterResult::Forward));
+        assert!(intercepted.is_empty());
+
+        let release = key_filter_result(&mut intercepted, key_code, false, || FilterResult::Forward);
+        assert!(matches!(release, FilterResult::Forward));
+    }
+
 }
