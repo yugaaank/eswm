@@ -1310,53 +1310,24 @@ pub fn parse_cmd(cmd: &str) -> (&str, Vec<&str>) {
 
 
 // Spawn a Wayland client against eswm's socket, detached (own process group so
-// VT signals don't hit it). Stdout/stderr go to <name>-spawn.log in /tmp.
+// VT signals don't hit it). Stdout/stderr go to the unified spawn log.
 pub fn spawn_on_socket(program: &str, args: &[&str]) {
-    use std::os::unix::process::CommandExt;
-    use std::process::{Command, Stdio};
-    //WAYLAND_DISPLAY takes either absolute path or bare name relative to XDG_RUNTIME_DIR
-    let log_path = format!("/tmp/{}-spawn.log", program.replace('/', "_"));
-    let log = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path);
-    let prog_name = program.to_owned();
     // Expand leading ~ (command is run via execve, no shell to do it).
     let expand_tilde = |p: &str| -> String {
         if p == "~" || p.starts_with("~/") {
-            std::env::var("HOME").map(|h| format!("{h}{}", &p[1..])).unwrap_or_else(|_| p.to_owned())
+            std::env::var("HOME")
+                .map(|h| format!("{h}{}", &p[1..]))
+                .unwrap_or_else(|_| p.to_owned())
         } else {
             p.to_owned()
         }
     };
     let prog = expand_tilde(program);
     let expanded_args: Vec<String> = args.iter().map(|a| expand_tilde(a)).collect();
-    match unsafe {
-        let mut cmd = Command::new(&prog);
-        cmd.args(&expanded_args)
-            .env("WAYLAND_DISPLAY", socket_name())
-            // session terminal for launchers (fuzzel wraps Terminal=true apps)
-            .env("TERMINAL", "kitty")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null());
-        match log {
-            Ok(file) => cmd.stderr(Stdio::from(file)),
-            Err(_) => cmd.stderr(Stdio::null()),
-        };
-        cmd.pre_exec(|| {
-            // detach from the compositor process group so VT signals don't hit it
-            libc::setsid();
-            Ok(())
-        })
-        .spawn()
-    } {
-        Ok(mut child) => {
-            tracing::info!("spawned {prog_name} pid {}", child.id());
-            std::thread::spawn(move || match child.wait() {
-                Ok(status) => tracing::warn!("{prog_name} exited with {status}"),
-                Err(err) => tracing::warn!("{prog_name} wait failed: {err}"),
-            });
-        }
+    let arg_refs: Vec<&str> = expanded_args.iter().map(|s| s.as_str()).collect();
+    let prog_name = program.to_owned();
+    match spawn_program(&prog, &arg_refs) {
+        Ok(pid) => tracing::info!("spawned {prog_name} pid {pid}"),
         Err(err) => tracing::warn!("failed to spawn {prog_name}: {err}"),
     }
 }
