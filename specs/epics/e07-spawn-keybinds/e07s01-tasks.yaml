@@ -9,7 +9,7 @@ tasks:
     verify: "cargo test --bin eswm spawn"
     risk: P3
     security: none
-    status: failing
+    status: passing
     allure:
       severity: minor
       categories:
