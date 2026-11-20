@@ -17,7 +17,7 @@ tasks:
         - "process"
         - "unit"
   - id: e07s01t2
-    description: "Wire es.dsp.exec_cmd and es.bind_cmd to shell-string semantics; add es.dsp.exec(argv table) and es.dsp.set_terminal(...) APIs; update spawn_terminal and call sites to use configured terminal/env"
+    description: "Wire es.dsp.exec_cmd and es.bind_cmd to shell-string semantics; add top-level es.exec(argv table) and es.dsp.set_terminal(...) APIs; update spawn_terminal and call sites to use configured terminal/env"
     verify: "cargo build"
     risk: P3
     security: none

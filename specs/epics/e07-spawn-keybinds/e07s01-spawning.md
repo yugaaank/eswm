@@ -51,21 +51,21 @@ Make spawning shell-compatible for command strings, configurable for terminal/ar
 
 **In scope**
 - Shell-string execution path for `es.dsp.exec_cmd` and `es.bind_cmd` command strings.
-- New argv exec API: `es.dsp.exec({"prog","arg1",...})`.
+- New argv exec API: `es.exec({"prog","arg1",...})` (top-level).
 - Terminal configuration API and use in `spawn_terminal` / `TERMINAL` env.
-- Unified spawn log at `$XDG_STATE_HOME/eswm/spawn.log` (0600, append).
+- Unified spawn log at `$XDG_STATE_HOME/eswm/spawn.log` (0600, append, stdout+stderr).
 - Single SIGCHLD reaper integrated with calloop in real backend; testable reap helper.
 
 **Out of scope**
 - Journald logging option.
 
-## 9. Proposed decisions (for review)
+## 9. Confirmed decisions
 
 1. **Shell execution scope:** `es.dsp.exec_cmd(string)` and `es.bind_cmd` command strings run as `sh -c <string>`. Direct argv launches use argv exec.
-2. **Argv API:** add `es.dsp.exec` taking a Lua table/list of strings (first = program). Invalid/empty input returns Lua error.
+2. **Argv API:** add top-level `es.exec` taking a Lua table/list of strings (first = program). Invalid/empty input returns Lua error. Keep `es.dsp.exec_cmd` as shell-string API.
 3. **Terminal config:** add `es.dsp.set_terminal(program)` stored in shared config; default `kitty`. `spawn_terminal()` and `TERMINAL` env use configured value.
-4. **Log target/stream:** append child stderr (and keep stdout non-intrusive, consistent with current behavior) to `$XDG_STATE_HOME/eswm/spawn.log`; create dirs/file as needed with mode 0600.
-5. **Reaping:** maintain child tracking and reap via `waitpid(-1, WNOHANG)` loop on SIGCHLD in udev event loop; remove per-child `std::thread::spawn` waiters.
+4. **Log target/stream:** append child stdout and stderr to `$XDG_STATE_HOME/eswm/spawn.log`; create dirs/file as needed with mode 0600.
+5. **Reaping:** maintain child handling and reap via `waitpid(-1, WNOHANG)` loop on SIGCHLD in udev event loop; remove per-child `std::thread::spawn` waiters. Provide testable reap helper.
 
 ## 10. Requirements (delta tags)
 
@@ -75,7 +75,7 @@ Make spawning shell-compatible for command strings, configurable for terminal/ar
 
 ### ADDED: Argv-form exec API
 **Before:** No argv-table exec API; command launching is string-based or hardcoded.  
-**After:** `es.dsp.exec({"prog","arg",...})` executes an argument vector without shell parsing.
+**After:** `es.exec({"prog","arg",...})` (top-level) executes an argument vector without shell parsing.
 
 ### MODIFIED: Spawn environment and terminal selection
 **Before:** Spawned children get hardcoded `TERMINAL=kitty`; `XDG_CURRENT_DESKTOP` is not set by spawn path.  
@@ -83,7 +83,7 @@ Make spawning shell-compatible for command strings, configurable for terminal/ar
 
 ### MODIFIED: Spawn logging destination and permissions
 **Before:** Child stderr goes to `/tmp/<program>-spawn.log` (per program, append).  
-**After:** Child output goes to `$XDG_STATE_HOME/eswm/spawn.log` (shared, appended, 0600).
+**After:** Child stdout and stderr go to `$XDG_STATE_HOME/eswm/spawn.log` (shared, appended, 0600).
 
 ### MODIFIED: Child reaping strategy
 **Before:** Each spawned child is waited on in a dedicated thread.  
@@ -92,7 +92,7 @@ Make spawning shell-compatible for command strings, configurable for terminal/ar
 ## 11. UX / API notes
 
 - `es.dsp.exec_cmd("...")` remains string-based but becomes shell-interpreted.
-- `es.dsp.exec({...})` is argv-based (no shell).
+- `es.exec({...})` (top-level) is argv-based (no shell).
 - `es.dsp.set_terminal("...")` configures terminal used by `spawn_terminal`/`TERMINAL`.
 
 ## 12. Data / State
@@ -103,7 +103,7 @@ Make spawning shell-compatible for command strings, configurable for terminal/ar
 ## 13. Interfaces / Contracts
 
 - Preserve `WAYLAND_DISPLAY` injection and session detachment (`setsid`).
-- Spawn log file mode 0600.
+- Spawn log file mode 0600 (stdout+stderr appended).
 - `XDG_CURRENT_DESKTOP=eswm` exported to spawned children.
 
 ## 14. Dependencies
@@ -127,10 +127,10 @@ Make spawning shell-compatible for command strings, configurable for terminal/ar
 - [ ] `es.dsp.exec_cmd` and `es.bind_cmd` execute command strings via `sh -c <string>`.
 - [ ] `bash -c 'echo a b'` is passed to bash as `-c` plus one argument (shell semantics preserved).
 - [ ] `FOO=1 prog` runs with environment assignment honored.
-- [ ] `es.dsp.exec({"prog","arg",...})` executes argv without shell parsing.
+- [ ] `es.exec({"prog","arg",...})` executes argv without shell parsing.
 - [ ] Spawned children receive `XDG_CURRENT_DESKTOP=eswm`.
 - [ ] Terminal is configurable; `spawn_terminal` and `TERMINAL` env use configured value (default `kitty`).
-- [ ] Child output appends to `$XDG_STATE_HOME/eswm/spawn.log` with mode 0600.
+- [ ] Child stdout and stderr append to `$XDG_STATE_HOME/eswm/spawn.log` with mode 0600.
 - [ ] Children are reaped by one calloop SIGCHLD source using `waitpid(-1, WNOHANG)` loop; no per-child wait threads remain.
 - [ ] `cargo build`, `cargo clippy --all-targets`, and `cargo test` pass.
 
@@ -144,8 +144,8 @@ Make spawning shell-compatible for command strings, configurable for terminal/ar
 
 ## 19. Implementation steps (plan)
 
-1. **Spawn model refactor (shell/argv/env/terminal/log):** introduce helpers for shell-command (`sh -c`) and argv execution, configurable terminal, `XDG_CURRENT_DESKTOP=eswm`, and unified spawn log path/mode (`$XDG_STATE_HOME/eswm/spawn.log`, 0600). Update `spawn_on_socket`/`spawn_terminal` and call sites to use the new model. → verify: `cargo test --bin eswm spawn` (new/updated spawn tests) and `cargo build`
-2. **Lua/API and keybind wiring:** update `es.dsp.exec_cmd` and bind-cmd execution path to shell-string semantics; add `es.dsp.exec(argv_table)` and `es.dsp.set_terminal(...)`; keep backward-compatible behavior where intended. → verify: `cargo test --bin eswm spawn` and `cargo build`
+1. **Spawn model refactor (shell/argv/env/terminal/log):** introduce helpers for shell-command (`sh -c`) and argv execution, configurable terminal, `XDG_CURRENT_DESKTOP=eswm`, and unified spawn log path/mode (`$XDG_STATE_HOME/eswm/spawn.log`, 0600, stdout+stderr). Update `spawn_on_socket`/`spawn_terminal` and call sites to use the new model. → verify: `cargo test --bin eswm spawn` (new/updated spawn tests) and `cargo build`
+2. **Lua/API and keybind wiring:** update `es.dsp.exec_cmd` and bind-cmd execution path to shell-string semantics; add top-level `es.exec(argv_table)` and `es.dsp.set_terminal(...)`; keep backward-compatible behavior where intended. → verify: `cargo test --bin eswm spawn` and `cargo build`
 3. **SIGCHLD reaper:** add child tracking + `waitpid(-1, WNOHANG)` reap loop; register one calloop SIGCHLD source in udev backend; remove per-child wait threads. → verify: `cargo test --bin eswm spawn_reap` and `cargo build`
 
 ## 20. References
