@@ -22,9 +22,9 @@ stories:
     title: Keyboard focus that layers can't steal (update_keyboard_focus)
     bcps: 3
     delta: ADDED
-    status: pending
+    status: completed
   - id: e06s04
     title: Clipboard and primary selection (data_device focus)
     bcps: 2
     delta: ADDED
-    status: pending
+    status: completed

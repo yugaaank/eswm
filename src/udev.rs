@@ -70,7 +70,7 @@ use smithay::{
         input::{DeviceCapability, Libinput},
         rustix::fs::OFlags,
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
-        wayland_server::{backend::GlobalId, protocol::wl_surface::{self, WlSurface}, Display, DisplayHandle},
+        wayland_server::{backend::GlobalId, protocol::wl_surface::{self, WlSurface}, Display, DisplayHandle, Resource},
     },
     utils::{
         DeviceFd, Logical, Physical, Point, Rectangle, Scale, Size, Time, Transform,
@@ -1095,60 +1095,72 @@ const BTN_RIGHT: u32 = 0x111;
 /// hit for `Pointer.motion`, or None when over empty space.
 /// If a popup has an active grab, all pointer events go to the popup surface.
 fn pointer_focus(state: &mut State, pos: Point<f64, Logical>) -> Option<(wl_surface::WlSurface, Point<f64, Logical>)> {
-    // Popup grab takes priority: route pointer input to the grabbed popup only
-    // while the pointer is over it. Outside the popup we return None so the
-    // motion does not leak into the surface underneath (the button handler
-    // turns an outside press into a dismissal).
-    if let Some(popup) = state.popup_grab.clone() {
-        let rect = crate::popup_screen_rect(state, &popup)?;
-        if crate::rect_contains(rect, pos.x, pos.y) {
-            return Some((
-                popup.wl_surface().clone(),
-                // smithay computes surface-local coords as `event.location - loc`,
-                // so this must be the popup's screen origin.
-                Point::from((rect.x as f64, rect.y as f64)),
-            ));
-        }
-        return None;
-    }
+    use smithay::wayland::selection::primary_selection::set_primary_focus;
 
-    // Non-grabbed popups (tooltips, some menus) still need pointer input:
-    // hit-test them topmost-first by their resolved screen rect.
-    for popup in state.popups.iter().rev() {
-        if !popup.surface.alive() || !popup.mapped {
-            continue;
+    let focus = (|| {
+        // Popup grab takes priority: route pointer input to the grabbed popup only
+        // while the pointer is over it. Outside the popup we return None so the
+        // motion does not leak into the surface underneath (the button handler
+        // turns an outside press into a dismissal).
+        if let Some(popup) = state.popup_grab.clone() {
+            let rect = crate::popup_screen_rect(state, &popup)?;
+            if crate::rect_contains(rect, pos.x, pos.y) {
+                return Some((
+                    popup.wl_surface().clone(),
+                    // smithay computes surface-local coords as `event.location - loc`,
+                    // so this must be the popup's screen origin.
+                    Point::from((rect.x as f64, rect.y as f64)),
+                ));
+            }
+            return None;
         }
-        if crate::rect_contains(popup.screen_rect, pos.x, pos.y) {
-            return Some((
-                popup.surface.wl_surface().clone(),
-                Point::from((popup.screen_rect.x as f64, popup.screen_rect.y as f64)),
-            ));
-        }
-    }
 
-    crate::prune_dead_windows(state);
-    let dragging = state.udev.as_ref().unwrap().drag;
-    let hit = if let Some(drag) = dragging {
-        let id = drag.window;
-        let rect = state.wm.window(id)?.target_rect;
-        Some((id, Point::from((rect.x as f64, rect.y as f64))))
-    } else {
-        state
-            .wm
-            .surface_under((pos.x, pos.y))
-            .map(|(id, local)| (id, Point::from((pos.x - local.0, pos.y - local.1))))
-    };
-    let Some((id, origin)) = hit else {
+        // Non-grabbed popups (tooltips, some menus) still need pointer input:
+        // hit-test them topmost-first by their resolved screen rect.
+        for popup in state.popups.iter().rev() {
+            if !popup.surface.alive() || !popup.mapped {
+                continue;
+            }
+            if crate::rect_contains(popup.screen_rect, pos.x, pos.y) {
+                return Some((
+                    popup.surface.wl_surface().clone(),
+                    Point::from((popup.screen_rect.x as f64, popup.screen_rect.y as f64)),
+                ));
+            }
+        }
+
+        crate::prune_dead_windows(state);
+        let dragging = state.udev.as_ref().unwrap().drag;
+        let hit = if let Some(drag) = dragging {
+            let id = drag.window;
+            let rect = state.wm.window(id)?.target_rect;
+            Some((id, Point::from((rect.x as f64, rect.y as f64))))
+        } else {
+            state
+                .wm
+                .surface_under((pos.x, pos.y))
+                .map(|(id, local)| (id, Point::from((pos.x - local.0, pos.y - local.1))))
+        };
+        let Some((id, origin)) = hit else {
+            if let Some(udev) = state.udev.as_mut() {
+                udev.pointer_focus = None;
+            }
+            return None;
+        };
         if let Some(udev) = state.udev.as_mut() {
-            udev.pointer_focus = None;
+            udev.pointer_focus = Some(id);
         }
-        return None;
-    };
-    if let Some(udev) = state.udev.as_mut() {
-        udev.pointer_focus = Some(id);
-    }
-    let toplevel = crate::toplevel_for_window(state, id)?;
-    Some((toplevel.wl_surface().clone(), origin))
+        let toplevel = crate::toplevel_for_window(state, id)?;
+        Some((toplevel.wl_surface().clone(), origin))
+    })();
+
+    // e06s04t2: primary selection follows pointer focus (client under pointer).
+    let primary_client = focus
+        .as_ref()
+        .and_then(|(surface, _)| state.dh.get_client(surface.id()).ok());
+    set_primary_focus(&state.dh, &state.seat, primary_client);
+
+    focus
 }
 
 /// Send wl_keyboard leave/enter for `id`; None => just leave.
