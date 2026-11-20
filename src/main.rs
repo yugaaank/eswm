@@ -1187,6 +1187,68 @@ fn spawn_log_path_from_env(
     spawn_log_path_in(&base)
 }
 
+fn current_spawn_log_path() -> std::path::PathBuf {
+    spawn_log_path_from_env(
+        std::env::var("XDG_STATE_HOME").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    )
+}
+
+fn spawn_terminal_name() -> String {
+    "kitty".to_string()
+}
+
+/// Spawn a shell-interpreted command string (`sh -c`) with eswm spawn environment.
+pub fn spawn_shell_command(cmd: &str) -> std::io::Result<u32> {
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+
+    let (prog, args) = shell_command_argv(cmd);
+    let log_path = current_spawn_log_path();
+    let log = open_spawn_log_file(&log_path).ok();
+    let terminal = spawn_terminal_name();
+
+    let mut command = Command::new(&prog);
+    command
+        .args(&args)
+        .env("WAYLAND_DISPLAY", socket_name())
+        .env("XDG_CURRENT_DESKTOP", "eswm")
+        .env("TERMINAL", terminal)
+        .stdin(Stdio::null());
+
+    match log {
+        Some(file) => {
+            let err = file.try_clone().ok();
+            command.stdout(Stdio::from(file));
+            if let Some(err) = err {
+                command.stderr(Stdio::from(err));
+            } else {
+                command.stderr(Stdio::null());
+            }
+        }
+        None => {
+            command.stdout(Stdio::null());
+            command.stderr(Stdio::null());
+        }
+    }
+
+    unsafe {
+        command.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+
+    let mut child = command.spawn()?;
+    let pid = child.id();
+    // Temporary: per-child wait thread remains until e07s01t3 replaces with SIGCHLD reaper.
+    std::thread::spawn(move || match child.wait() {
+        Ok(status) => tracing::warn!("shell child exited with {status}"),
+        Err(err) => tracing::warn!("shell child wait failed: {err}"),
+    });
+    Ok(pid)
+}
+
 /// Build argv for shell-interpreted command strings (Hyprland-style `sh -c`).
 fn shell_command_argv(cmd: &str) -> (String, Vec<String>) {
     ("sh".to_string(), vec!["-c".to_string(), cmd.to_string()])
