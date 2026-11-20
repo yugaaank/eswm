@@ -21,7 +21,7 @@ tasks:
     verify: "cargo test --bin eswm keybind_match"
     risk: P3
     security: none
-    status: failing
+    status: passing
     allure:
       severity: minor
       categories:
