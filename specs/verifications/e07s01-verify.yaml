@@ -1,0 +1,87 @@
+story_id: e07s01
+verified_at: "2026-11-20T07:30:00Z"
+verifier: verify-work
+branch: e07s01-spawning
+risk: P3
+phases:
+  preflight:
+    passed: true
+    notes:
+      - "No PR open for branch; gh pr checks N/A."
+      - "python3 scripts/spec-lint.py: ok."
+  verify_validation:
+    passed: true
+    commands:
+      - cmd: "cargo test --bin eswm spawn"
+        exit_code: 0
+        result: "9 passed, 98 filtered out"
+      - cmd: "cargo build"
+        exit_code: 0
+        result: "Finished dev profile"
+      - cmd: "cargo test --bin eswm spawn_reap"
+        exit_code: 0
+        result: "1 passed, 106 filtered out"
+  smoke:
+    passed: null
+    skipped: true
+    note: "Skipped for P3 risk."
+  build:
+    passed: true
+    command: "cargo build"
+  typecheck:
+    passed: true
+    note: "Covered by cargo build/cargo clippy (Rust)."
+  lint:
+    passed: true
+    command: "cargo clippy --all-targets"
+  tests:
+    passed: null
+    skipped: true
+    note: "Skipped as phase for P3 risk (task verify commands executed and passed in pre-UAT validation)."
+  terminal_verdict:
+    command: "cargo clippy --all-targets"
+    exit_code: 0
+    captured_at: "2026-11-20T07:29:30Z"
+    note: "Single contiguous run on branch e07s01-spawning; clean."
+  security_scan:
+    passed: null
+    skipped: true
+    note: "Skipped for P3 risk."
+  blind_spots:
+    passed: null
+    note: "scripts/check-blind-spots.sh not present; N/A."
+  completeness_critic:
+    passed: null
+    note: "scripts/lib/completeness-critic.sh not present; N/A."
+  adversarial:
+    passed: null
+    note: "scripts/verify-adversarial.sh not present; N/A."
+  manual:
+    skipped: true
+    note: "Step-by-step UAT skipped for P3 risk. Story verification script not executed in runtime environment."
+    steps:
+      - step: "Configure/bind es.dsp.exec_cmd(\"bash -c 'echo a b'\") and confirm bash receives -c and a single argument string."
+        expected: "Shell command string executed via sh -c with quoting preserved."
+        actual: "Not executed manually (P3 skip). Helper/wiring implemented and unit/build verifies pass; runtime behavior unconfirmed."
+        passed: null
+      - step: "Run es.dsp.exec_cmd(\"FOO=1 prog\") and confirm FOO is set in child environment."
+        expected: "Env prefix honored by shell execution."
+        actual: "Not executed manually (P3 skip); runtime behavior unconfirmed."
+        passed: null
+      - step: "Set terminal via config/API, trigger spawn_terminal, confirm configured terminal launches and TERMINAL matches."
+        expected: "Configured terminal and TERMINAL env used."
+        actual: "Not executed manually (P3 skip); runtime behavior unconfirmed."
+        passed: null
+      - step: "Spawn a child and confirm output appended to $XDG_STATE_HOME/eswm/spawn.log with mode 0600."
+        expected: "Unified spawn log (stdout+stderr) with 0600 permissions."
+        actual: "Not executed manually (P3 skip); covered by unit tests (path/mode/append/capture) but runtime end-to-end unconfirmed."
+        passed: null
+      - step: "Spawn short-lived children repeatedly and confirm no zombie accumulation; reaping occurs via SIGCHLD handler path."
+        expected: "Children reaped by single SIGCHLD waitpid(-1, WNOHANG) loop."
+        actual: "Not executed manually (P3 skip); reap helper tested and signalfd source integrated in udev backend, runtime DRM-session behavior unconfirmed."
+        passed: null
+  gaps:
+    closed: false
+    items:
+      - "Runtime/manual UAT not performed (P3 skip): shell quoting/env-prefix semantics, configured terminal launch, unified spawn log in live session, and SIGCHLD reaping on DRM backend."
+      - "Automated coverage validates helpers, spawn env/log behavior in tests, and build/wiring; end-to-end compositor runtime behavior remains unconfirmed."

@@ -1168,9 +1168,171 @@ pub(crate) fn apply_layout(state: &mut State) {
     state.redraw_needed = true;
 }
 
+/// Path to the unified spawn log inside an eswm state directory.
+fn spawn_log_path_in(state_home: &std::path::Path) -> std::path::PathBuf {
+    state_home.join("eswm").join("spawn.log")
+}
+
+static SPAWN_TERMINAL: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
+
+fn spawn_terminal_store() -> &'static std::sync::Mutex<String> {
+    SPAWN_TERMINAL.get_or_init(|| std::sync::Mutex::new("kitty".to_string()))
+}
+
+pub fn set_spawn_terminal(name: &str) {
+    *spawn_terminal_store().lock().unwrap() = name.to_string();
+}
+
+/// Resolve spawn log path from XDG_STATE_HOME or HOME/.local/state fallback.
+fn spawn_log_path_from_env(
+    xdg_state_home: Option<&str>,
+    home: Option<&str>,
+) -> std::path::PathBuf {
+    let base = if let Some(xdg) = xdg_state_home.filter(|s| !s.is_empty()) {
+        std::path::PathBuf::from(xdg)
+    } else {
+        let home = home.unwrap_or(".");
+        std::path::PathBuf::from(home).join(".local").join("state")
+    };
+    spawn_log_path_in(&base)
+}
+
+fn current_spawn_log_path() -> std::path::PathBuf {
+    spawn_log_path_from_env(
+        std::env::var("XDG_STATE_HOME").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    )
+}
+
+fn spawn_terminal_name() -> String {
+    spawn_terminal_store().lock().unwrap().clone()
+}
+
+static SPAWN_CHILD_PIDS: std::sync::OnceLock<std::sync::Mutex<Vec<u32>>> = std::sync::OnceLock::new();
+
+fn spawn_child_pids() -> &'static std::sync::Mutex<Vec<u32>> {
+    SPAWN_CHILD_PIDS.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+fn track_spawned_child(pid: u32) {
+    spawn_child_pids().lock().unwrap().push(pid);
+}
+
+/// Reap exited child processes using waitpid(-1, WNOHANG) loop.
+/// Returns the number of children reaped in this call.
+pub fn reap_spawned_children() -> usize {
+    let mut reaped = 0usize;
+    loop {
+        let mut status: libc::c_int = 0;
+        let pid = unsafe { libc::waitpid(-1, &mut status as *mut _, libc::WNOHANG) };
+        if pid > 0 {
+            let pid = pid as u32;
+            let mut tracked = spawn_child_pids().lock().unwrap();
+            tracked.retain(|&p| p != pid);
+            reaped += 1;
+            tracing::warn!("reaped spawned child pid {pid}");
+            continue;
+        }
+        if pid == 0 {
+            break;
+        }
+        // pid == -1
+        let err = std::io::Error::last_os_error();
+        match err.raw_os_error() {
+            Some(code) if code == libc::ECHILD => break,
+            Some(code) if code == libc::EINTR => continue,
+            _ => break,
+        }
+    }
+    reaped
+}
+
+fn spawn_program(prog: &str, args: &[&str]) -> std::io::Result<u32> {
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+
+    let log_path = current_spawn_log_path();
+    let log = open_spawn_log_file(&log_path).ok();
+    let terminal = spawn_terminal_name();
+
+    let mut command = Command::new(prog);
+    command
+        .args(args)
+        .env("WAYLAND_DISPLAY", socket_name())
+        .env("XDG_CURRENT_DESKTOP", "eswm")
+        .env("TERMINAL", terminal)
+        .stdin(Stdio::null());
+
+    match log {
+        Some(file) => {
+            let err = file.try_clone().ok();
+            command.stdout(Stdio::from(file));
+            if let Some(err) = err {
+                command.stderr(Stdio::from(err));
+            } else {
+                command.stderr(Stdio::null());
+            }
+        }
+        None => {
+            command.stdout(Stdio::null());
+            command.stderr(Stdio::null());
+        }
+    }
+
+    unsafe {
+        command.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+
+    let child = command.spawn()?;
+    let pid = child.id();
+    track_spawned_child(pid);
+    Ok(pid)
+}
+
+/// Spawn a shell-interpreted command string (`sh -c`) with eswm spawn environment.
+pub fn spawn_shell_command(cmd: &str) -> std::io::Result<u32> {
+    let (prog, args) = shell_command_argv(cmd);
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    spawn_program(&prog, &arg_refs)
+}
+
+/// Spawn an argument vector directly (no shell parsing).
+pub fn spawn_argv_command(argv: &[&str]) -> std::io::Result<u32> {
+    let Some((prog, args)) = argv.split_first() else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "empty argv",
+        ));
+    };
+    spawn_program(prog, args)
+}
+
+/// Build argv for shell-interpreted command strings (Hyprland-style `sh -c`).
+fn shell_command_argv(cmd: &str) -> (String, Vec<String>) {
+    ("sh".to_string(), vec!["-c".to_string(), cmd.to_string()])
+}
+
+/// Open the shared spawn log for appending, creating parent dirs and enforcing 0600.
+fn open_spawn_log_file(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    use std::fs::OpenOptions;
+    use std::os::unix::fs::OpenOptionsExt;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .mode(0o600)
+        .open(path)
+}
+
 // Compositor keybind helper: spawn a terminal client on our own socket.
 pub fn spawn_terminal() {
-    spawn_on_socket("kitty", &[]);
+    let terminal = spawn_terminal_name();
+    let _ = spawn_argv_command(&[terminal.as_str()]);
 }
 
 /// Split a command string into program + args (whitespace split).
@@ -1183,53 +1345,24 @@ pub fn parse_cmd(cmd: &str) -> (&str, Vec<&str>) {
 
 
 // Spawn a Wayland client against eswm's socket, detached (own process group so
-// VT signals don't hit it). Stdout/stderr go to <name>-spawn.log in /tmp.
+// VT signals don't hit it). Stdout/stderr go to the unified spawn log.
 pub fn spawn_on_socket(program: &str, args: &[&str]) {
-    use std::os::unix::process::CommandExt;
-    use std::process::{Command, Stdio};
-    //WAYLAND_DISPLAY takes either absolute path or bare name relative to XDG_RUNTIME_DIR
-    let log_path = format!("/tmp/{}-spawn.log", program.replace('/', "_"));
-    let log = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path);
-    let prog_name = program.to_owned();
     // Expand leading ~ (command is run via execve, no shell to do it).
     let expand_tilde = |p: &str| -> String {
         if p == "~" || p.starts_with("~/") {
-            std::env::var("HOME").map(|h| format!("{h}{}", &p[1..])).unwrap_or_else(|_| p.to_owned())
+            std::env::var("HOME")
+                .map(|h| format!("{h}{}", &p[1..]))
+                .unwrap_or_else(|_| p.to_owned())
         } else {
             p.to_owned()
         }
     };
     let prog = expand_tilde(program);
     let expanded_args: Vec<String> = args.iter().map(|a| expand_tilde(a)).collect();
-    match unsafe {
-        let mut cmd = Command::new(&prog);
-        cmd.args(&expanded_args)
-            .env("WAYLAND_DISPLAY", socket_name())
-            // session terminal for launchers (fuzzel wraps Terminal=true apps)
-            .env("TERMINAL", "kitty")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null());
-        match log {
-            Ok(file) => cmd.stderr(Stdio::from(file)),
-            Err(_) => cmd.stderr(Stdio::null()),
-        };
-        cmd.pre_exec(|| {
-            // detach from the compositor process group so VT signals don't hit it
-            libc::setsid();
-            Ok(())
-        })
-        .spawn()
-    } {
-        Ok(mut child) => {
-            tracing::info!("spawned {prog_name} pid {}", child.id());
-            std::thread::spawn(move || match child.wait() {
-                Ok(status) => tracing::warn!("{prog_name} exited with {status}"),
-                Err(err) => tracing::warn!("{prog_name} wait failed: {err}"),
-            });
-        }
+    let arg_refs: Vec<&str> = expanded_args.iter().map(|s| s.as_str()).collect();
+    let prog_name = program.to_owned();
+    match spawn_program(&prog, &arg_refs) {
+        Ok(pid) => tracing::info!("spawned {prog_name} pid {pid}"),
         Err(err) => tracing::warn!("failed to spawn {prog_name}: {err}"),
     }
 }
@@ -1459,6 +1592,142 @@ mod tests {
         );
         let value: Value = serde_json::from_str(&response).unwrap();
         assert!(value["error"].as_str().unwrap().contains("cannot move window"));
+    }
+
+    #[test]
+    fn spawn_log_path_from_env_prefers_xdg_state_home() {
+        let path = spawn_log_path_from_env(Some("/tmp/xdg"), Some("/home/u"));
+        assert_eq!(path, std::path::PathBuf::from("/tmp/xdg/eswm/spawn.log"));
+    }
+
+    static SPAWN_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn spawn_shell_command_uses_configured_terminal_env() {
+        let _guard = SPAWN_ENV_LOCK.lock().unwrap();
+        let tmp = std::env::temp_dir().join(format!("eswm-spawn-term-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let prev = std::env::var_os("XDG_STATE_HOME");
+        unsafe { std::env::set_var("XDG_STATE_HOME", &tmp) };
+
+        set_spawn_terminal("foot");
+        spawn_shell_command("printf %s \"$TERMINAL\"").expect("spawn shell command");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let contents = std::fs::read_to_string(spawn_log_path_in(&tmp)).unwrap();
+        assert_eq!(contents, "foot");
+        set_spawn_terminal("kitty");
+
+        match prev {
+            Some(v) => unsafe { std::env::set_var("XDG_STATE_HOME", v) },
+            None => unsafe { std::env::remove_var("XDG_STATE_HOME") },
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn spawn_reap_waitpid_loop_reaps_exited_children() {
+        let _guard = SPAWN_ENV_LOCK.lock().unwrap();
+        let tmp = std::env::temp_dir().join(format!("eswm-spawn-reap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let prev = std::env::var_os("XDG_STATE_HOME");
+        unsafe { std::env::set_var("XDG_STATE_HOME", &tmp) };
+
+        spawn_shell_command("true").expect("spawn short-lived child");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let reaped = reap_spawned_children();
+        assert!(reaped > 0, "expected at least one child reaped, got {reaped}");
+
+        match prev {
+            Some(v) => unsafe { std::env::set_var("XDG_STATE_HOME", v) },
+            None => unsafe { std::env::remove_var("XDG_STATE_HOME") },
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn spawn_argv_command_executes_without_shell_wrapper() {
+        let _guard = SPAWN_ENV_LOCK.lock().unwrap();
+        let tmp = std::env::temp_dir().join(format!("eswm-spawn-argv-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let prev = std::env::var_os("XDG_STATE_HOME");
+        unsafe { std::env::set_var("XDG_STATE_HOME", &tmp) };
+
+        spawn_argv_command(&["sh", "-c", "printf out"]).expect("spawn argv command");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let contents = std::fs::read_to_string(spawn_log_path_in(&tmp)).unwrap();
+        assert_eq!(contents, "out");
+
+        match prev {
+            Some(v) => unsafe { std::env::set_var("XDG_STATE_HOME", v) },
+            None => unsafe { std::env::remove_var("XDG_STATE_HOME") },
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn spawn_shell_command_writes_stdout_stderr_to_unified_spawn_log() {
+        let _guard = SPAWN_ENV_LOCK.lock().unwrap();
+        let tmp = std::env::temp_dir().join(format!("eswm-spawn-shell-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let prev = std::env::var_os("XDG_STATE_HOME");
+        unsafe { std::env::set_var("XDG_STATE_HOME", &tmp) };
+
+        spawn_shell_command("printf out; printf err >&2").expect("spawn shell command");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let log = spawn_log_path_in(&tmp);
+        let contents = std::fs::read_to_string(&log).unwrap();
+        assert!(contents.contains("out"), "stdout missing: {contents:?}");
+        assert!(contents.contains("err"), "stderr missing: {contents:?}");
+
+        match prev {
+            Some(v) => unsafe { std::env::set_var("XDG_STATE_HOME", v) },
+            None => unsafe { std::env::remove_var("XDG_STATE_HOME") },
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn spawn_log_path_from_env_falls_back_to_home_local_state() {
+        let path = spawn_log_path_from_env(None, Some("/home/u"));
+        assert_eq!(path, std::path::PathBuf::from("/home/u/.local/state/eswm/spawn.log"));
+    }
+
+    #[test]
+    fn spawn_shell_command_uses_sh_c() {
+        let (prog, args) = shell_command_argv("bash -c 'echo a b'");
+        assert_eq!(prog, "sh");
+        assert_eq!(args, vec!["-c".to_string(), "bash -c 'echo a b'".to_string()]);
+    }
+
+    #[test]
+    fn spawn_log_file_is_created_with_mode_0600_and_appends() {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        let tmp_dir = std::env::temp_dir().join(format!("eswm-spawn-log-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        let log_path = spawn_log_path_in(&tmp_dir);
+        let mut f = open_spawn_log_file(&log_path).expect("open spawn log");
+        writeln!(f, "first").unwrap();
+        drop(f);
+        let mut f = open_spawn_log_file(&log_path).expect("reopen spawn log");
+        writeln!(f, "second").unwrap();
+        drop(f);
+        let meta = std::fs::metadata(&log_path).unwrap();
+        assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+        let contents = std::fs::read_to_string(&log_path).unwrap();
+        assert_eq!(contents, "first\nsecond\n");
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn spawn_log_path_uses_xdg_state_home_dir() {
+        let base = std::path::Path::new("/tmp/xdg-state");
+        let path = spawn_log_path_in(base);
+        assert_eq!(path, base.join("eswm").join("spawn.log"));
     }
 
     #[test]

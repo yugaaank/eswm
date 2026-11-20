@@ -1,7 +1,7 @@
 spec: specs/epics/e07-spawn-keybinds/e07s01-spawning.md
 story_id: e07s01
 title: "Spawning: sh -c, XDG_CURRENT_DESKTOP, XDG_STATE_HOME logs, SIGCHLD"
-status: pending
+status: completed
 bcps: 5
 tasks:
   - id: e07s01t1
@@ -9,7 +9,7 @@ tasks:
     verify: "cargo test --bin eswm spawn"
     risk: P3
     security: none
-    status: failing
+    status: passing
     allure:
       severity: minor
       categories:
@@ -21,7 +21,7 @@ tasks:
     verify: "cargo build"
     risk: P3
     security: none
-    status: failing
+    status: passing
     allure:
       severity: minor
       categories:
@@ -33,7 +33,7 @@ tasks:
     verify: "cargo test --bin eswm spawn_reap"
     risk: P3
     security: none
-    status: failing
+    status: passing
     allure:
       severity: minor
       categories:
