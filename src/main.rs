@@ -1481,6 +1481,13 @@ mod tests {
     }
 
     #[test]
+    fn spawn_shell_command_uses_sh_c() {
+        let (prog, args) = shell_command_argv("bash -c 'echo a b'");
+        assert_eq!(prog, "sh");
+        assert_eq!(args, vec!["-c".to_string(), "bash -c 'echo a b'".to_string()]);
+    }
+
+    #[test]
     fn spawn_log_file_is_created_with_mode_0600_and_appends() {
         use std::io::Write;
         use std::os::unix::fs::PermissionsExt;
