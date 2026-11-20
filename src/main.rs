@@ -1467,6 +1467,26 @@ mod tests {
     }
 
     #[test]
+    fn spawn_log_file_is_created_with_mode_0600_and_appends() {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        let tmp_dir = std::env::temp_dir().join(format!("eswm-spawn-log-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        let log_path = spawn_log_path_in(&tmp_dir);
+        let mut f = open_spawn_log_file(&log_path).expect("open spawn log");
+        writeln!(f, "first").unwrap();
+        drop(f);
+        let mut f = open_spawn_log_file(&log_path).expect("reopen spawn log");
+        writeln!(f, "second").unwrap();
+        drop(f);
+        let meta = std::fs::metadata(&log_path).unwrap();
+        assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+        let contents = std::fs::read_to_string(&log_path).unwrap();
+        assert_eq!(contents, "first\nsecond\n");
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
     fn spawn_log_path_uses_xdg_state_home_dir() {
         let base = std::path::Path::new("/tmp/xdg-state");
         let path = spawn_log_path_in(base);
