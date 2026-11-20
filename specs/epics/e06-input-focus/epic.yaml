@@ -27,4 +27,4 @@ stories:
     title: Clipboard and primary selection (data_device focus)
     bcps: 2
     delta: ADDED
-    status: pending
+    status: completed
