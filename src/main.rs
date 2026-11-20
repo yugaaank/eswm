@@ -1173,6 +1173,16 @@ fn spawn_log_path_in(state_home: &std::path::Path) -> std::path::PathBuf {
     state_home.join("eswm").join("spawn.log")
 }
 
+static SPAWN_TERMINAL: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
+
+fn spawn_terminal_store() -> &'static std::sync::Mutex<String> {
+    SPAWN_TERMINAL.get_or_init(|| std::sync::Mutex::new("kitty".to_string()))
+}
+
+pub fn set_spawn_terminal(name: &str) {
+    *spawn_terminal_store().lock().unwrap() = name.to_string();
+}
+
 /// Resolve spawn log path from XDG_STATE_HOME or HOME/.local/state fallback.
 fn spawn_log_path_from_env(
     xdg_state_home: Option<&str>,
@@ -1195,7 +1205,7 @@ fn current_spawn_log_path() -> std::path::PathBuf {
 }
 
 fn spawn_terminal_name() -> String {
-    "kitty".to_string()
+    spawn_terminal_store().lock().unwrap().clone()
 }
 
 fn spawn_program(prog: &str, args: &[&str]) -> std::io::Result<u32> {
@@ -1286,7 +1296,8 @@ fn open_spawn_log_file(path: &std::path::Path) -> std::io::Result<std::fs::File>
 
 // Compositor keybind helper: spawn a terminal client on our own socket.
 pub fn spawn_terminal() {
-    spawn_on_socket("kitty", &[]);
+    let terminal = spawn_terminal_name();
+    let _ = spawn_argv_command(&[terminal.as_str()]);
 }
 
 /// Split a command string into program + args (whitespace split).
