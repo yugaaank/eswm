@@ -1,0 +1,42 @@
+spec: specs/epics/e07-spawn-keybinds/e07s01-spawning.md
+story_id: e07s01
+title: "Spawning: sh -c, XDG_CURRENT_DESKTOP, XDG_STATE_HOME logs, SIGCHLD"
+status: pending
+bcps: 5
+tasks:
+  - id: e07s01t1
+    description: "Refactor spawn helpers to support shell-string execution (sh -c), argv execution, configurable terminal, XDG_CURRENT_DESKTOP=eswm, and unified spawn log at $XDG_STATE_HOME/eswm/spawn.log (0600, appended)"
+    verify: "cargo test --bin eswm spawn"
+    risk: P3
+    security: none
+    status: failing
+    allure:
+      severity: minor
+      categories:
+        - "e07-spawn-keybinds"
+        - "process"
+        - "unit"
+  - id: e07s01t2
+    description: "Wire es.dsp.exec_cmd and es.bind_cmd to shell-string semantics; add es.dsp.exec(argv table) and es.dsp.set_terminal(...) APIs; update spawn_terminal and call sites to use configured terminal/env"
+    verify: "cargo build"
+    risk: P3
+    security: none
+    status: failing
+    allure:
+      severity: minor
+      categories:
+        - "e07-spawn-keybinds"
+        - "process"
+        - "lua-api"
+  - id: e07s01t3
+    description: "Implement single SIGCHLD reaper with waitpid(-1, WNOHANG) loop and child tracking; integrate calloop SIGCHLD source in udev backend and remove per-child wait threads"
+    verify: "cargo test --bin eswm spawn_reap"
+    risk: P3
+    security: none
+    status: failing
+    allure:
+      severity: minor
+      categories:
+        - "e07-spawn-keybinds"
+        - "process"
+        - "unit"
