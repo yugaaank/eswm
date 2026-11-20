@@ -1,8 +1,32 @@
-active_flow: e07-spawn-keybinds
-bug_cycle: {}
-active_story: e07s02
+active_flow: planning
+active_epic_id: null
+active_story_id: null
+active_bug_id: null
+release:
+  target_version: null
+  last_tag: null
+  last_publish: null
+epic_cycle:
+  current_step: null
+  next_skill: null
+  completed_steps: []
+bug_cycle:
+  current_step: null
+  completed_steps: []
+git:
+  branch: main
+  hash: "7045721"
 handoff:
-  next_skill: survey-context
+  last_step_completed: "e07-spawn-keybinds complete (e07s02 landed/released on main, 7045721); session reconciled via survey-context"
+  open_decisions:
+    - "bug-2026-11-17t141711 remains open (low): master-mode single-window border breaks at bottom in src/udev.rs"
+    - "e08s01-e08s03 have story specs but no *-tasks.yaml; e08s04 has e08s04-tasks.yaml; plan/slice tasks before build as needed"
+  required_reading:
+    - CONVENTIONS.md
+    - specs/release-plan.yaml
+    - specs/execution-status.yaml
+    - specs/epics/e08-panics-correctness/epic.yaml
+  next_skill: plan-work
 decisions:
   - story: BUG-2026-11-17T00:30:00
     note: "Freeze/stutter fix closed via validate-fix: five stacked defects (unconditional re-render, empty frames treated as failed paints, dmabuf on the idle dGPU, callbacks on two clocks, and a dropped frame callback deadlocking the client). Final fix 02f57d2; diagnostics now blame wait time rather than the existence of work (be0f2bd); PointerMotionAbsolute now requests a redraw (6922ccc). Operator confirmed on the DRM session."
