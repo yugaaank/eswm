@@ -1,0 +1,65 @@
+spec: specs/epics/e07-spawn-keybinds/e07s02-keybinds.md
+story_id: e07s02
+title: "Keybinds: xkb keysym names, raw sym matching, emergency quit always on"
+status: pending
+bcps: 3
+tasks:
+  - id: e07s02t1
+    description: "Parse/validate key names at bind time in es.bind/es.bind_cmd via xkb::keysym_from_name(name, KEYSYM_CASE_INSENSITIVE); store parsed keysym in lua_state::Keybind and return Lua error on unknown/KEY_NoSymbol"
+    verify: "cargo test --bin eswm keybind_parse"
+    risk: P3
+    security: none
+    status: failing
+    allure:
+      severity: minor
+      categories:
+        - "e07-spawn-keybinds"
+        - "input"
+        - "unit"
+  - id: e07s02t2
+    description: "Match keybinds using raw_latin_sym_or_raw_current_sym() against stored keysym and compare bind-relevant modifiers with Caps/Num Lock dropped; remove event-time parse_key string map behavior"
+    verify: "cargo test --bin eswm keybind_match"
+    risk: P3
+    security: none
+    status: failing
+    allure:
+      severity: minor
+      categories:
+        - "e07-spawn-keybinds"
+        - "input"
+        - "unit"
+  - id: e07s02t3
+    description: "Implement always-on built-in Super+Alt+Backspace quit and Ctrl+Alt+XF86Switch_VT_1..12 VT switching with precedence over Lua config (cannot be removed); preserve emergency-quit guarantee (update quit_keybind_matches_super_alt_backspace as needed)"
+    verify: "cargo test --bin eswm emergency_quit"
+    risk: P3
+    security: none
+    status: failing
+    allure:
+      severity: minor
+      categories:
+        - "e07-spawn-keybinds"
+        - "input"
+        - "unit"
+  - id: e07s02t4
+    description: "Track intercepted press key codes and intercept corresponding releases for any consumed keybind (built-in or Lua) in keyboard input handling"
+    verify: "cargo test --bin eswm intercept_release"
+    risk: P3
+    security: none
+    status: failing
+    allure:
+      severity: minor
+      categories:
+        - "e07-spawn-keybinds"
+        - "input"
+        - "unit"
+  - id: e07s02t5
+    description: "Run full verification gates for e07s02 implementation"
+    verify: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
+    risk: P3
+    security: none
+    status: failing
+    allure:
+      severity: minor
+      categories:
+        - "e07-spawn-keybinds"
+        - "verification"
