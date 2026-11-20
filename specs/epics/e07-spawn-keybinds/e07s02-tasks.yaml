@@ -9,7 +9,7 @@ tasks:
     verify: "cargo test --bin eswm keybind_parse"
     risk: P3
     security: none
-    status: failing
+    status: passing
     allure:
       severity: minor
       categories:
