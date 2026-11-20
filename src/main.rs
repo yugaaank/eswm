@@ -1462,6 +1462,13 @@ mod tests {
     }
 
     #[test]
+    fn spawn_log_path_uses_xdg_state_home_dir() {
+        let base = std::path::Path::new("/tmp/xdg-state");
+        let path = spawn_log_path_in(base);
+        assert_eq!(path, base.join("eswm").join("spawn.log"));
+    }
+
+    #[test]
     fn log_file_is_at_xdg_state_home_with_mode_0600() {
         use std::os::unix::fs::PermissionsExt;
         let tmp_dir = std::env::temp_dir().join(format!("eswm-test-{}", std::process::id()));
