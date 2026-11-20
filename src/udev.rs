@@ -608,6 +608,44 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         )
         .expect("failed to register wayland display source");
 
+    // Single SIGCHLD source: reap exited children with waitpid(-1, WNOHANG) loop.
+    // signalfd makes SIGCHLD pollable for calloop without per-child wait threads.
+    {
+        use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd};
+        unsafe {
+            let mut mask: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&mut mask);
+            libc::sigaddset(&mut mask, libc::SIGCHLD);
+            libc::sigprocmask(libc::SIG_BLOCK, &mask, std::ptr::null_mut());
+            let sfd = libc::signalfd(-1, &mask, libc::SFD_NONBLOCK | libc::SFD_CLOEXEC);
+            if sfd >= 0 {
+                let fd = OwnedFd::from_raw_fd(sfd);
+                if let Err(e) = event_loop.handle().insert_source(
+                    Generic::new(fd, Interest::READ, Mode::Level),
+                    |_, source, _data: &mut State| {
+                        let mut buf = [0u8; 128];
+                        loop {
+                            let n = libc::read(
+                                source.as_raw_fd(),
+                                buf.as_mut_ptr() as *mut libc::c_void,
+                                std::mem::size_of_val(&buf),
+                            );
+                            if n <= 0 {
+                                break;
+                            }
+                        }
+                        let _ = crate::reap_spawned_children();
+                        Ok(PostAction::Continue)
+                    },
+                ) {
+                    warn!("failed to register SIGCHLD source: {e}");
+                }
+            } else {
+                warn!("failed to create SIGCHLD signalfd: {}", io::Error::last_os_error());
+            }
+        }
+    }
+
     match crate::control::Control::start(&crate::socket_name()) {
         Ok(control) => state.control = Some(control),
         Err(err) => tracing::warn!("control socket disabled: {err}"),
