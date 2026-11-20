@@ -1064,14 +1064,62 @@ fn execute_keybind(state: &mut State, kb: &lua_state::Keybind) -> FilterResult<(
     FilterResult::Intercept(())
 }
 
+
+/// Built-in shortcuts that are always active and cannot be removed/overridden by config.
+/// Returns a synthetic keybind action for emergency quit and VT switching.
+fn builtin_shortcut(mods: &ModifiersState, raw_sym: u32) -> Option<lua_state::Keybind> {
+    use xkbcommon::xkb::keysyms;
+
+    let logo = mods.logo;
+    let ctrl = mods.ctrl;
+    let alt = mods.alt;
+    let shift = mods.shift;
+
+    // Emergency quit: Super+Alt+Backspace (always on)
+    if logo && alt && !ctrl && !shift && raw_sym == keysyms::KEY_BackSpace {
+        return Some(lua_state::Keybind {
+            mods: vec!["logo".into(), "alt".into()],
+            key: "BackSpace".into(),
+            keysym: raw_sym,
+            action: "quit".into(),
+            arg: None,
+            cmd: None,
+        });
+    }
+
+    // VT switch: Ctrl+Alt+F1..F12 / XF86Switch_VT_1..12 (always on)
+    if ctrl && alt && !logo && !shift
+        && raw_sym >= keysyms::KEY_XF86Switch_VT_1
+        && raw_sym <= keysyms::KEY_XF86Switch_VT_12
+    {
+        let vt = (raw_sym - keysyms::KEY_XF86Switch_VT_1 + 1) as i32;
+        return Some(lua_state::Keybind {
+            mods: vec!["ctrl".into(), "alt".into()],
+            key: format!("XF86Switch_VT_{vt}"),
+            keysym: raw_sym,
+            action: "change_vt".into(),
+            arg: Some(vt),
+            cmd: None,
+        });
+    }
+
+    None
+}
+
 // All keybinds are driven from Lua es.bind() calls in ~/.config/eswm/config.lua.
-// process_shortcut checks Lua keybinds; anything not configured is forwarded to clients.
+// process_shortcut checks built-in always-on shortcuts first, then Lua keybinds;
+// anything not configured is forwarded to clients.
 fn process_shortcut(state: &mut State, mods: &ModifiersState, keysym: KeysymHandle) -> FilterResult<()> {
     crate::prune_dead_windows(state);
     let Some(raw_sym) = keysym.raw_latin_sym_or_raw_current_sym() else {
         return FilterResult::Forward;
     };
     let raw = raw_sym.raw();
+
+    // Always-on built-ins (emergency quit, VT switch) take precedence and cannot be removed.
+    if let Some(kb) = builtin_shortcut(mods, raw) {
+        return execute_keybind(state, &kb);
+    }
 
     // Lua keybinds (from es.bind() in config.lua).
     let lua_kb = {
@@ -3221,31 +3269,23 @@ mod tests {
         assert_eq!(next_redraw_state(false, true), (false, false), "flip in flight, nothing pending");
     }
 
-    /// Super+Alt+Backspace must match the config's "quit" keybind exactly.
+    /// Super+Alt+Backspace must always trigger quit (built-in, config-independent).
     #[test]
     fn quit_keybind_matches_super_alt_backspace() {
-        let kb = lua_state::Keybind {
-            mods: vec!["logo".into(), "alt".into()],
-            key: "backspace".into(),
-            keysym: xkbcommon::xkb::keysyms::KEY_BackSpace,
-            arg: None,
-            cmd: None,
-            action: "quit".into(),
-        };
         let mods = ModifiersState {
             logo: true,
             alt: true,
             ..Default::default()
         };
         let raw = xkbcommon::xkb::keysyms::KEY_BackSpace;
-        let matched = find_lua_keybind(std::slice::from_ref(&kb), &mods, raw);
-        assert!(matched.is_some(), "Super+Alt+Backspace should match quit keybind");
-        // Wrong modifiers must not match.
+        let kb = builtin_shortcut(&mods, raw).expect("Super+Alt+Backspace should always quit");
+        assert_eq!(kb.action, "quit");
+        // Wrong modifiers must not trigger.
         let wrong = ModifiersState {
             logo: true,
             ..Default::default()
         };
-        assert!(find_lua_keybind(std::slice::from_ref(&kb), &wrong, raw).is_none());
+        assert!(builtin_shortcut(&wrong, raw).is_none());
     }
 
 
