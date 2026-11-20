@@ -1208,6 +1208,45 @@ fn spawn_terminal_name() -> String {
     spawn_terminal_store().lock().unwrap().clone()
 }
 
+static SPAWN_CHILD_PIDS: std::sync::OnceLock<std::sync::Mutex<Vec<u32>>> = std::sync::OnceLock::new();
+
+fn spawn_child_pids() -> &'static std::sync::Mutex<Vec<u32>> {
+    SPAWN_CHILD_PIDS.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+fn track_spawned_child(pid: u32) {
+    spawn_child_pids().lock().unwrap().push(pid);
+}
+
+/// Reap exited child processes using waitpid(-1, WNOHANG) loop.
+/// Returns the number of children reaped in this call.
+pub fn reap_spawned_children() -> usize {
+    let mut reaped = 0usize;
+    loop {
+        let mut status: libc::c_int = 0;
+        let pid = unsafe { libc::waitpid(-1, &mut status as *mut _, libc::WNOHANG) };
+        if pid > 0 {
+            let pid = pid as u32;
+            let mut tracked = spawn_child_pids().lock().unwrap();
+            tracked.retain(|&p| p != pid);
+            reaped += 1;
+            tracing::warn!("reaped spawned child pid {pid}");
+            continue;
+        }
+        if pid == 0 {
+            break;
+        }
+        // pid == -1
+        let err = std::io::Error::last_os_error();
+        match err.raw_os_error() {
+            Some(code) if code == libc::ECHILD => break,
+            Some(code) if code == libc::EINTR => continue,
+            _ => break,
+        }
+    }
+    reaped
+}
+
 fn spawn_program(prog: &str, args: &[&str]) -> std::io::Result<u32> {
     use std::os::unix::process::CommandExt;
     use std::process::{Command, Stdio};
@@ -1247,13 +1286,9 @@ fn spawn_program(prog: &str, args: &[&str]) -> std::io::Result<u32> {
         });
     }
 
-    let mut child = command.spawn()?;
+    let child = command.spawn()?;
     let pid = child.id();
-    // Temporary: per-child wait thread remains until e07s01t3 replaces with SIGCHLD reaper.
-    std::thread::spawn(move || match child.wait() {
-        Ok(status) => tracing::warn!("spawned child exited with {status}"),
-        Err(err) => tracing::warn!("spawned child wait failed: {err}"),
-    });
+    track_spawned_child(pid);
     Ok(pid)
 }
 
