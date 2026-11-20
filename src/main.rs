@@ -1198,19 +1198,17 @@ fn spawn_terminal_name() -> String {
     "kitty".to_string()
 }
 
-/// Spawn a shell-interpreted command string (`sh -c`) with eswm spawn environment.
-pub fn spawn_shell_command(cmd: &str) -> std::io::Result<u32> {
+fn spawn_program(prog: &str, args: &[&str]) -> std::io::Result<u32> {
     use std::os::unix::process::CommandExt;
     use std::process::{Command, Stdio};
 
-    let (prog, args) = shell_command_argv(cmd);
     let log_path = current_spawn_log_path();
     let log = open_spawn_log_file(&log_path).ok();
     let terminal = spawn_terminal_name();
 
-    let mut command = Command::new(&prog);
+    let mut command = Command::new(prog);
     command
-        .args(&args)
+        .args(args)
         .env("WAYLAND_DISPLAY", socket_name())
         .env("XDG_CURRENT_DESKTOP", "eswm")
         .env("TERMINAL", terminal)
@@ -1243,10 +1241,28 @@ pub fn spawn_shell_command(cmd: &str) -> std::io::Result<u32> {
     let pid = child.id();
     // Temporary: per-child wait thread remains until e07s01t3 replaces with SIGCHLD reaper.
     std::thread::spawn(move || match child.wait() {
-        Ok(status) => tracing::warn!("shell child exited with {status}"),
-        Err(err) => tracing::warn!("shell child wait failed: {err}"),
+        Ok(status) => tracing::warn!("spawned child exited with {status}"),
+        Err(err) => tracing::warn!("spawned child wait failed: {err}"),
     });
     Ok(pid)
+}
+
+/// Spawn a shell-interpreted command string (`sh -c`) with eswm spawn environment.
+pub fn spawn_shell_command(cmd: &str) -> std::io::Result<u32> {
+    let (prog, args) = shell_command_argv(cmd);
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    spawn_program(&prog, &arg_refs)
+}
+
+/// Spawn an argument vector directly (no shell parsing).
+pub fn spawn_argv_command(argv: &[&str]) -> std::io::Result<u32> {
+    let Some((prog, args)) = argv.split_first() else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "empty argv",
+        ));
+    };
+    spawn_program(prog, args)
 }
 
 /// Build argv for shell-interpreted command strings (Hyprland-style `sh -c`).
