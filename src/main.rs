@@ -1173,6 +1173,11 @@ fn spawn_log_path_in(state_home: &std::path::Path) -> std::path::PathBuf {
     state_home.join("eswm").join("spawn.log")
 }
 
+/// Build argv for shell-interpreted command strings (Hyprland-style `sh -c`).
+fn shell_command_argv(cmd: &str) -> (String, Vec<String>) {
+    ("sh".to_string(), vec!["-c".to_string(), cmd.to_string()])
+}
+
 /// Open the shared spawn log for appending, creating parent dirs and enforcing 0600.
 fn open_spawn_log_file(path: &std::path::Path) -> std::io::Result<std::fs::File> {
     use std::fs::OpenOptions;
