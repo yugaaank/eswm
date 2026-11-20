@@ -2,7 +2,7 @@
 // Simplified for M4: single seat, no drm lease/syncobj, no tablet/touch/gestures,
 // windows render full-window stacked at (0,0) on one output (layout = M5).
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io,
     path::{Path, PathBuf},
     sync::{
@@ -171,6 +171,8 @@ pub struct UdevData {
     /// Same, for the last input event. A cursor that does not move is the
     /// failure the user notices before anything else.
     pub last_input_at: Option<Instant>,
+    /// Key codes whose press was intercepted by a shortcut; matching releases are intercepted too.
+    intercepted_keys: HashSet<u32>,
 }
 
 #[derive(Default)]
@@ -349,6 +351,7 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         stats: RenderStats::default(),
         last_commit_at: None,
         last_input_at: None,
+        intercepted_keys: HashSet::new(),
     };
 
     // Shared protocol/global/socket setup from main.rs.
@@ -1065,6 +1068,27 @@ fn execute_keybind(state: &mut State, kb: &lua_state::Keybind) -> FilterResult<(
 }
 
 
+
+/// Track intercepted key presses so their releases are intercepted symmetrically.
+fn key_filter_result(
+    intercepted: &mut HashSet<u32>,
+    key_code: u32,
+    pressed: bool,
+    shortcut: impl FnOnce() -> FilterResult<()>,
+) -> FilterResult<()> {
+    if pressed {
+        let result = shortcut();
+        if matches!(result, FilterResult::Intercept(())) {
+            intercepted.insert(key_code);
+        }
+        result
+    } else if intercepted.remove(&key_code) {
+        FilterResult::Intercept(())
+    } else {
+        FilterResult::Forward
+    }
+}
+
 /// Built-in shortcuts that are always active and cannot be removed/overridden by config.
 /// Returns a synthetic keybind action for emergency quit and VT switching.
 fn builtin_shortcut(mods: &ModifiersState, raw_sym: u32) -> Option<lua_state::Keybind> {
@@ -1089,8 +1113,7 @@ fn builtin_shortcut(mods: &ModifiersState, raw_sym: u32) -> Option<lua_state::Ke
 
     // VT switch: Ctrl+Alt+F1..F12 / XF86Switch_VT_1..12 (always on)
     if ctrl && alt && !logo && !shift
-        && raw_sym >= keysyms::KEY_XF86Switch_VT_1
-        && raw_sym <= keysyms::KEY_XF86Switch_VT_12
+        && (keysyms::KEY_XF86Switch_VT_1..=keysyms::KEY_XF86Switch_VT_12).contains(&raw_sym)
     {
         let vt = (raw_sym - keysyms::KEY_XF86Switch_VT_1 + 1) as i32;
         return Some(lua_state::Keybind {
@@ -1321,11 +1344,13 @@ impl State {
             InputEvent::Keyboard { event, .. } => {
                 let keyboard = self.seat.get_keyboard().unwrap();
                 // libinput/smithay call the filter for press *and* release;
-                // shortcuts must only fire on press.
+                // shortcuts fire on press; consumed presses must also intercept release.
+                let key_code = event.key_code();
+                let key_code_u32: u32 = key_code.into();
                 let pressed = event.state() == input::KeyState::Pressed;
                 keyboard.input::<(), _>(
                     self,
-                    event.key_code(),
+                    key_code,
                     event.state(),
                     SCOUNTER.next_serial(),
                     event.time_msec(),
@@ -1333,11 +1358,18 @@ impl State {
                         if let Some(udev) = state.udev.as_mut() {
                             udev.last_mods = *mods;
                         }
-                        if pressed {
+                        let mut intercepted = state
+                            .udev
+                            .as_mut()
+                            .map(|u| std::mem::take(&mut u.intercepted_keys))
+                            .unwrap_or_default();
+                        let result = key_filter_result(&mut intercepted, key_code_u32, pressed, || {
                             process_shortcut(state, mods, keysym)
-                        } else {
-                            FilterResult::Forward
+                        });
+                        if let Some(udev) = state.udev.as_mut() {
+                            udev.intercepted_keys = intercepted;
                         }
+                        result
                     },
                 );
             }
