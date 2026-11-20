@@ -1,7 +1,7 @@
 spec: specs/epics/e07-spawn-keybinds/e07s02-keybinds.md
 story_id: e07s02
 title: "Keybinds: xkb keysym names, raw sym matching, emergency quit always on"
-status: pending
+status: completed
 bcps: 3
 tasks:
   - id: e07s02t1
@@ -45,7 +45,7 @@ tasks:
     verify: "cargo test --bin eswm intercept_release"
     risk: P3
     security: none
-    status: failing
+    status: passing
     allure:
       severity: minor
       categories:
@@ -57,7 +57,7 @@ tasks:
     verify: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
     risk: P3
     security: none
-    status: failing
+    status: passing
     allure:
       severity: minor
       categories:

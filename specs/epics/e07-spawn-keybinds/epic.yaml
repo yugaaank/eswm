@@ -1,7 +1,7 @@
 id: e07
 slug: spawn-keybinds
 title: Spawning & Keybinds
-status: pending
+status: completed
 wsjf_rank: 6
 bcps_total: 8
 core_value: |
@@ -17,4 +17,4 @@ stories:
     title: "Keybinds: xkb keysym names, raw sym matching, emergency quit always on"
     bcps: 3
     delta: MODIFIED
-    status: pending
+    status: completed
