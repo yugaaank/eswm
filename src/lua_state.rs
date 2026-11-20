@@ -380,3 +380,56 @@ pub fn _do_file(lua: &Lua, script_path: &str, _snapshot: Arc<std::sync::Mutex<cr
 pub fn _do_chunk(lua: &Lua, source: &str, _snapshot: Arc<std::sync::Mutex<crate::ipc::Snapshot>>, _cmd_tx: &Sender<crate::ipc::CompCmd>) -> Result<(), mlua::Error> {
     lua.load(source).exec()
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    fn test_api() -> (Lua, Arc<Mutex<Vec<Keybind>>>) {
+        let lua = init().expect("lua init");
+        let snapshot = Arc::new(Mutex::new(crate::ipc::Snapshot::default()));
+        let (cmd_tx, _cmd_rx) = flume::unbounded();
+        let keybinds = Arc::new(Mutex::new(Vec::new()));
+        let decoration = Arc::new(Mutex::new(DecorationConfig::default()));
+        let dock_entries = Arc::new(Mutex::new(Vec::new()));
+        register_api(
+            &lua,
+            snapshot,
+            &cmd_tx,
+            keybinds.clone(),
+            decoration,
+            dock_entries,
+        )
+        .expect("register api");
+        (lua, keybinds)
+    }
+
+    #[test]
+    fn keybind_parse_stores_xkb_keysym_case_insensitive() {
+        let (lua, keybinds) = test_api();
+        lua.load(r#"es.bind("Super+Return", "spawn_terminal")"#)
+            .exec()
+            .expect("bind return");
+        lua.load(r#"es.bind_cmd("Super+r", "fuzzel")"#)
+            .exec()
+            .expect("bind_cmd r");
+        let kbs = keybinds.lock().unwrap();
+        assert_eq!(kbs.len(), 2);
+        assert_eq!(kbs[0].keysym, xkbcommon::xkb::keysyms::KEY_Return);
+        assert_eq!(kbs[1].keysym, xkbcommon::xkb::keysyms::KEY_r);
+    }
+
+    #[test]
+    fn keybind_parse_unknown_key_returns_lua_error() {
+        let (lua, keybinds) = test_api();
+        let err = lua
+            .load(r#"es.bind("Super+NotARealKey_123", "spawn_terminal")"#)
+            .exec()
+            .expect_err("unknown key must error");
+        assert!(
+            err.to_string().to_lowercase().contains("unknown key"),
+            "unexpected error: {err}"
+        );
+        assert!(keybinds.lock().unwrap().is_empty(), "failed bind must not register");
+    }
+}
