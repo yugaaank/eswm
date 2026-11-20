@@ -1586,6 +1586,29 @@ mod tests {
     static SPAWN_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
+    fn spawn_shell_command_uses_configured_terminal_env() {
+        let _guard = SPAWN_ENV_LOCK.lock().unwrap();
+        let tmp = std::env::temp_dir().join(format!("eswm-spawn-term-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let prev = std::env::var_os("XDG_STATE_HOME");
+        unsafe { std::env::set_var("XDG_STATE_HOME", &tmp) };
+
+        set_spawn_terminal("foot");
+        spawn_shell_command("printf %s \"$TERMINAL\"").expect("spawn shell command");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let contents = std::fs::read_to_string(spawn_log_path_in(&tmp)).unwrap();
+        assert_eq!(contents, "foot");
+        set_spawn_terminal("kitty");
+
+        match prev {
+            Some(v) => unsafe { std::env::set_var("XDG_STATE_HOME", v) },
+            None => unsafe { std::env::remove_var("XDG_STATE_HOME") },
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
     fn spawn_argv_command_executes_without_shell_wrapper() {
         let _guard = SPAWN_ENV_LOCK.lock().unwrap();
         let tmp = std::env::temp_dir().join(format!("eswm-spawn-argv-{}", std::process::id()));
