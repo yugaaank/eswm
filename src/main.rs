@@ -1591,6 +1591,27 @@ mod tests {
     }
 
     #[test]
+    fn spawn_reap_waitpid_loop_reaps_exited_children() {
+        let _guard = SPAWN_ENV_LOCK.lock().unwrap();
+        let tmp = std::env::temp_dir().join(format!("eswm-spawn-reap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let prev = std::env::var_os("XDG_STATE_HOME");
+        unsafe { std::env::set_var("XDG_STATE_HOME", &tmp) };
+
+        spawn_shell_command("true").expect("spawn short-lived child");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let reaped = reap_spawned_children();
+        assert!(reaped > 0, "expected at least one child reaped, got {reaped}");
+
+        match prev {
+            Some(v) => unsafe { std::env::set_var("XDG_STATE_HOME", v) },
+            None => unsafe { std::env::remove_var("XDG_STATE_HOME") },
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
     fn spawn_argv_command_executes_without_shell_wrapper() {
         let _guard = SPAWN_ENV_LOCK.lock().unwrap();
         let tmp = std::env::temp_dir().join(format!("eswm-spawn-argv-{}", std::process::id()));
