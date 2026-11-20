@@ -3289,4 +3289,56 @@ mod tests {
         assert!(matched.is_some(), "Caps/Num Lock must not break keybind matching");
     }
 
+
+
+    #[test]
+    fn emergency_quit_super_alt_backspace_is_builtin() {
+        let mods = ModifiersState {
+            logo: true,
+            alt: true,
+            ..Default::default()
+        };
+        let kb = builtin_shortcut(&mods, xkbcommon::xkb::keysyms::KEY_BackSpace)
+            .expect("Super+Alt+Backspace must be built-in quit");
+        assert_eq!(kb.action, "quit");
+        // Must not depend on config; wrong modifiers must not trigger.
+        let wrong = ModifiersState {
+            logo: true,
+            ..Default::default()
+        };
+        assert!(builtin_shortcut(&wrong, xkbcommon::xkb::keysyms::KEY_BackSpace).is_none());
+    }
+
+    #[test]
+    fn emergency_quit_ctrl_alt_f_keys_switch_vt_builtin() {
+        let mods = ModifiersState {
+            ctrl: true,
+            alt: true,
+            ..Default::default()
+        };
+        let kb = builtin_shortcut(&mods, xkbcommon::xkb::keysyms::KEY_XF86Switch_VT_1)
+            .expect("Ctrl+Alt+F1 must be built-in VT switch");
+        assert_eq!(kb.action, "change_vt");
+        assert_eq!(kb.arg, Some(1));
+        let kb12 = builtin_shortcut(&mods, xkbcommon::xkb::keysyms::KEY_XF86Switch_VT_12)
+            .expect("Ctrl+Alt+F12 must be built-in VT switch");
+        assert_eq!(kb12.arg, Some(12));
+        // Ctrl+Alt alone on non-VT key must not trigger.
+        assert!(builtin_shortcut(&mods, xkbcommon::xkb::keysyms::KEY_a).is_none());
+    }
+
+    #[test]
+    fn emergency_quit_builtin_ignores_caps_num_lock() {
+        let mods = ModifiersState {
+            logo: true,
+            alt: true,
+            caps_lock: true,
+            num_lock: true,
+            ..Default::default()
+        };
+        let kb = builtin_shortcut(&mods, xkbcommon::xkb::keysyms::KEY_BackSpace)
+            .expect("Caps/Num Lock must not break emergency quit");
+        assert_eq!(kb.action, "quit");
+    }
+
 }
