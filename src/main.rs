@@ -1486,6 +1486,18 @@ mod tests {
     }
 
     #[test]
+    fn spawn_log_path_from_env_prefers_xdg_state_home() {
+        let path = spawn_log_path_from_env(Some("/tmp/xdg"), Some("/home/u"));
+        assert_eq!(path, std::path::PathBuf::from("/tmp/xdg/eswm/spawn.log"));
+    }
+
+    #[test]
+    fn spawn_log_path_from_env_falls_back_to_home_local_state() {
+        let path = spawn_log_path_from_env(None, Some("/home/u"));
+        assert_eq!(path, std::path::PathBuf::from("/home/u/.local/state/eswm/spawn.log"));
+    }
+
+    #[test]
     fn spawn_shell_command_uses_sh_c() {
         let (prog, args) = shell_command_argv("bash -c 'echo a b'");
         assert_eq!(prog, "sh");
