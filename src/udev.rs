@@ -3283,4 +3283,46 @@ mod tests {
         };
         assert!(find_lua_keybind(std::slice::from_ref(&kb), &wrong, raw).is_none());
     }
+
+
+    #[test]
+    fn keybind_match_uses_stored_keysym_for_shifted_number() {
+        let kb = lua_state::Keybind {
+            mods: vec!["logo".into(), "shift".into()],
+            key: "1".into(),
+            keysym: xkbcommon::xkb::keysyms::KEY_1,
+            arg: Some(1),
+            cmd: None,
+            action: "move_window_to_workspace".into(),
+        };
+        let mods = ModifiersState {
+            logo: true,
+            shift: true,
+            ..Default::default()
+        };
+        // Raw sym for the physical '1' key remains KEY_1 even when shift is held.
+        let matched = find_lua_keybind(std::slice::from_ref(&kb), &mods, xkbcommon::xkb::keysyms::KEY_1);
+        assert!(matched.is_some(), "Super+Shift+1 should match stored KEY_1");
+    }
+
+    #[test]
+    fn keybind_match_ignores_caps_and_num_lock() {
+        let kb = lua_state::Keybind {
+            mods: vec!["logo".into()],
+            key: "r".into(),
+            keysym: xkbcommon::xkb::keysyms::KEY_r,
+            arg: None,
+            cmd: None,
+            action: "spawn_terminal".into(),
+        };
+        let mods = ModifiersState {
+            logo: true,
+            caps_lock: true,
+            num_lock: true,
+            ..Default::default()
+        };
+        let matched = find_lua_keybind(std::slice::from_ref(&kb), &mods, xkbcommon::xkb::keysyms::KEY_r);
+        assert!(matched.is_some(), "Caps/Num Lock must not break keybind matching");
+    }
+
 }
