@@ -1173,6 +1173,20 @@ fn spawn_log_path_in(state_home: &std::path::Path) -> std::path::PathBuf {
     state_home.join("eswm").join("spawn.log")
 }
 
+/// Resolve spawn log path from XDG_STATE_HOME or HOME/.local/state fallback.
+fn spawn_log_path_from_env(
+    xdg_state_home: Option<&str>,
+    home: Option<&str>,
+) -> std::path::PathBuf {
+    let base = if let Some(xdg) = xdg_state_home.filter(|s| !s.is_empty()) {
+        std::path::PathBuf::from(xdg)
+    } else {
+        let home = home.unwrap_or(".");
+        std::path::PathBuf::from(home).join(".local").join("state")
+    };
+    spawn_log_path_in(&base)
+}
+
 /// Build argv for shell-interpreted command strings (Hyprland-style `sh -c`).
 fn shell_command_argv(cmd: &str) -> (String, Vec<String>) {
     ("sh".to_string(), vec!["-c".to_string(), cmd.to_string()])
