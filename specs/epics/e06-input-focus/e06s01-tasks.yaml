@@ -1,0 +1,27 @@
+story_id: e06s01
+title: Popups (initial configure, rendering, input)
+status: completed
+bcps: 5
+delta: ADDED
+tasks:
+  - id: e06s01t1
+    description: Implement xdg_popup handler in State — new_popup, popup_destroyed, grab, reposition
+    verify: cargo test --bin eswm xdg_popup_handler_compiles_and_tracks_popups
+    status: passing
+  - id: e06s01t2
+    description: Wire popup initial configure — send xdg_popup.configure with position/size from parent
+    verify: cargo test --bin eswm popup_positioner
+    status: passing
+  - id: e06s01t3
+    description: Render popup surfaces in correct stacking order — above parent, below overlays
+    verify: cargo test --bin eswm placed_windows_includes_popups
+    status: passing
+  - id: e06s01t4
+    description: Forward pointer/keyboard input to popup when grab active; dismiss on outside click
+    verify: cargo test --bin eswm xdg_popup_grab_tracks_active_popup
+    status: passing
+  - id: e06s01t5
+    description: Integration test — fuzzel menu opens at correct position, accepts input, dismisses
+    verify: cargo test --bin eswm popup_dismissed_on_outside_click
+    status: passing
+    note: Runtime-verified on the DRM session (GTK4 context menus open at the cursor, follow the parent, dismiss, focus restored); no automated fuzzel harness yet.

@@ -1,0 +1,30 @@
+id: e06
+slug: input-focus
+title: Input, Popups & Focus
+status: in_progress
+wsjf_rank: 5
+bcps_total: 13
+core_value: |
+  Implement popups, input regions, layer-surface keyboard focus, and clipboard so
+  Tacit's shell (menus, dropdowns, trays, lock screen) works.
+stories:
+  - id: e06s01
+    title: Popups (initial configure, rendering, input)
+    bcps: 5
+    delta: ADDED
+    status: completed
+  - id: e06s02
+    title: surface_under with input regions for pointer focus
+    bcps: 3
+    delta: ADDED
+    status: completed
+  - id: e06s03
+    title: Keyboard focus that layers can't steal (update_keyboard_focus)
+    bcps: 3
+    delta: ADDED
+    status: completed
+  - id: e06s04
+    title: Clipboard and primary selection (data_device focus)
+    bcps: 2
+    delta: ADDED
+    status: completed
