@@ -1,0 +1,78 @@
+story_id: e06s04
+verified_at: "2026-11-20T06:05:00Z"
+verifier: verify-work
+branch: e06s04-clipboard
+risk: P2
+phases:
+  preflight:
+    passed: true
+    notes:
+      - "No PR open for branch; gh pr checks N/A."
+      - "python3 scripts/spec-lint.py: ok (19 task files, 8 epics)."
+  verify_validation:
+    passed: true
+    commands:
+      - cmd: "cargo test --bin eswm data_device_selection"
+        exit_code: 0
+        result: "1 passed, 97 filtered out (data_device_selection_tracks_clipboard_per_seat)"
+      - cmd: "cargo test --bin eswm primary_selection"
+        exit_code: 0
+        result: "2 passed, 96 filtered out"
+      - cmd: "cargo test --bin eswm data_device_focus"
+        exit_code: 0
+        result: "1 passed, 97 filtered out (data_device_focus_updates_on_keyboard_focus_change)"
+      - cmd: "cargo test --bin eswm data_device"
+        exit_code: 0
+        result: "3 passed, 95 filtered out"
+  smoke:
+    passed: null
+    skipped: true
+    note: "Skipped for P2 risk."
+  build:
+    passed: true
+    command: "cargo build"
+  typecheck:
+    passed: true
+    note: "Covered by cargo build/cargo clippy (Rust)."
+  lint:
+    passed: true
+    command: "cargo clippy --all-targets"
+  tests:
+    passed: null
+    skipped: true
+    note: "Skipped as phase for P2 risk (task verify commands executed and passed)."
+  terminal_verdict:
+    command: "cargo clippy --all-targets"
+    exit_code: 0
+    captured_at: "2026-11-20T06:04:30Z"
+    note: "Single contiguous run on branch; clean."
+  security_scan:
+    passed: null
+    skipped: true
+    note: "Skipped for P2 risk."
+  blind_spots:
+    passed: null
+    note: "scripts/check-blind-spots.sh not present; N/A."
+  completeness_critic:
+    passed: null
+    note: "scripts/lib/completeness-critic.sh not present; N/A."
+  adversarial:
+    passed: null
+    note: "scripts/verify-adversarial.sh not present; N/A."
+  manual:
+    skipped: true
+    note: "Step-by-step UAT skipped for P2 risk. Story verification script not executed in runtime environment."
+    steps:
+      - step: "wl-copy hi in one terminal; wl-paste in another -> \"hi\"."
+        expected: "Clipboard copy/paste works between clients."
+        actual: "Not executed manually (P2 skip). Server-side selection/focus wiring and unit tests pass; runtime client behavior unconfirmed."
+        passed: null
+      - step: "wl-paste --watch cat prints on every copy."
+        expected: "Clipboard selection updates propagate to watchers."
+        actual: "Not executed manually (P2 skip); runtime behavior unconfirmed."
+        passed: null
+  gaps:
+    closed: false
+    items:
+      - "Runtime UAT for clipboard and primary selection (wl-copy/wl-paste, middle-click primary paste, ext-data-control clients) not performed; P2 depth skipped manual verification."
+      - "Automated tests validate server-side selection state and focus hooks but do not exercise real Wayland client data transfer end-to-end."
