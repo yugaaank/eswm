@@ -6,6 +6,7 @@
 use std::sync::Arc;
 use flume::Sender;
 use mlua::{Lua, Table};
+use xkbcommon::xkb;
 
 use crate::wm::{DecorationConfig, DockEntry, TilingLayout, WmMode};
 
@@ -24,12 +25,22 @@ pub fn init() -> Result<Lua, mlua::Error> {
 #[derive(Debug, Clone)]
 pub struct Keybind {
     pub mods: Vec<String>,
+    #[allow(dead_code)]
     pub key: String,
+    pub keysym: u32,
     pub action: String,
     pub arg: Option<i32>,
     pub cmd: Option<String>,
 }
 
+
+fn parse_keysym_name(name: &str) -> Result<u32, mlua::Error> {
+    let sym = xkb::keysym_from_name(name, xkb::KEYSYM_CASE_INSENSITIVE);
+    if sym.raw() == xkb::keysyms::KEY_NoSymbol {
+        return Err(mlua::Error::RuntimeError(format!("unknown key name: {name}")));
+    }
+    Ok(sym.raw())
+}
 /// Parse a keybind string like "Super+Return" into (mods, key).
 fn parse_keybind_string(keybind: &str) -> (Vec<String>, String) {
     let parts: Vec<&str> = keybind.split('+').collect();
@@ -78,9 +89,11 @@ pub fn register_api(
         if key.is_empty() {
             return Err(mlua::Error::RuntimeError("keybind missing key".into()));
         }
+        let keysym = parse_keysym_name(&key)?;
         let kb = Keybind {
             mods,
             key,
+            keysym,
             action,
             arg,
             cmd: None,
@@ -97,9 +110,11 @@ pub fn register_api(
         if key.is_empty() {
             return Err(mlua::Error::RuntimeError("keybind missing key".into()));
         }
+        let keysym = parse_keysym_name(&key)?;
         let kb = Keybind {
             mods,
             key,
+            keysym,
             action: "exec_cmd".into(),
             arg: None,
             cmd: Some(command),
@@ -379,4 +394,57 @@ pub fn _do_file(lua: &Lua, script_path: &str, _snapshot: Arc<std::sync::Mutex<cr
 /// `snapshot` and `cmd_tx` are shared with the IPC layer.
 pub fn _do_chunk(lua: &Lua, source: &str, _snapshot: Arc<std::sync::Mutex<crate::ipc::Snapshot>>, _cmd_tx: &Sender<crate::ipc::CompCmd>) -> Result<(), mlua::Error> {
     lua.load(source).exec()
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    fn test_api() -> (Lua, Arc<Mutex<Vec<Keybind>>>) {
+        let lua = init().expect("lua init");
+        let snapshot = Arc::new(Mutex::new(crate::ipc::Snapshot::default()));
+        let (cmd_tx, _cmd_rx) = flume::unbounded();
+        let keybinds = Arc::new(Mutex::new(Vec::new()));
+        let decoration = Arc::new(Mutex::new(DecorationConfig::default()));
+        let dock_entries = Arc::new(Mutex::new(Vec::new()));
+        register_api(
+            &lua,
+            snapshot,
+            &cmd_tx,
+            keybinds.clone(),
+            decoration,
+            dock_entries,
+        )
+        .expect("register api");
+        (lua, keybinds)
+    }
+
+    #[test]
+    fn keybind_parse_stores_xkb_keysym_case_insensitive() {
+        let (lua, keybinds) = test_api();
+        lua.load(r#"es.bind("Super+Return", "spawn_terminal")"#)
+            .exec()
+            .expect("bind return");
+        lua.load(r#"es.bind_cmd("Super+r", "fuzzel")"#)
+            .exec()
+            .expect("bind_cmd r");
+        let kbs = keybinds.lock().unwrap();
+        assert_eq!(kbs.len(), 2);
+        assert_eq!(kbs[0].keysym, xkbcommon::xkb::keysyms::KEY_Return);
+        assert_eq!(kbs[1].keysym, xkbcommon::xkb::keysyms::KEY_r);
+    }
+
+    #[test]
+    fn keybind_parse_unknown_key_returns_lua_error() {
+        let (lua, keybinds) = test_api();
+        let err = lua
+            .load(r#"es.bind("Super+NotARealKey_123", "spawn_terminal")"#)
+            .exec()
+            .expect_err("unknown key must error");
+        assert!(
+            err.to_string().to_lowercase().contains("unknown key"),
+            "unexpected error: {err}"
+        );
+        assert!(keybinds.lock().unwrap().is_empty(), "failed bind must not register");
+    }
 }

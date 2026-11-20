@@ -1,0 +1,67 @@
+story_id: e07s02
+verified_at: "2026-11-20T17:47:37Z"
+verifier: verify-work
+risk: P3
+phases:
+  branch_check:
+    passed: true
+    branch: e07s02-keybinds
+  preflight:
+    passed: true
+    command: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
+  pre_uat_verify_validation:
+    passed: true
+    tasks:
+      - id: e07s02t1
+        command: "cargo test --bin eswm keybind_parse"
+        passed: true
+        result: "2 passed, 0 failed"
+      - id: e07s02t2
+        command: "cargo test --bin eswm keybind_match"
+        passed: true
+        result: "3 passed, 0 failed"
+      - id: e07s02t3
+        command: "cargo test --bin eswm emergency_quit"
+        passed: true
+        result: "3 passed, 0 failed"
+      - id: e07s02t4
+        command: "cargo test --bin eswm intercept_release"
+        passed: true
+        result: "2 passed, 0 failed"
+      - id: e07s02t5
+        command: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
+        passed: true
+  smoke:
+    skipped: true
+    reason: "P3 risk-scaled depth"
+  build:
+    passed: true
+    command: "cargo build"
+  typecheck:
+    passed: true
+    note: "Covered by cargo build/clippy (Rust)"
+  lint:
+    passed: true
+    command: "cargo clippy --all-targets"
+  tests:
+    passed: true
+    command: "cargo test --bin eswm"
+    result: "116 passed, 0 failed"
+  terminal_verdict:
+    command: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
+    exit_code: 0
+    captured_at: "2026-11-20T17:47:37Z"
+    note: "Single contiguous run (P3 preflight/evidence)."
+  security_scan:
+    skipped: true
+    reason: "P3 risk-scaled depth"
+  blind_spot_check:
+    skipped: true
+    reason: "scripts/check-blind-spots.sh not present"
+  manual:
+    skipped: true
+    reason: "P3 risk-scaled depth"
+  gaps:
+    closed: true
+    notes:
+      - "Runtime/manual UAT in live DRM session not executed in-session (P3, out of scope for automated verify): Super+r/xkb-name binds, Super+Shift+1 raw-sym behavior, Caps/Num Lock with real keymap, emergency quit/VT switch with broken/conflicting config, and release interception on focused clients."

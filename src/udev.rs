@@ -2,7 +2,7 @@
 // Simplified for M4: single seat, no drm lease/syncobj, no tablet/touch/gestures,
 // windows render full-window stacked at (0,0) on one output (layout = M5).
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io,
     path::{Path, PathBuf},
     sync::{
@@ -171,6 +171,8 @@ pub struct UdevData {
     /// Same, for the last input event. A cursor that does not move is the
     /// failure the user notices before anything else.
     pub last_input_at: Option<Instant>,
+    /// Key codes whose press was intercepted by a shortcut; matching releases are intercepted too.
+    intercepted_keys: HashSet<u32>,
 }
 
 #[derive(Default)]
@@ -349,6 +351,7 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         stats: RenderStats::default(),
         last_commit_at: None,
         last_input_at: None,
+        intercepted_keys: HashSet::new(),
     };
 
     // Shared protocol/global/socket setup from main.rs.
@@ -941,51 +944,13 @@ fn parse_mods(mods: &[String]) -> ModifiersState {
     m
 }
 
-/// Map a key name string to its xkb keysym u32 value.
-fn parse_key(name: &str) -> Option<u32> {
-    use xkbcommon::xkb::keysyms;
-    let name = name.to_lowercase();
-    match name.as_str() {
-        "return" | "enter" => Some(keysyms::KEY_Return),
-        "q" => Some(keysyms::KEY_q),
-        "f" => Some(keysyms::KEY_f),
-        "m" => Some(keysyms::KEY_m),
-        "space" => Some(keysyms::KEY_space),
-        "backspace" => Some(keysyms::KEY_BackSpace),
-        "left" => Some(keysyms::KEY_Left),
-        "right" => Some(keysyms::KEY_Right),
-        "up" => Some(keysyms::KEY_Up),
-        "down" => Some(keysyms::KEY_Down),
-        "1" => Some(keysyms::KEY_1),
-        "2" => Some(keysyms::KEY_2),
-        "3" => Some(keysyms::KEY_3),
-        "4" => Some(keysyms::KEY_4),
-        "5" => Some(keysyms::KEY_5),
-        "6" => Some(keysyms::KEY_6),
-        "7" => Some(keysyms::KEY_7),
-        "8" => Some(keysyms::KEY_8),
-        "9" => Some(keysyms::KEY_9),
-        "vt1" => Some(keysyms::KEY_XF86Switch_VT_1),
-        "vt2" => Some(keysyms::KEY_XF86Switch_VT_2),
-        "vt3" => Some(keysyms::KEY_XF86Switch_VT_3),
-        "vt4" => Some(keysyms::KEY_XF86Switch_VT_4),
-        "vt5" => Some(keysyms::KEY_XF86Switch_VT_5),
-        "vt6" => Some(keysyms::KEY_XF86Switch_VT_6),
-        "vt7" => Some(keysyms::KEY_XF86Switch_VT_7),
-        "vt8" => Some(keysyms::KEY_XF86Switch_VT_8),
-        "vt9" => Some(keysyms::KEY_XF86Switch_VT_9),
-        "vt10" => Some(keysyms::KEY_XF86Switch_VT_10),
-        "vt11" => Some(keysyms::KEY_XF86Switch_VT_11),
-        "vt12" => Some(keysyms::KEY_XF86Switch_VT_12),
-        _ => None,
-    }
-}
 
-/// Return the first Lua keybind whose mods and key match the current event.
+/// Return the first Lua keybind whose mods and keysym match the current event.
+/// Compares bind-relevant modifiers only (logo/ctrl/alt/shift), ignoring Caps/Num Lock.
 fn find_lua_keybind<'a>(
     keybinds: &'a [lua_state::Keybind],
     mods: &ModifiersState,
-    raw: u32,
+    raw_sym: u32,
 ) -> Option<&'a lua_state::Keybind> {
     keybinds.iter().find(|kb| {
         let kb_mods = parse_mods(&kb.mods);
@@ -993,8 +958,7 @@ fn find_lua_keybind<'a>(
             && kb_mods.ctrl == mods.ctrl
             && kb_mods.alt == mods.alt
             && kb_mods.shift == mods.shift;
-        let key_match = parse_key(&kb.key) == Some(raw);
-        mods_match && key_match
+        mods_match && kb.keysym == raw_sym
     })
 }
 
@@ -1103,11 +1067,82 @@ fn execute_keybind(state: &mut State, kb: &lua_state::Keybind) -> FilterResult<(
     FilterResult::Intercept(())
 }
 
+
+
+/// Track intercepted key presses so their releases are intercepted symmetrically.
+fn key_filter_result(
+    intercepted: &mut HashSet<u32>,
+    key_code: u32,
+    pressed: bool,
+    shortcut: impl FnOnce() -> FilterResult<()>,
+) -> FilterResult<()> {
+    if pressed {
+        let result = shortcut();
+        if matches!(result, FilterResult::Intercept(())) {
+            intercepted.insert(key_code);
+        }
+        result
+    } else if intercepted.remove(&key_code) {
+        FilterResult::Intercept(())
+    } else {
+        FilterResult::Forward
+    }
+}
+
+/// Built-in shortcuts that are always active and cannot be removed/overridden by config.
+/// Returns a synthetic keybind action for emergency quit and VT switching.
+fn builtin_shortcut(mods: &ModifiersState, raw_sym: u32) -> Option<lua_state::Keybind> {
+    use xkbcommon::xkb::keysyms;
+
+    let logo = mods.logo;
+    let ctrl = mods.ctrl;
+    let alt = mods.alt;
+    let shift = mods.shift;
+
+    // Emergency quit: Super+Alt+Backspace (always on)
+    if logo && alt && !ctrl && !shift && raw_sym == keysyms::KEY_BackSpace {
+        return Some(lua_state::Keybind {
+            mods: vec!["logo".into(), "alt".into()],
+            key: "BackSpace".into(),
+            keysym: raw_sym,
+            action: "quit".into(),
+            arg: None,
+            cmd: None,
+        });
+    }
+
+    // VT switch: Ctrl+Alt+F1..F12 / XF86Switch_VT_1..12 (always on)
+    if ctrl && alt && !logo && !shift
+        && (keysyms::KEY_XF86Switch_VT_1..=keysyms::KEY_XF86Switch_VT_12).contains(&raw_sym)
+    {
+        let vt = (raw_sym - keysyms::KEY_XF86Switch_VT_1 + 1) as i32;
+        return Some(lua_state::Keybind {
+            mods: vec!["ctrl".into(), "alt".into()],
+            key: format!("XF86Switch_VT_{vt}"),
+            keysym: raw_sym,
+            action: "change_vt".into(),
+            arg: Some(vt),
+            cmd: None,
+        });
+    }
+
+    None
+}
+
 // All keybinds are driven from Lua es.bind() calls in ~/.config/eswm/config.lua.
-// process_shortcut checks Lua keybinds; anything not configured is forwarded to clients.
+// process_shortcut checks built-in always-on shortcuts first, then Lua keybinds;
+// anything not configured is forwarded to clients.
 fn process_shortcut(state: &mut State, mods: &ModifiersState, keysym: KeysymHandle) -> FilterResult<()> {
     crate::prune_dead_windows(state);
-    let raw = u32::from(keysym.modified_sym());
+    let Some(raw_sym) = keysym.raw_latin_sym_or_raw_current_sym() else {
+        return FilterResult::Forward;
+    };
+    let raw = raw_sym.raw();
+
+    // Always-on built-ins (emergency quit, VT switch) take precedence and cannot be removed.
+    if let Some(kb) = builtin_shortcut(mods, raw) {
+        return execute_keybind(state, &kb);
+    }
 
     // Lua keybinds (from es.bind() in config.lua).
     let lua_kb = {
@@ -1309,11 +1344,13 @@ impl State {
             InputEvent::Keyboard { event, .. } => {
                 let keyboard = self.seat.get_keyboard().unwrap();
                 // libinput/smithay call the filter for press *and* release;
-                // shortcuts must only fire on press.
+                // shortcuts fire on press; consumed presses must also intercept release.
+                let key_code = event.key_code();
+                let key_code_u32: u32 = key_code.into();
                 let pressed = event.state() == input::KeyState::Pressed;
                 keyboard.input::<(), _>(
                     self,
-                    event.key_code(),
+                    key_code,
                     event.state(),
                     SCOUNTER.next_serial(),
                     event.time_msec(),
@@ -1321,11 +1358,18 @@ impl State {
                         if let Some(udev) = state.udev.as_mut() {
                             udev.last_mods = *mods;
                         }
-                        if pressed {
+                        let mut intercepted = state
+                            .udev
+                            .as_mut()
+                            .map(|u| std::mem::take(&mut u.intercepted_keys))
+                            .unwrap_or_default();
+                        let result = key_filter_result(&mut intercepted, key_code_u32, pressed, || {
                             process_shortcut(state, mods, keysym)
-                        } else {
-                            FilterResult::Forward
+                        });
+                        if let Some(udev) = state.udev.as_mut() {
+                            udev.intercepted_keys = intercepted;
                         }
+                        result
                     },
                 );
             }
@@ -3257,29 +3301,145 @@ mod tests {
         assert_eq!(next_redraw_state(false, true), (false, false), "flip in flight, nothing pending");
     }
 
-    /// Super+Alt+Backspace must match the config's "quit" keybind exactly.
+    /// Super+Alt+Backspace must always trigger quit (built-in, config-independent).
     #[test]
     fn quit_keybind_matches_super_alt_backspace() {
-        let kb = lua_state::Keybind {
-            mods: vec!["logo".into(), "alt".into()],
-            key: "backspace".into(),
-            arg: None,
-            cmd: None,
-            action: "quit".into(),
-        };
         let mods = ModifiersState {
             logo: true,
             alt: true,
             ..Default::default()
         };
         let raw = xkbcommon::xkb::keysyms::KEY_BackSpace;
-        let matched = find_lua_keybind(std::slice::from_ref(&kb), &mods, raw);
-        assert!(matched.is_some(), "Super+Alt+Backspace should match quit keybind");
-        // Wrong modifiers must not match.
+        let kb = builtin_shortcut(&mods, raw).expect("Super+Alt+Backspace should always quit");
+        assert_eq!(kb.action, "quit");
+        // Wrong modifiers must not trigger.
         let wrong = ModifiersState {
             logo: true,
             ..Default::default()
         };
-        assert!(find_lua_keybind(std::slice::from_ref(&kb), &wrong, raw).is_none());
+        assert!(builtin_shortcut(&wrong, raw).is_none());
     }
+
+
+    #[test]
+    fn keybind_match_uses_stored_keysym_for_shifted_number() {
+        let kb = lua_state::Keybind {
+            mods: vec!["logo".into(), "shift".into()],
+            key: "1".into(),
+            keysym: xkbcommon::xkb::keysyms::KEY_1,
+            arg: Some(1),
+            cmd: None,
+            action: "move_window_to_workspace".into(),
+        };
+        let mods = ModifiersState {
+            logo: true,
+            shift: true,
+            ..Default::default()
+        };
+        // Raw sym for the physical '1' key remains KEY_1 even when shift is held.
+        let matched = find_lua_keybind(std::slice::from_ref(&kb), &mods, xkbcommon::xkb::keysyms::KEY_1);
+        assert!(matched.is_some(), "Super+Shift+1 should match stored KEY_1");
+    }
+
+    #[test]
+    fn keybind_match_ignores_caps_and_num_lock() {
+        let kb = lua_state::Keybind {
+            mods: vec!["logo".into()],
+            key: "r".into(),
+            keysym: xkbcommon::xkb::keysyms::KEY_r,
+            arg: None,
+            cmd: None,
+            action: "spawn_terminal".into(),
+        };
+        let mods = ModifiersState {
+            logo: true,
+            caps_lock: true,
+            num_lock: true,
+            ..Default::default()
+        };
+        let matched = find_lua_keybind(std::slice::from_ref(&kb), &mods, xkbcommon::xkb::keysyms::KEY_r);
+        assert!(matched.is_some(), "Caps/Num Lock must not break keybind matching");
+    }
+
+
+
+    #[test]
+    fn emergency_quit_super_alt_backspace_is_builtin() {
+        let mods = ModifiersState {
+            logo: true,
+            alt: true,
+            ..Default::default()
+        };
+        let kb = builtin_shortcut(&mods, xkbcommon::xkb::keysyms::KEY_BackSpace)
+            .expect("Super+Alt+Backspace must be built-in quit");
+        assert_eq!(kb.action, "quit");
+        // Must not depend on config; wrong modifiers must not trigger.
+        let wrong = ModifiersState {
+            logo: true,
+            ..Default::default()
+        };
+        assert!(builtin_shortcut(&wrong, xkbcommon::xkb::keysyms::KEY_BackSpace).is_none());
+    }
+
+    #[test]
+    fn emergency_quit_ctrl_alt_f_keys_switch_vt_builtin() {
+        let mods = ModifiersState {
+            ctrl: true,
+            alt: true,
+            ..Default::default()
+        };
+        let kb = builtin_shortcut(&mods, xkbcommon::xkb::keysyms::KEY_XF86Switch_VT_1)
+            .expect("Ctrl+Alt+F1 must be built-in VT switch");
+        assert_eq!(kb.action, "change_vt");
+        assert_eq!(kb.arg, Some(1));
+        let kb12 = builtin_shortcut(&mods, xkbcommon::xkb::keysyms::KEY_XF86Switch_VT_12)
+            .expect("Ctrl+Alt+F12 must be built-in VT switch");
+        assert_eq!(kb12.arg, Some(12));
+        // Ctrl+Alt alone on non-VT key must not trigger.
+        assert!(builtin_shortcut(&mods, xkbcommon::xkb::keysyms::KEY_a).is_none());
+    }
+
+    #[test]
+    fn emergency_quit_builtin_ignores_caps_num_lock() {
+        let mods = ModifiersState {
+            logo: true,
+            alt: true,
+            caps_lock: true,
+            num_lock: true,
+            ..Default::default()
+        };
+        let kb = builtin_shortcut(&mods, xkbcommon::xkb::keysyms::KEY_BackSpace)
+            .expect("Caps/Num Lock must not break emergency quit");
+        assert_eq!(kb.action, "quit");
+    }
+
+
+
+    #[test]
+    fn intercept_release_consumed_press_intercepts_matching_release() {
+        let mut intercepted = std::collections::HashSet::new();
+        let key_code = 42u32;
+
+        let press = key_filter_result(&mut intercepted, key_code, true, || FilterResult::Intercept(()));
+        assert!(matches!(press, FilterResult::Intercept(())));
+        assert!(intercepted.contains(&key_code));
+
+        let release = key_filter_result(&mut intercepted, key_code, false, || FilterResult::Forward);
+        assert!(matches!(release, FilterResult::Intercept(())));
+        assert!(!intercepted.contains(&key_code), "release must clear intercepted key");
+    }
+
+    #[test]
+    fn intercept_release_forwarded_press_does_not_intercept_release() {
+        let mut intercepted = std::collections::HashSet::new();
+        let key_code = 7u32;
+
+        let press = key_filter_result(&mut intercepted, key_code, true, || FilterResult::Forward);
+        assert!(matches!(press, FilterResult::Forward));
+        assert!(intercepted.is_empty());
+
+        let release = key_filter_result(&mut intercepted, key_code, false, || FilterResult::Forward);
+        assert!(matches!(release, FilterResult::Forward));
+    }
+
 }

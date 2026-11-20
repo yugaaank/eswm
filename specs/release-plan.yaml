@@ -56,7 +56,7 @@ epics:
     slug: spawn-keybinds
     title: Spawning & Keybinds
     wsjf_rank: 6
-    status: pending
+    status: completed
     stories: []
     description: |
       Fix spawning (sh -c, XDG_CURRENT_DESKTOP, XDG_STATE_HOME logging, SIGCHLD
