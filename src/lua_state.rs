@@ -6,6 +6,7 @@
 use std::sync::Arc;
 use flume::Sender;
 use mlua::{Lua, Table};
+use xkbcommon::xkb;
 
 use crate::wm::{DecorationConfig, DockEntry, TilingLayout, WmMode};
 
@@ -25,11 +26,20 @@ pub fn init() -> Result<Lua, mlua::Error> {
 pub struct Keybind {
     pub mods: Vec<String>,
     pub key: String,
+    pub keysym: u32,
     pub action: String,
     pub arg: Option<i32>,
     pub cmd: Option<String>,
 }
 
+
+fn parse_keysym_name(name: &str) -> Result<u32, mlua::Error> {
+    let sym = xkb::keysym_from_name(name, xkb::KEYSYM_CASE_INSENSITIVE);
+    if sym.raw() == xkb::keysyms::KEY_NoSymbol {
+        return Err(mlua::Error::RuntimeError(format!("unknown key name: {name}")));
+    }
+    Ok(sym.raw())
+}
 /// Parse a keybind string like "Super+Return" into (mods, key).
 fn parse_keybind_string(keybind: &str) -> (Vec<String>, String) {
     let parts: Vec<&str> = keybind.split('+').collect();
@@ -78,9 +88,11 @@ pub fn register_api(
         if key.is_empty() {
             return Err(mlua::Error::RuntimeError("keybind missing key".into()));
         }
+        let keysym = parse_keysym_name(&key)?;
         let kb = Keybind {
             mods,
             key,
+            keysym,
             action,
             arg,
             cmd: None,
@@ -97,9 +109,11 @@ pub fn register_api(
         if key.is_empty() {
             return Err(mlua::Error::RuntimeError("keybind missing key".into()));
         }
+        let keysym = parse_keysym_name(&key)?;
         let kb = Keybind {
             mods,
             key,
+            keysym,
             action: "exec_cmd".into(),
             arg: None,
             cmd: Some(command),

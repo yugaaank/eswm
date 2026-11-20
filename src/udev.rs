@@ -3263,6 +3263,7 @@ mod tests {
         let kb = lua_state::Keybind {
             mods: vec!["logo".into(), "alt".into()],
             key: "backspace".into(),
+            keysym: xkbcommon::xkb::keysyms::KEY_BackSpace,
             arg: None,
             cmd: None,
             action: "quit".into(),
