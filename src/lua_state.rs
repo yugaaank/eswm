@@ -123,15 +123,30 @@ pub fn register_api(
     })?;
     let dsp_table = lua.create_table()?;
     dsp_table.set("global", dsp_global)?;
-    // es.dsp.exec_cmd("program arg1 arg2") -> spawns the command on eswm's socket
+    // es.dsp.exec_cmd("...") -> spawns a shell-interpreted command string (sh -c)
     let dsp_exec_cmd = lua.create_function(move |_, cmd: String| -> Result<(), mlua::Error> {
-        let (program, args) = crate::parse_cmd(&cmd);
-        if !program.is_empty() {
-            crate::spawn_on_socket(program, &args);
+        if cmd.trim().is_empty() {
+            return Ok(());
         }
+        crate::spawn_shell_command(&cmd)
+            .map(|_| ())
+            .map_err(|e| mlua::Error::RuntimeError(format!("exec_cmd failed: {e}")))?;
         Ok(())
     })?;
     dsp_table.set("exec_cmd", dsp_exec_cmd)?;
+
+    // es.exec({"prog", "arg", ...}) -> spawns an argv vector without shell parsing
+    let es_exec = lua.create_function(move |_, argv: Vec<String>| -> Result<(), mlua::Error> {
+        if argv.is_empty() {
+            return Err(mlua::Error::RuntimeError("exec requires non-empty argv".into()));
+        }
+        let refs: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+        crate::spawn_argv_command(&refs)
+            .map(|_| ())
+            .map_err(|e| mlua::Error::RuntimeError(format!("exec failed: {e}")))?;
+        Ok(())
+    })?;
+    es.set("exec", es_exec)?;
 
     // es.dsp.set_border_size(n) -> sets window border width in px
     let dsp_set_border_size = lua.create_function({
@@ -212,6 +227,16 @@ pub fn register_api(
         }
     })?;
     dsp_table.set("set_tiling_layout", dsp_set_tiling_layout)?;
+
+    // es.dsp.set_terminal("kitty") -> terminal program for spawn_terminal and TERMINAL env
+    let dsp_set_terminal = lua.create_function(move |_, name: String| -> Result<(), mlua::Error> {
+        if name.trim().is_empty() {
+            return Err(mlua::Error::RuntimeError("terminal name must not be empty".into()));
+        }
+        crate::set_spawn_terminal(name.trim());
+        Ok(())
+    })?;
+    dsp_table.set("set_terminal", dsp_set_terminal)?;
 
     // es.dsp.set_border_color_focused(r, g, b, a) -> focused border color (RGBA 0-255)
     let dsp_set_border_color_focused = lua.create_function({

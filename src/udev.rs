@@ -1039,10 +1039,7 @@ fn execute_keybind(state: &mut State, kb: &lua_state::Keybind) -> FilterResult<(
         }
         "exec_cmd" => {
             if let Some(cmd) = &kb.cmd {
-                let (program, args) = crate::parse_cmd(cmd);
-                if !program.is_empty() {
-                    crate::spawn_on_socket(program, &args);
-                }
+                let _ = crate::spawn_shell_command(cmd);
             }
         }
         "quit" => {

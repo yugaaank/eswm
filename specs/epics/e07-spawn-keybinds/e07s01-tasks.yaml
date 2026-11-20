@@ -21,7 +21,7 @@ tasks:
     verify: "cargo build"
     risk: P3
     security: none
-    status: failing
+    status: passing
     allure:
       severity: minor
       categories:
