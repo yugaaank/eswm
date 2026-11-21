@@ -2294,4 +2294,23 @@ mod tests {
         let geo = Rectangle::new((-8, -16).into(), (100, 50).into());
         assert_eq!(window_geometry_offset(Some(geo)), (-8, -16));
     }
+
+    // e08s03t3 — cursor status must map to exactly one render behavior.
+    #[test]
+    fn cursor_image_hidden_hides_the_pointer() {
+        use smithay::input::pointer::CursorImageStatus;
+        assert_eq!(
+            cursor_render_decision(&CursorImageStatus::Hidden),
+            CursorRenderDecision::Hide
+        );
+    }
+
+    #[test]
+    fn cursor_image_named_falls_back_to_xcursor_images() {
+        use smithay::input::pointer::{CursorIcon, CursorImageStatus};
+        assert_eq!(
+            cursor_render_decision(&CursorImageStatus::Named(CursorIcon::Default)),
+            CursorRenderDecision::XcursorFallback
+        );
+    }
 }
