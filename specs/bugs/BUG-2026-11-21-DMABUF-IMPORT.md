@@ -40,8 +40,20 @@ and three `GL_INVALID_OPERATION / EGLImage not supported` errors.
 - NVIDIA EGL context advertises `EGL_WL_bind_wayland_display` and is in hw-accel list; Intel render node does not advertise it but drives the panel.
 - Chromium/Electron clients allocate dmabufs on the **NVIDIA** GPU; eswm imports them with a renderer targeting the **Intel** scanout GPU (or via smithay's multi-GPU CPU-copy renderer), which fails for those modifiers → `BAD_MATCH`.
 
-## Root cause (hypothesis — to verify)
-Cross-GPU dmabuf import/format mismatch. The compositor advertises dmabuf feedback for the scanout GPU, but clients still choose the NVIDIA device; the multi-GPU copy path in smithay 0.7 cannot import those buffers (BAD_MATCH on eglCreateImageKHR). instantWM handles this with a dedicated scanout-GPU renderer, `GbmFramebufferExporter`, and **linear** dmabufs for cross-device export (see eswm specs/tech-architecture/INSTANTWM-COMPARISON.md §3/§4). Our `choose_dmabuf_gpu` picks the scanout GPU for feedback but the actual import path may still use the wrong renderer/format set.
+## Root cause (VERIFIED — RCA 2026-11-22)
+Two independent bugs, both confirmed by code inspection:
+
+**Bug A — forced node hint kills cross-GPU import.** `dmabuf_imported` (udev.rs:257-270) imports each buffer on `single_renderer(&dmabuf_primary_gpu)` (Intel) and then calls `dmabuf.set_node(Intel)` unconditionally. Clients allocate on NVIDIA; smithay's `import_on_src_node` (multigpu/mod.rs:2105-2112) trusts that node hint and calls `eglCreateImageKHR` on the Intel EGL context with an NVIDIA modifier → `BAD_MATCH`. Because `dmabuf_primary_gpu == render_node` (both Intel), `render_surface` (udev.rs:2508) always takes the **single-renderer** branch; the multi-GPU copy renderer is never constructed. There is also no `add_preference_tranche` call anywhere — feedback advertises only Intel formats, no render tranche and no `TrancheFlags::Scanout` (contrast instantWM's `build_output_dmabuf_feedback`, two tranches + per-surface `select_dmabuf_feedback`).
+
+**Bug B — first configure has no size.** `new_toplevel` (main.rs:82-101) calls `add_window` with empty app_id/title and zero `target_rect`; `apply_layout` (main.rs:1188-1232) then sends a configure with activation/mode flags but **no size** because `target_valid` is false. Electron clients commit their default-sized buffer against that configure; eswm paints it at `target_rect` (main.rs:291-305) so content spills past the border until a maximize/minimize cycle forces a sized configure.
+
+### Fix plan (TDD actionable)
+1. Add pure tests for a new feedback-format helper: `dmabuf_feedback_formats(scanout, render, cross_device) -> (scanout_formats, render_formats)` — assert linear-only render tranche when cross-device, no duplicate pairs.
+2. Build feedback with two tranches: main device + formats (scanout), `add_preference_tranche(scanout_id, Some(TrancheFlags::Scanout), scanout_formats)`, `add_preference_tranche(render_id, None, linear_render_formats)`. Use `DmabufFeedbackBuilder::new/add_preference_tranche` (smithay `wayland/dmabuf/mod.rs:315,341-346`).
+3. In `dmabuf_imported`: remove the forced `set_node(Intel)`; log `dmabuf.format()` + modifier; validate using a renderer that includes the client's device, or accept unconditionally (`notifier.successful()`) and let smithay's `None` node path discover the source GPU at render time.
+4. In `render_surface`: construct the multi-GPU renderer (`gpus.renderer(&render_gpu, &scanout_node, format_needed)`) when the buffer's source device differs from scanout, so `texture_copy`/`dma_shadow_copy`/`mem_copy` can bridge GPUs. Use linear copy format when devices differ.
+5. Bug B: in `new_toplevel`, give the new window a non-zero initial `target_rect` (from `wm.work_area`) before `apply_layout`, so the first configure carries a size. Defensive backstop: render surface trees clipped to the committed buffer size (intersection with `target_rect`) so oversized first buffers cannot spill past borders.
+6. Re-run manual UAT on the hybrid laptop: Helium/Wordcraft render content on first open with no `BAD_MATCH`/`EGLImage` errors and no content spill.
 
 The Wordcraft "content spilling outside border" is a related configure-timing issue: the client committed a buffer before receiving the compositor's size configure; the buffer was rendered at the wrong geometry until a maximize/minimize cycle forced a proper resize. This is likely a missing/early configure or CSD geometry race, to be verified separately.
 
