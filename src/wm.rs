@@ -21,6 +21,63 @@ pub enum WindowMode {
     Fullscreen,
 }
 
+/// Where a window is placed — the persistent layout axis (e09s01).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Placement {
+    #[default]
+    Tiled,
+    Floating,
+}
+
+/// Temporary presentation state — independent of placement (e09s01).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Presentation {
+    #[default]
+    Normal,
+    Maximized,
+    Fullscreen,
+}
+
+/// A window's layout and presentation, kept as one `Copy` value so a
+/// presentation transition cannot overwrite placement (instantWM-style).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ClientMode {
+    pub placement: Placement,
+    pub presentation: Presentation,
+}
+
+impl ClientMode {
+    pub fn new(placement: Placement, presentation: Presentation) -> Self {
+        Self { placement, presentation }
+    }
+
+    /// The same mode with presentation cleared — for restore transitions.
+    pub fn without_presentation(self) -> Self {
+        Self::new(self.placement, Presentation::Normal)
+    }
+
+    /// `(maximized, fullscreen)` xdg state bits derived from presentation only.
+    pub fn xdg_state_flags(self) -> (bool, bool) {
+        match self.presentation {
+            Presentation::Maximized => (true, false),
+            Presentation::Fullscreen => (false, true),
+            Presentation::Normal => (false, false),
+        }
+    }
+
+    /// Legacy mode name for IPC/Lua compatibility.
+    pub fn mode_name(self) -> &'static str {
+        match self.presentation {
+            Presentation::Maximized => "maximized",
+            Presentation::Fullscreen => "fullscreen",
+            Presentation::Normal => match self.placement {
+                Placement::Tiled => "tiled",
+                Placement::Floating => "floating",
+            },
+        }
+    }
+}
+
 /// Global spawn/layout policy: Hyprland (tiled) or Windows (floating).
 /// Switching it only affects newly spawned windows; Super+Space still moves
 /// individual windows between tiling and floating.
@@ -1470,7 +1527,7 @@ pub fn equal_split(
 
 #[cfg(test)]
 mod tests {
-    use super::{Rect, TilingLayout, WindowManager, WindowMode, WindowRule, equal_split, titlebar_button_at, TitlebarButton};
+    use super::{Rect, TilingLayout, WindowManager, WindowMode, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation};
 
     fn manager() -> (WindowManager, u64) {
         let mut manager = WindowManager::new();
