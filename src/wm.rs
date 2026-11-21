@@ -2229,4 +2229,25 @@ mod tests {
         assert_eq!(ClientMode::new(Placement::Tiled, Presentation::Maximized).mode_name(), "maximized");
         assert_eq!(ClientMode::new(Placement::Tiled, Presentation::Fullscreen).mode_name(), "fullscreen");
     }
+
+    // e09s01t3 — buffer presence and user-minimization are distinct.
+    #[test]
+    fn minimized_state_is_independent_of_mapped() {
+        let (mut manager, output) = manager();
+        let id = manager.add_window(output, "kitty", "one").unwrap();
+        let w = manager.window(id).unwrap();
+        assert!(w.mapped, "fresh window has a buffer");
+        assert!(!w.minimized, "fresh window is not minimized");
+
+        assert!(manager.toggle_minimize(id));
+        let w = manager.window(id).unwrap();
+        assert!(w.mapped, "minimizing must not discard the client's buffer");
+        assert!(w.minimized, "minimizing sets the explicit flag");
+
+        // Dock entries derive minimized from the flag, not from mapped.
+        assert!(manager.dock_entries().iter().any(|e| e.minimized));
+
+        assert!(manager.toggle_minimize(id));
+        assert!(!manager.window(id).unwrap().minimized);
+    }
 }
