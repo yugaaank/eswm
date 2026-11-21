@@ -1287,6 +1287,34 @@ fn pointer_focus(state: &mut State, pos: Point<f64, Logical>) -> Option<(wl_surf
 }
 
 /// Send wl_keyboard leave/enter for `id`; None => just leave.
+/// Render bands, listed top-first (smithay draws index 0 last / on top).
+/// e08s02t3: the z-order policy is pure so it can be tested without a GPU.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RenderBand {
+    Cursor,
+    Fullscreen,
+    OverlayTop,
+    Dock,
+    Windows,
+    Background,
+}
+
+/// Top-to-bottom render order. With a fullscreen window it sits above all
+/// layer groups and the dock (operator decision), but below the cursor.
+fn render_band_order(fullscreen_active: bool) -> Vec<RenderBand> {
+    let mut bands = vec![RenderBand::Cursor];
+    if fullscreen_active {
+        bands.push(RenderBand::Fullscreen);
+    }
+    bands.extend([
+        RenderBand::OverlayTop,
+        RenderBand::Dock,
+        RenderBand::Windows,
+        RenderBand::Background,
+    ]);
+    bands
+}
+
 /// What the titlebar close button may do. e08s02t1: the decision is kept pure
 /// so "never orphan a client" is a regression-testable policy, not a comment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3639,7 +3667,7 @@ mod tests {
 
     // e08s02t3 — z-order is a policy decision, tested without a GPU.
     #[test]
-    fn render_band_order_puts_overlay_above_dock() {
+    fn render_order_puts_overlay_above_dock() {
         let order = render_band_order(false);
         let overlay = order.iter().position(|b| *b == RenderBand::OverlayTop).unwrap();
         let dock = order.iter().position(|b| *b == RenderBand::Dock).unwrap();
@@ -3647,7 +3675,7 @@ mod tests {
     }
 
     #[test]
-    fn render_band_order_puts_fullscreen_above_layers_and_dock() {
+    fn render_order_puts_fullscreen_above_layers_and_dock() {
         let order = render_band_order(true);
         let fullscreen = order.iter().position(|b| *b == RenderBand::Fullscreen).unwrap();
         for other in [RenderBand::OverlayTop, RenderBand::Dock, RenderBand::Windows, RenderBand::Background] {
@@ -3659,7 +3687,7 @@ mod tests {
     }
 
     #[test]
-    fn render_band_order_without_fullscreen_has_no_fullscreen_band() {
+    fn render_order_without_fullscreen_has_no_fullscreen_band() {
         assert!(!render_band_order(false).contains(&RenderBand::Fullscreen));
     }
 
