@@ -1,6 +1,6 @@
 story_id: e08s03
 verified_at: "2026-11-22T12:00:00Z"
-verifier: develop-tdd
+verifier: verify-work
 risk: P2
 phases:
   branch_check:
@@ -12,6 +12,7 @@ phases:
     command: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
   pre_uat_verify_validation:
     passed: true
+    note: "All 9 task verify commands re-run at verify-work; each exited 0. No grep/pattern mismatches."
     tasks:
       - id: e08s03t1
         command: "cargo test --bin eswm output_scale"
@@ -47,7 +48,13 @@ phases:
         result: "141 passed, warning-free"
   smoke:
     skipped: true
-    reason: "Bare-metal DRM/libseat compositor; running backend in-session forbidden by AGENTS.md (VT grab)."
+    reason: "Bare-metal DRM/libseat compositor: running backend inside this session is forbidden by AGENTS.md (VT grab); no stub server for cold-start. P2 depth also skips cold-start."
+  completeness_critic:
+    skipped: true
+    reason: "scripts/lib/completeness-critic.sh not present"
+  adversarial_mutation_gate:
+    skipped: true
+    reason: "scripts/verify-adversarial.sh not present"
   build:
     passed: true
     command: "cargo build"
@@ -64,7 +71,7 @@ phases:
   terminal_verdict:
     command: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
     exit_code: 0
-    note: "Single contiguous run: clippy 0 (no warnings), 141 passed, build 0."
+    note: "Single contiguous run at verify-work: cargo clippy --all-targets && cargo test --bin eswm && cargo build; exit 0, 141 passed, no warnings."
   security_scan:
     skipped: true
     reason: "No security-sensitive changes (security: none on all tasks)"
