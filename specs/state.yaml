@@ -15,9 +15,9 @@ bug_cycle:
   completed_steps: []
 git:
   branch: main
-  hash: "16e3dcb"
+  hash: "8c351c8"
 handoff:
-  last_step_completed: "e08s03 released: squashed as 16e3dcb and pushed to origin/main; worktree/branch cleaned; story lock released. CI status not checked (operator skip precedent); manual DRM UAT pending operator."
+  last_step_completed: "plan-work complete for e08s04 (re-planned: stale viewport caveat obsolete, mode_sent tracking confirmed, manual UAT explicit)"
   open_decisions:
     - "bug-2026-11-17t141711 remains open (low): master-mode single-window border breaks at bottom in src/udev.rs"
     - "Manual UAT (live DRM session) for e08s01 pending operator: tiny dock, 600x400 floating spawn, empty-mode connector warning, ContextLost exit status 1"
@@ -26,12 +26,13 @@ handoff:
     - "Manual UAT (live DRM session) for e08s02 pending operator: close button, overlay/fullscreen stacking, CSD positioning"
     - "CI status unverified for release commit 948aa2d (operator skip precedent)"
     - "e08s03 scope = all four settings (cursor, per-output scale, touchpad, keymap); scale API = es.dsp.set_output_scale(name, f32) per operator decision"
+    - "e08s04 re-planned: no viewport override exists in source (stale caveat dropped); mode_sent field added for reliable state flags; manual UAT kept as explicit task with automated proxy"
   required_reading:
     - CONVENTIONS.md
     - specs/epics/e08-panics-correctness/epic.yaml
-    - specs/epics/e08-panics-correctness/e08s03-scale-cursor.md
-    - specs/epics/e08-panics-correctness/e08s03-tasks.yaml
-  next_skill: survey-context
+    - specs/epics/e08-panics-correctness/e08s04-window-state-and-content-scaling.md
+    - specs/epics/e08-panics-correctness/e08s04-tasks.yaml
+  next_skill: kickoff-branch
 decisions:
   - story: BUG-2026-11-17T00:30:00
     note: "Freeze/stutter fix closed via validate-fix: five stacked defects (unconditional re-render, empty frames treated as failed paints, dmabuf on the idle dGPU, callbacks on two clocks, and a dropped frame callback deadlocking the client). Final fix 02f57d2; diagnostics now blame wait time rather than the existence of work (be0f2bd); PointerMotionAbsolute now requests a redraw (6922ccc). Operator confirmed on the DRM session."

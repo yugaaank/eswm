@@ -1,23 +1,86 @@
+spec: specs/epics/e08-panics-correctness/e08s04-window-state-and-content-scaling.md
 story_id: e08s04
-title: Window state flags and content scaling
-status: pending
+title: "Window state flags and content scaling"
+status: failing
 bcps: 3
 delta: ADDED
 notes: |
-  Candidate implementation exists uncommitted in src/main.rs (xdg
-  Maximized/Fullscreen states + viewport dst override). It was written to work
-  around BUG-2026-11-19T235000, whose real cause was a missing configure on the
-  titlebar path; re-evaluate the viewport half before keeping it.
+  Re-planned 2026-11-22: the earlier caveat about a compositor-owned viewport
+  dst override is obsolete — no such override exists in current source (only
+  the ViewporterState protocol global). Manual UAT is kept as an explicit task
+  with an automated proxy; no viewport work remains.
 tasks:
   - id: e08s04t1
-    description: Set xdg_toplevel Maximized/Fullscreen in the pending configure and clear them for other modes
-    verify: cargo test --bin eswm xdg_state_flags_follow_window_mode
-    status: pending
+    description: "Add pure xdg_state_flags_for_mode(mode) helper with inline tests covering Tiled, Floating, Maximized, Fullscreen (maximized/fullscreen flags set and cleared correctly) (RED then GREEN)"
+    verify: "cargo test --bin eswm xdg_state_flags"
+    risk: P2
+    security: none
+    status: failing
+    allure:
+      severity: normal
+      categories:
+        - "e08-panics-correctness"
+        - "wayland"
+        - "unit"
+
   - id: e08s04t2
-    description: Verify on DRM that kitty, a GTK4 app and one other toolkit resize into a maximized rect on a plain size configure
-    verify: "manual: on a TTY, maximize each app from the titlebar and from Super+M, confirm content fills the rect"
-    status: pending
+    description: "Add Window.mode_sent: Option<WindowMode> with setter and initialize to None at window creation; mirror activated_sent tracking"
+    verify: "cargo build"
+    risk: P2
+    security: none
+    status: failing
+    allure:
+      severity: normal
+      categories:
+        - "e08-panics-correctness"
+        - "window-state"
+        - "unit"
+
   - id: e08s04t3
-    description: Keep the viewport dst override only if task 2 fails for a real client; otherwise delete it
-    verify: cargo test --bin eswm apply_layout
-    status: pending
+    description: "In apply_layout include mode change in configure-needed check, set/unset xdg State::Maximized/Fullscreen via helper, and call set_mode_sent after configure without reintroducing per-frame configures"
+    verify: "cargo test --bin eswm apply_layout"
+    risk: P2
+    security: none
+    status: failing
+    allure:
+      severity: normal
+      categories:
+        - "e08-panics-correctness"
+        - "wayland"
+        - "regression"
+
+  - id: e08s04t4
+    description: "Confirm no compositor-owned viewport dst override exists in source (obsolete workaround from stale ledger); keep none and document"
+    verify: "! grep -rq 'ViewportCachedState' src/"
+    risk: P3
+    security: none
+    status: failing
+    allure:
+      severity: minor
+      categories:
+        - "e08-panics-correctness"
+        - "cleanup"
+
+  - id: e08s04t5
+    description: "Run full preflight verification gates for e08s04"
+    verify: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
+    risk: P2
+    security: none
+    status: failing
+    allure:
+      severity: normal
+      categories:
+        - "e08-panics-correctness"
+        - "verification"
+
+  - id: e08s04t6
+    description: "MANUAL UAT (operator, live DRM session): maximize kitty, a GTK4 app, and one other toolkit from titlebar and Super+M; confirm content fills the rect and clients report maximized state. Automated proxy: xdg_state_flags test from t1."
+    verify: "manual: on a TTY, maximize each app from the titlebar and Super+M; confirm content fills the rect and no viewport override is present (t4). Record results in specs/verifications/e08s04-verify.yaml"
+    risk: P2
+    security: none
+    status: failing
+    allure:
+      severity: normal
+      categories:
+        - "e08-panics-correctness"
+        - "manual-uat"
