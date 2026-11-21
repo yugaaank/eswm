@@ -2342,4 +2342,17 @@ mod tests {
             CursorRenderDecision::XcursorFallback
         );
     }
+
+    // e08s04t1 — xdg window-state flags follow the WM mode exactly.
+    #[test]
+    fn xdg_state_flags_maximized_and_fullscreen_are_exclusive() {
+        assert_eq!(xdg_state_flags_for_mode(wm::WindowMode::Maximized), (true, false));
+        assert_eq!(xdg_state_flags_for_mode(wm::WindowMode::Fullscreen), (false, true));
+    }
+
+    #[test]
+    fn xdg_state_flags_other_modes_clear_both() {
+        assert_eq!(xdg_state_flags_for_mode(wm::WindowMode::Tiled), (false, false));
+        assert_eq!(xdg_state_flags_for_mode(wm::WindowMode::Floating), (false, false));
+    }
 }
