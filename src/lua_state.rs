@@ -36,6 +36,29 @@ impl InputConfig {
     }
 }
 
+/// Resolved touchpad settings. e08s03t2: defaults preserve the values that
+/// used to be hardcoded in the libinput device-added callback.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TouchpadSettings {
+    pub tap: bool,
+    pub natural_scroll: bool,
+    pub speed: f64,
+}
+
+pub fn resolve_touchpad(config: &InputConfig) -> TouchpadSettings {
+    TouchpadSettings {
+        tap: config.touchpad_tap.unwrap_or(true),
+        natural_scroll: config.touchpad_natural_scroll.unwrap_or(false),
+        speed: config.touchpad_speed.filter(|s| s.is_finite() && *s >= 0.0).unwrap_or(0.7),
+    }
+}
+
+/// An empty or whitespace-only keymap would fail at compile time; reject it
+/// early so the current keymap stays in effect (e08s03t2).
+pub fn validate_keymap(keymap: &str) -> bool {
+    !keymap.trim().is_empty()
+}
+
 /// Map a positive finite f64 to a smithay fractional Scale (e08s03t1).
 fn output_scale_for(value: f64) -> Option<smithay::output::Scale> {
     if value.is_finite() && value > 0.0 {
@@ -508,7 +531,7 @@ mod tests {
     }
 
     #[test]
-    fn keymap_config_rejects_empty_and_accepts_text() {
+    fn touchpad_config_keymap_validation_rejects_empty_accepts_text() {
         assert!(!validate_keymap(""));
         assert!(!validate_keymap("   \n "));
         assert!(validate_keymap("xkb_keymap { };"));
