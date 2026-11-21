@@ -1,0 +1,120 @@
+spec: specs/epics/e08-panics-correctness/e08s03-scale-cursor.md
+story_id: e08s03
+title: "Scale, cursors, input settings"
+status: failing
+bcps: 3
+tasks:
+  - id: e08s03t1
+    description: "Define InputConfig struct (output scales, keymap, touchpad settings with defaults) and pure helper output_scale_for(name, f64) -> Option<Scale>; add inline tests for valid/invalid scale and name lookup (RED then GREEN)"
+    verify: "cargo test --bin eswm output_scale"
+    risk: P2
+    security: none
+    status: failing
+    allure:
+      severity: normal
+      categories:
+        - "e08-panics-correctness"
+        - "config"
+        - "unit"
+
+  - id: e08s03t2
+    description: "Add pure helpers resolve_touchpad (config values with hardcoded defaults) and validate_keymap (reject empty/whitespace) with inline tests"
+    verify: "cargo test --bin eswm touchpad_config"
+    risk: P2
+    security: none
+    status: failing
+    allure:
+      severity: normal
+      categories:
+        - "e08-panics-correctness"
+        - "config"
+        - "unit"
+
+  - id: e08s03t3
+    description: "Add pure cursor_render_decision helper mapping CursorImageStatus (Hidden/Named/Surface) to a render decision with inline tests"
+    verify: "cargo test --bin eswm cursor_image"
+    risk: P2
+    security: none
+    status: failing
+    allure:
+      severity: normal
+      categories:
+        - "e08-panics-correctness"
+        - "input"
+        - "unit"
+
+  - id: e08s03t4
+    description: "Extend register_api with es.dsp.set_output_scale/name+f32, set_touchpad_* and set_keymap writing into shared Arc<Mutex<InputConfig>>; add Lua-facing parse/storage tests"
+    verify: "cargo test --bin eswm keymap_config"
+    risk: P2
+    security: none
+    status: failing
+    allure:
+      severity: normal
+      categories:
+        - "e08-panics-correctness"
+        - "config"
+        - "lua"
+
+  - id: e08s03t5
+    description: "Apply configured per-output scale in connector_connected via Output::change_current_state(None, None, Some(scale), None) before first frame"
+    verify: "cargo build"
+    risk: P2
+    security: none
+    status: failing
+    allure:
+      severity: normal
+      categories:
+        - "e08-panics-correctness"
+        - "drm"
+        - "rendering"
+
+  - id: e08s03t6
+    description: "Store CursorImageStatus in UdevData from cursor_image() and render client Surface cursors in the cursor band with hotspot from CursorImageSurfaceData"
+    verify: "cargo build"
+    risk: P2
+    security: none
+    status: failing
+    allure:
+      severity: normal
+      categories:
+        - "e08-panics-correctness"
+        - "input"
+        - "rendering"
+
+  - id: e08s03t7
+    description: "Read touchpad settings from InputConfig in libinput device-added callback with current hardcoded values as defaults"
+    verify: "cargo build"
+    risk: P2
+    security: none
+    status: failing
+    allure:
+      severity: normal
+      categories:
+        - "e08-panics-correctness"
+        - "input"
+
+  - id: e08s03t8
+    description: "Apply configured XKB keymap via KeyboardHandle::set_keymap_from_string at startup; log error on invalid keymap and keep current"
+    verify: "cargo build"
+    risk: P2
+    security: none
+    status: failing
+    allure:
+      severity: normal
+      categories:
+        - "e08-panics-correctness"
+        - "input"
+        - "config"
+
+  - id: e08s03t9
+    description: "Run full preflight verification gates for e08s03"
+    verify: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
+    risk: P2
+    security: none
+    status: failing
+    allure:
+      severity: normal
+      categories:
+        - "e08-panics-correctness"
+        - "verification"
