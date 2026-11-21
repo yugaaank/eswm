@@ -696,6 +696,8 @@ if lua_config_path.exists()
             tracing::warn!("Failed to load Lua config {}: {e}", lua_config_path.display());
         }
     }
+    // e08s03t5: outputs may have been set up before the config was read.
+    state.apply_configured_scales();
 
 
     while !state.udev.as_ref().unwrap().quit.load(Ordering::SeqCst) {
@@ -2042,7 +2044,14 @@ impl State {
         let global = output.create_global::<State>(&self.dh);
 
         output.set_preferred(wl_mode);
-        output.change_current_state(Some(wl_mode), None, None, Some((0, 0).into()));
+        // e08s03t5: apply the configured per-output scale before the first
+        // frame; Scale::Fractional is what wl_output/fractional clients see.
+        let scale = self
+            .input_config
+            .lock()
+            .unwrap()
+            .output_scale(&output_name);
+        output.change_current_state(Some(wl_mode), None, scale, Some((0, 0).into()));
 
         // register real output geometry + workspaces 1..=9 into the window manager
         let mode_size = wl_mode.size;
@@ -2104,6 +2113,22 @@ impl State {
         handle.insert_idle(move |data: &mut State| {
             data.render(node, Some(crtc), 0);
         });
+    }
+
+    /// Apply configured scales to outputs created before the Lua config was
+    /// loaded (e08s03t5). Hotplugged outputs get their scale at setup instead.
+    fn apply_configured_scales(&self) {
+        let Some(udev) = self.udev.as_ref() else { return };
+        let config = self.input_config.lock().unwrap();
+        for backend in udev.backends.values() {
+            for surface in backend.surfaces.values() {
+                let name = surface.output.name();
+                if let Some(scale) = config.output_scale(&name) {
+                    surface.output.change_current_state(None, None, Some(scale), None);
+                    info!("output {name} scale set to {}", scale.fractional_scale());
+                }
+            }
+        }
     }
 
     fn connector_disconnected(&mut self, node: DrmNode, connector: connector::Info, crtc: crtc::Handle) {
