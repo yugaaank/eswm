@@ -4,7 +4,7 @@
 **type:** fix  
 **risk:** P2  
 **context:** correctness  
-**status:** pending  
+**status:** completed  
 **bcps:** 5  
 **delta:** MODIFIED
 
