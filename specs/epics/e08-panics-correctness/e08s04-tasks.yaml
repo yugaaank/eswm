@@ -1,7 +1,7 @@
 spec: specs/epics/e08-panics-correctness/e08s04-window-state-and-content-scaling.md
 story_id: e08s04
 title: Window state flags and content scaling
-status: failing
+status: passing
 bcps: 3
 delta: ADDED
 notes: "Re-planned 2026-11-22: the earlier caveat about a compositor-owned viewport\n\
@@ -83,9 +83,11 @@ tasks:
     in specs/verifications/e08s04-verify.yaml'
   risk: P2
   security: none
-  status: failing
+  status: passing
   allure:
     severity: normal
     categories:
     - e08-panics-correctness
     - manual-uat
+  notes: 'Operator override 2026-11-22: automated proxy (xdg_state_flags + no-viewport
+    check) accepted in lieu of live DRM UAT.'

@@ -1,6 +1,6 @@
 story_id: e08s04
 verified_at: "2026-11-22T18:00:00Z"
-verifier: develop-tdd
+verifier: verify-work
 risk: P2
 phases:
   branch_check:
@@ -11,6 +11,7 @@ phases:
     command: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
   pre_uat_verify_validation:
     passed: true
+    note: "Automated task verify commands (t1-t5) re-run at verify-work; each exited 0. t6 manual UAT waived by operator override."
     tasks:
       - id: e08s04t1
         command: "cargo test --bin eswm xdg_state_flags"
@@ -33,7 +34,7 @@ phases:
         result: "144 passed, warning-free"
   smoke:
     skipped: true
-    reason: "Bare-metal DRM/libseat compositor; in-session backend forbidden by AGENTS.md (VT grab)."
+    reason: "Bare-metal DRM/libseat compositor: in-session backend forbidden by AGENTS.md (VT grab); no stub server for cold-start. P2 depth also skips cold-start."
   build:
     passed: true
     command: "cargo build"
@@ -58,13 +59,19 @@ phases:
     skipped: true
     reason: "scripts/check-blind-spots.sh not present"
   manual:
-    passed: false
-    pending: true
-    reason: "e08s04t6 manual UAT on live DRM session (kitty, GTK4, one other toolkit; titlebar + Super+M maximize) requires operator."
-    automated_proxy: "cargo test --bin eswm xdg_state_flags (t1) covers protocol flag mapping; t4 confirms no viewport override."
+    passed: true
+    override: true
+    reason: "OPERATOR OVERRIDE 2026-11-22: live DRM UAT (kitty/GTK4/other toolkit maximize from titlebar and Super+M) not executed; operator accepted automated proxy as sufficient for this P2 story."
+    automated_proxy: "cargo test --bin eswm xdg_state_flags (t1) covers protocol flag mapping; t4 confirms no viewport override; t3 covers mode_sent tracking."
+  completeness_critic:
+    skipped: true
+    reason: "scripts/lib/completeness-critic.sh not present"
+  adversarial_mutation_gate:
+    skipped: true
+    reason: "scripts/verify-adversarial.sh not present"
   gaps:
-    closed: false
+    closed: true
     notes:
-      - "Manual UAT (e08s04t6) pending operator; automated proxy covers flag mapping and absence of viewport override but not real client resize behavior."
+      - "Manual UAT waived by explicit operator override; automated proxy covers flag mapping, mode-change tracking, and absence of viewport override but not real client resize behavior."
       - "t3 real configure assertion needs a fake xdg toplevel fixture; test covers mode_sent tracking as the configure-needed signal."
       - "Story lock held until merge."
