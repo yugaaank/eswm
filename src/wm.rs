@@ -224,6 +224,10 @@ pub struct WindowManager {
     pub work_area: Option<Rect>,
     /// App-id/class -> workspace/mode rules, matched at window creation.
     rules: Vec<WindowRule>,
+    /// Globally focused window — single source of truth (e09s01t4).
+    pub focused: Option<WindowId>,
+    /// Most-recently-used focus order; front = most recent.
+    focus_history: Vec<WindowId>,
     /// Set when any state changes; arrange_output lays out only when dirty.
     dirty: bool,
 }
@@ -529,7 +533,34 @@ impl WindowManager {
     }
 
     pub fn focused_id(&self) -> Option<WindowId> {
-        self.windows.values().find(|w| w.focused).map(|w| w.id)
+        self.focused
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn focus_history_first(&self) -> Option<WindowId> {
+        self.focus_history.first().copied()
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn focus_history(&self) -> &[WindowId] {
+        &self.focus_history
+    }
+
+    /// Restore focus to the most recently focused window still present and
+    /// on its workspace's active output, excluding `exclude`.
+    fn focus_from_mru(&mut self, exclude: Option<WindowId>) {
+        let candidate = self.focus_history.iter().copied().find(|id| {
+            if Some(*id) == exclude { return false; }
+            let Some(w) = self.windows.get(id) else { return false; };
+            if w.minimized { return false; }
+            self.outputs.get(&w.output).map(|o| o.active_workspace == w.workspace).unwrap_or(false)
+        });
+        if let Some(id) = candidate {
+            self.focus_window(id);
+        } else {
+            self.focused = None;
+            for w in self.windows.values_mut() { w.focused = false; }
+        }
     }
 
     pub fn set_rect(&mut self, id: WindowId, rect: Rect) -> bool {
@@ -616,12 +647,8 @@ impl WindowManager {
         output_state.active_workspace = workspace;
         self.dirty = true;
         self.clear_focus_on_output(output);
-        if let Some(window) = self
-            .workspaces
-            .get(&workspace)
-            .and_then(|workspace| workspace.focused)
-        {
-            self.focus_window(window);
+        if self.focused.is_none() {
+            self.focus_from_mru(None);
         }
         self.arrange_output(output);
         true
@@ -973,15 +1000,12 @@ impl WindowManager {
                 workspace.focused = workspace.windows.last().copied();
             }
         }
-        self.clear_focus_on_output(window.output);
-        if let Some(focused) = self
-            .workspaces
-            .get(&window.workspace)
-            .and_then(|workspace| workspace.focused)
-        {
-            self.focus_window(focused);
+        let removed_output = window.output;
+        self.clear_focus_on_output(removed_output);
+        if self.focused.is_none() {
+            self.focus_from_mru(Some(id));
         }
-        self.arrange_output(window.output);
+        self.arrange_output(removed_output);
         Some(window)
     }
 
@@ -1000,12 +1024,22 @@ impl WindowManager {
             return false;
         }
         self.clear_focus_on_output(output);
+        // Global focus: clear the derived mirror on every window, not only
+        // those on this output (two outputs previously kept two focused flags).
+        for window in self.windows.values_mut() {
+            if window.id != id {
+                window.focused = false;
+            }
+        }
         if let Some(window) = self.windows.get_mut(&id) {
             window.focused = true;
         }
         if let Some(workspace) = self.workspaces.get_mut(&workspace) {
             workspace.focused = Some(id);
         }
+        self.focused = Some(id);
+        self.focus_history.retain(|w| *w != id);
+        self.focus_history.insert(0, id);
         true
     }
 
@@ -1036,14 +1070,12 @@ impl WindowManager {
             // Reset target rect; arrange_output sets it if the new workspace is active.
             window_state.target_rect = Rect::default();
         }
-        self.clear_focus_on_output(window.output);
-        // Keep keyboard focus alive: the moved window may have been the focused one.
-        if let Some(focused) = self
-            .workspaces
-            .get(&window.workspace)
-            .and_then(|workspace| workspace.focused)
-        {
-            self.focus_window(focused);
+        let moved_output = window.output;
+        self.clear_focus_on_output(moved_output);
+        // Keep keyboard focus alive via MRU (the moved window left the active
+        // workspace, so it must not be restored).
+        if self.focused.is_none() {
+            self.focus_from_mru(Some(id));
         }
         self.dirty = true;
         self.arrange_output(window.output);
@@ -1459,11 +1491,10 @@ impl WindowManager {
     }
 
     fn clear_focus_on_output(&mut self, output: OutputId) {
-        for window in self
-            .windows
-            .values_mut()
-            .filter(|window| window.output == output)
-        {
+        for window in self.windows.values_mut().filter(|w| w.output == output) {
+            if self.focused == Some(window.id) {
+                self.focused = None;
+            }
             window.focused = false;
         }
     }
