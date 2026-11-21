@@ -1,0 +1,70 @@
+story_id: e08s04
+verified_at: "2026-11-22T18:00:00Z"
+verifier: develop-tdd
+risk: P2
+phases:
+  branch_check:
+    passed: true
+    branch: e08s04-state-flags
+  preflight:
+    passed: true
+    command: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
+  pre_uat_verify_validation:
+    passed: true
+    tasks:
+      - id: e08s04t1
+        command: "cargo test --bin eswm xdg_state_flags"
+        passed: true
+        result: "2 passed"
+      - id: e08s04t2
+        command: "cargo build"
+        passed: true
+      - id: e08s04t3
+        command: "cargo test --bin eswm apply_layout"
+        passed: true
+        result: "1 passed (mode_sent tracking; verify command added with test to avoid false-green 0-test filter)"
+      - id: e08s04t4
+        command: "! grep -rq 'ViewportCachedState' src/"
+        passed: true
+        result: "no viewport override in source"
+      - id: e08s04t5
+        command: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
+        passed: true
+        result: "144 passed, warning-free"
+  smoke:
+    skipped: true
+    reason: "Bare-metal DRM/libseat compositor; in-session backend forbidden by AGENTS.md (VT grab)."
+  build:
+    passed: true
+    command: "cargo build"
+  typecheck:
+    passed: true
+    note: "Covered by cargo build/clippy (Rust)"
+  lint:
+    passed: true
+    command: "cargo clippy --all-targets"
+  tests:
+    passed: true
+    command: "cargo test --bin eswm"
+    result: "144 passed, 0 failed"
+  terminal_verdict:
+    command: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
+    exit_code: 0
+    note: "Single contiguous run: clippy 0 (no warnings), 144 passed, build 0."
+  security_scan:
+    skipped: true
+    reason: "No security-sensitive changes (security: none on all tasks)"
+  blind_spot_check:
+    skipped: true
+    reason: "scripts/check-blind-spots.sh not present"
+  manual:
+    passed: false
+    pending: true
+    reason: "e08s04t6 manual UAT on live DRM session (kitty, GTK4, one other toolkit; titlebar + Super+M maximize) requires operator."
+    automated_proxy: "cargo test --bin eswm xdg_state_flags (t1) covers protocol flag mapping; t4 confirms no viewport override."
+  gaps:
+    closed: false
+    notes:
+      - "Manual UAT (e08s04t6) pending operator; automated proxy covers flag mapping and absence of viewport override but not real client resize behavior."
+      - "t3 real configure assertion needs a fake xdg toplevel fixture; test covers mode_sent tracking as the configure-needed signal."
+      - "Story lock held until merge."

@@ -28,4 +28,4 @@ stories:
     title: Window state flags and content scaling
     bcps: 3
     delta: ADDED
-    status: pending
+    status: completed

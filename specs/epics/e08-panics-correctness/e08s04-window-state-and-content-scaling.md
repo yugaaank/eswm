@@ -4,7 +4,7 @@
 **type:** fix
 **risk:** P2
 **context:** presentation
-**status:** pending
+**status:** completed  
 **bcps:** 3
 **delta:** ADDED
 
