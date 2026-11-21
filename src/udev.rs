@@ -3590,4 +3590,24 @@ mod tests {
         assert_eq!(tiny.glyph_height, 0);
     }
 
+    // e08s02t1 — close button must never orphan the client: with no toplevel
+    // to send close to, leaving the WM window alone is the only safe action.
+    #[test]
+    fn titlebar_close_without_toplevel_leaves_window_untouched() {
+        assert_eq!(
+            titlebar_close_action(false),
+            TitlebarCloseAction::LeaveWindowUntouched,
+            "no toplevel -> do not remove the WM window"
+        );
+    }
+
+    #[test]
+    fn titlebar_close_with_toplevel_requests_client_close() {
+        assert_eq!(
+            titlebar_close_action(true),
+            TitlebarCloseAction::RequestClientClose,
+            "a live toplevel must get xdg_toplevel.close"
+        );
+    }
+
 }
