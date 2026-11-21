@@ -1286,7 +1286,50 @@ fn pointer_focus(state: &mut State, pos: Point<f64, Logical>) -> Option<(wl_surf
     focus
 }
 
-/// Send wl_keyboard leave/enter for `id`; None => just leave.
+/// Render bands, listed top-first (smithay draws index 0 last / on top).
+/// e08s02t3: the z-order policy is pure so it can be tested without a GPU.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RenderBand {
+    Cursor,
+    Fullscreen,
+    OverlayTop,
+    Dock,
+    Windows,
+    Background,
+}
+
+/// Top-to-bottom render order. With a fullscreen window it sits above all
+/// layer groups and the dock (operator decision), but below the cursor.
+fn render_band_order(fullscreen_active: bool) -> Vec<RenderBand> {
+    let mut bands = vec![RenderBand::Cursor];
+    if fullscreen_active {
+        bands.push(RenderBand::Fullscreen);
+    }
+    bands.extend([
+        RenderBand::OverlayTop,
+        RenderBand::Dock,
+        RenderBand::Windows,
+        RenderBand::Background,
+    ]);
+    bands
+}
+
+/// What the titlebar close button may do. e08s02t1: the decision is kept pure
+/// so "never orphan a client" is a regression-testable policy, not a comment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TitlebarCloseAction {
+    RequestClientClose,
+    LeaveWindowUntouched,
+}
+
+fn titlebar_close_action(toplevel_present: bool) -> TitlebarCloseAction {
+    if toplevel_present {
+        TitlebarCloseAction::RequestClientClose
+    } else {
+        TitlebarCloseAction::LeaveWindowUntouched
+    }
+}
+
 /// Perform a server-side titlebar button action and push the resulting state
 /// to clients.
 ///
@@ -1297,7 +1340,18 @@ fn pointer_focus(state: &mut State, pos: Point<f64, Logical>) -> Option<(wl_surf
 pub fn apply_titlebar_action(state: &mut State, id: wm::WindowId, button: wm::TitlebarButton) {
     match button {
         wm::TitlebarButton::Close => {
-            state.wm.remove_window(id);
+            // e08s02t2: ask the client to close; its destroy path removes the
+            // WM window. Removing it here orphaned the process (invisible app).
+            let toplevel = crate::toplevel_for_window(state, id);
+            match titlebar_close_action(toplevel.is_some()) {
+                TitlebarCloseAction::RequestClientClose => {
+                    if let Some(toplevel) = toplevel {
+                        toplevel.send_close();
+                    }
+                }
+                TitlebarCloseAction::LeaveWindowUntouched => {}
+            }
+            return;
         }
         wm::TitlebarButton::Maximize => {
             state.wm.toggle_maximized(id);
@@ -1312,6 +1366,7 @@ pub fn apply_titlebar_action(state: &mut State, id: wm::WindowId, button: wm::Ti
     state.redraw_needed = true;
 }
 
+/// Send wl_keyboard leave/enter for `id`; None => just leave.
 pub fn keyboard_focus_set(state: &mut State, id: Option<wm::WindowId>) {
     let changed = state
         .udev
@@ -2418,8 +2473,11 @@ impl State {
             udev.pointer_location.x, udev.pointer_location.y,
             udev.cursor_buffer.is_some());
 
-// Build the frame: placed client surfaces + cursor.
+// Build the frame: placed client surfaces + cursor. e08s02t4: elements are
+        // collected per band and assembled by `render_band_order` at the end.
         let mut elements: Vec<EswmRenderElements<UdevRenderer<'_>>> = Vec::new();
+        let mut cursor_elements: Vec<EswmRenderElements<UdevRenderer<'_>>> = Vec::new();
+        let mut fullscreen_elements: Vec<EswmRenderElements<UdevRenderer<'_>>> = Vec::new();
 
         // Cursor first so it renders on top (smithay renders elements top-to-bottom).
         let pointer_location = udev.pointer_location;
@@ -2437,7 +2495,7 @@ impl State {
                 None,
                 Kind::Cursor,
             ) {
-                elements.push(EswmRenderElements::Cursor(cursor));
+                cursor_elements.push(EswmRenderElements::Cursor(cursor));
             }
         } else if !udev.cursor_images.is_empty() {
             let img = udev.cursor_images[0].clone();
@@ -2462,7 +2520,7 @@ impl State {
                 None,
                 Kind::Cursor,
             ) {
-                elements.push(EswmRenderElements::Cursor(cursor));
+                cursor_elements.push(EswmRenderElements::Cursor(cursor));
             }
         }
 
@@ -2496,7 +2554,8 @@ impl State {
                 target.extend(tree.into_iter().map(EswmRenderElements::Surface));
             }
         }
-        elements.extend(layer_elements_above);
+        // Overlay/top layers are collected in `layer_elements_above` and appended
+        // in band order after the frame is assembled (e08s02t4).
 
         // M5/P2: visible borders around each window (Hyprland-style: outside the rect,
         // fullscreen/maximized windows skip them). Edge strips plus corner circles
@@ -2659,7 +2718,9 @@ impl State {
                         elements.push(EswmRenderElements::Cursor(elem));
                     }
                 }
-                // Always render the window surface tree (bottom layer).
+                // Always render the window surface tree. e08s02t4: a fullscreen
+                // window's tree goes to its own band so it can paint above all
+                // layers and the dock.
                 let tree_elements = render_elements_from_surface_tree(
                     &mut renderer,
                     ws,
@@ -2668,14 +2729,22 @@ impl State {
                     1.0,
                     Kind::Unspecified,
                 );
-                elements.extend(
+                let tree_target = if matches!(
+                    self.wm.window(*id).map(|w| w.mode),
+                    Some(wm::WindowMode::Fullscreen)
+                ) {
+                    &mut fullscreen_elements
+                } else {
+                    &mut elements
+                };
+                tree_target.extend(
                     tree_elements
                         .into_iter()
                         .map(EswmRenderElements::Surface),
                 );
             }
         } else {
-            for (ws, x, y, _, _, _rect) in &placed {
+            for (ws, x, y, id, _, _rect) in &placed {
                 let tree_elements = render_elements_from_surface_tree(
                     &mut renderer,
                     ws,
@@ -2684,7 +2753,15 @@ impl State {
                     1.0,
                     Kind::Unspecified,
                 );
-                elements.extend(
+                let tree_target = if matches!(
+                    self.wm.window(*id).map(|w| w.mode),
+                    Some(wm::WindowMode::Fullscreen)
+                ) {
+                    &mut fullscreen_elements
+                } else {
+                    &mut elements
+                };
+                tree_target.extend(
                     tree_elements
                         .into_iter()
                         .map(EswmRenderElements::Surface),
@@ -2886,10 +2963,23 @@ impl State {
                     }
                 }
             }
-        // Dock on top of windows: index 0 renders last (on top).
-        elements.splice(0..0, dock_elements);
-
-        elements.extend(layer_elements_below);
+        // e08s02t4: assemble bands in the policy order. Index 0 draws last
+        // (on top): cursor, fullscreen, overlay/top, dock, windows, background.
+        let fullscreen_active = placed.iter().any(|(_, _, _, id, _, _)| {
+            matches!(self.wm.window(*id).map(|w| w.mode), Some(wm::WindowMode::Fullscreen))
+        });
+        let mut frame_elements: Vec<EswmRenderElements<UdevRenderer<'_>>> = Vec::new();
+        for band in render_band_order(fullscreen_active) {
+            match band {
+                RenderBand::Cursor => frame_elements.append(&mut cursor_elements),
+                RenderBand::Fullscreen => frame_elements.append(&mut fullscreen_elements),
+                RenderBand::OverlayTop => frame_elements.append(&mut layer_elements_above),
+                RenderBand::Dock => frame_elements.append(&mut dock_elements),
+                RenderBand::Windows => frame_elements.append(&mut elements),
+                RenderBand::Background => frame_elements.append(&mut layer_elements_below),
+            }
+        }
+        elements = frame_elements;
 
         // shortcut: with no clients AND no cursor the damage tracker marks the
         // frame empty and it never scans out; prime it with a 1x1 element
@@ -3588,6 +3678,52 @@ mod tests {
         assert_eq!(tiny.scale, 0);
         assert_eq!(tiny.glyph_width, 0);
         assert_eq!(tiny.glyph_height, 0);
+    }
+
+    // e08s02t1 — close button must never orphan the client: with no toplevel
+    // to send close to, leaving the WM window alone is the only safe action.
+    #[test]
+    fn titlebar_close_without_toplevel_leaves_window_untouched() {
+        assert_eq!(
+            titlebar_close_action(false),
+            TitlebarCloseAction::LeaveWindowUntouched,
+            "no toplevel -> do not remove the WM window"
+        );
+    }
+
+    #[test]
+    fn titlebar_close_with_toplevel_requests_client_close() {
+        assert_eq!(
+            titlebar_close_action(true),
+            TitlebarCloseAction::RequestClientClose,
+            "a live toplevel must get xdg_toplevel.close"
+        );
+    }
+
+    // e08s02t3 — z-order is a policy decision, tested without a GPU.
+    #[test]
+    fn render_order_puts_overlay_above_dock() {
+        let order = render_band_order(false);
+        let overlay = order.iter().position(|b| *b == RenderBand::OverlayTop).unwrap();
+        let dock = order.iter().position(|b| *b == RenderBand::Dock).unwrap();
+        assert!(overlay < dock, "overlay/top layers must paint above the dock");
+    }
+
+    #[test]
+    fn render_order_puts_fullscreen_above_layers_and_dock() {
+        let order = render_band_order(true);
+        let fullscreen = order.iter().position(|b| *b == RenderBand::Fullscreen).unwrap();
+        for other in [RenderBand::OverlayTop, RenderBand::Dock, RenderBand::Windows, RenderBand::Background] {
+            let pos = order.iter().position(|b| *b == other).unwrap();
+            assert!(fullscreen < pos, "fullscreen must paint above {other:?}");
+        }
+        let cursor = order.iter().position(|b| *b == RenderBand::Cursor).unwrap();
+        assert!(cursor < fullscreen, "cursor stays topmost overall");
+    }
+
+    #[test]
+    fn render_order_without_fullscreen_has_no_fullscreen_band() {
+        assert!(!render_band_order(false).contains(&RenderBand::Fullscreen));
     }
 
 }

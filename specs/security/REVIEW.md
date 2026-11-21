@@ -1,4 +1,28 @@
-# Security Review — current: e08s01 (panics/correctness)
+# Security Review — current: e08s02 (close, z-order, CSD geometry)
+
+**Branch:** `e08s02-correctness` (`main..HEAD`)
+**Date:** 2026-11-21
+**Risk:** P2 (per story)
+
+## Scope
+- `src/udev.rs`: titlebar close policy + `send_close()`; z-order band assembly (fullscreen above layers/dock, overlay above dock).
+- `src/main.rs`: read `SurfaceCachedState.geometry` on toplevel commit into `wm::Window.xdg_offset`.
+- `src/wm.rs`: `set_window_xdg_offset` setter.
+- `specs/*`: e08s02 story spec, tasks, verification, audit evidence.
+
+## Findings
+- **HIGH (≥8 confidence):** none.
+- **MEDIUM/LOW:** none identified.
+- No secrets, credentials, auth checks, network access, or new filesystem writes introduced. Changes are UI stacking, cooperative close, and geometry bookkeeping; no user-data or external-API surface (`security: none` on all tasks).
+
+## Notes
+- Close button now asks the client via `xdg_toplevel.close` instead of forcibly removing the WM window; this is a cooperative behavior change, not a trust-boundary change.
+- Fullscreen z-order (above all layers and dock) is an operator-confirmed visual policy; overlay lock screens therefore render below a fullscreen window. No security implications.
+- Runtime/manual UAT on live DRM session (close button, stacking, CSD positioning) remains a documented verification gap, not a security finding.
+
+---
+
+# Security Review — e08s01 (panics/correctness)
 
 **Branch:** `e08s01-panics` (`main..HEAD`)
 **Date:** 2026-11-21

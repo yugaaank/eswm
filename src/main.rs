@@ -49,8 +49,8 @@ use smithay::{
         shell::wlr_layer::{Layer, LayerSurface, WlrLayerShellHandler, WlrLayerShellState},
         shell::xdg::{
             decoration::{XdgDecorationHandler, XdgDecorationState},
-            PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
-            XdgToplevelSurfaceData,
+            PopupSurface, PositionerState, SurfaceCachedState, ToplevelSurface, XdgShellHandler,
+            XdgShellState, XdgToplevelSurfaceData,
         },
         shm::{ShmHandler, ShmState},
         viewporter::ViewporterState,
@@ -494,6 +494,13 @@ pub(crate) fn sync_window_input_region(state: &mut State, surface: &WlSurface) {
 }
 
 
+/// Map a client's xdg_surface window geometry to the WM's xdg_offset.
+/// e08s02t5: render position is `target_rect - xdg_offset`, so the offset is
+/// the window-geometry origin relative to the surface origin.
+fn window_geometry_offset(geometry: Option<Rectangle<i32, smithay::utils::Logical>>) -> (i32, i32) {
+    geometry.map(|geo| (geo.loc.x, geo.loc.y)).unwrap_or((0, 0))
+}
+
 fn toplevel_for_window(state: &State, id: wm::WindowId) -> Option<ToplevelSurface> {
     state
         .xdg_shell_state
@@ -776,6 +783,16 @@ impl CompositorHandler for State {
         }
         // e06s02t1: track committed input region for toplevel window surfaces.
         crate::sync_window_input_region(self, surface);
+        // e08s02t6: CSD clients move their window geometry inside the surface;
+        // track the offset so placement and pointer hit-testing use the same
+        // origin the client draws against.
+        if let Some(id) = window_id_of(surface) {
+            let geometry = with_states(surface, |states| {
+                states.cached_state.get::<SurfaceCachedState>().current().geometry
+            });
+            let offset = window_geometry_offset(geometry);
+            self.wm.set_window_xdg_offset(id, offset);
+        }
         // Popup lifecycle evidence: log the map/unmap transition so a run from
         // a TTY proves whether the client actually attached a buffer.
         if let Some(i) = self.popups.iter().position(|p| p.surface.wl_surface() == surface) {
@@ -2237,5 +2254,44 @@ mod tests {
             "titlebar action must apply layout (and request a redraw), otherwise \
              the client is never configured and the frame outgrows its content"
         );
+    }
+
+    // e08s02t2 — the old Close branch called wm.remove_window directly; with
+    // no toplevel to receive xdg_toplevel.close that orphaned the client.
+    #[test]
+    fn titlebar_close_without_toplevel_keeps_wm_window() {
+        let mut state = test_state();
+        let output_id = state.wm.primary_output_id().unwrap();
+        let id = state
+            .wm
+            .add_window(output_id, "test-app", "Test App")
+            .expect("add window");
+        assert!(toplevel_for_window(&state, id).is_none(), "fixture has no live toplevel");
+
+        crate::udev::apply_titlebar_action(&mut state, id, wm::TitlebarButton::Close);
+
+        assert!(
+            state.wm.window(id).is_some(),
+            "close without a toplevel must not remove the WM window"
+        );
+    }
+
+    // e08s02t5 — CSD clients declare a window geometry offset; missing
+    // geometry must map to zero, not to garbage.
+    #[test]
+    fn csd_geometry_none_maps_to_zero_offset() {
+        assert_eq!(window_geometry_offset(None), (0, 0));
+    }
+
+    #[test]
+    fn csd_geometry_maps_window_geometry_origin() {
+        let geo = Rectangle::new((12, 34).into(), (100, 50).into());
+        assert_eq!(window_geometry_offset(Some(geo)), (12, 34));
+    }
+
+    #[test]
+    fn csd_geometry_negative_origin_is_preserved() {
+        let geo = Rectangle::new((-8, -16).into(), (100, 50).into());
+        assert_eq!(window_geometry_offset(Some(geo)), (-8, -16));
     }
 }

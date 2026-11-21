@@ -18,7 +18,7 @@ stories:
     title: "Correctness: close button, dock layering, fullscreen layering, CSD geometry"
     bcps: 5
     delta: MODIFIED
-    status: pending
+    status: completed
   - id: e08s03
     title: Scale, cursors, input settings
     bcps: 3
