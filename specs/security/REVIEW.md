@@ -1,4 +1,27 @@
-# Security Review — current: e08s02 (close, z-order, CSD geometry)
+# Security Review — current: e08s03 (scale, cursors, input settings)
+
+**Branch:** `e08s03-scale-cursor` (`main..HEAD`)
+**Date:** 2026-11-22
+**Risk:** P2 (per story)
+
+## Scope
+- `src/lua_state.rs`: `InputConfig` + `es.dsp.set_output_scale/set_touchpad_*/set_keymap` setters with validation.
+- `src/main.rs`: `State.input_config`; `cursor_image()` stores client cursor status.
+- `src/udev.rs`: per-output scale application, client cursor surface rendering, touchpad settings from config, XKB keymap via `set_keymap_from_string`.
+- `specs/*`: e08s03 story, tasks, verification, audit evidence.
+
+## Findings
+- **HIGH (≥8 confidence):** none.
+- **MEDIUM/LOW:** none identified.
+- Config values are local Lua (trusted boundary). Scale values are validated (finite, > 0) before constructing `Scale::Fractional`; keymap and touchpad speed are validated before mutation; invalid input raises a Lua error or is logged. No network, auth, credentials, or new filesystem writes introduced (`security: none` on all tasks).
+
+## Notes
+- Client cursor surfaces are untrusted Wayland surfaces, but they are rendered through smithay's existing surface-tree path (same as windows/popups) with no new privilege boundary.
+- Runtime/manual UAT on a live DRM session (client cursor, HiDPI scale, config keymap/touchpad) remains a documented verification gap, not a security finding.
+
+---
+
+# Security Review — e08s02 (close, z-order, CSD geometry)
 
 **Branch:** `e08s02-correctness` (`main..HEAD`)
 **Date:** 2026-11-21
