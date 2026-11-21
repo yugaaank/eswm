@@ -930,6 +930,13 @@ fn dock_segment_layout(seg_w_in: usize, seg_h: usize) -> DockSegmentLayout {
     }
 }
 
+/// A lost GPU context is fatal: no frames can ever be presented again. e08s01t6
+/// turns the old panic into one clear error log and a clean status-1 exit.
+fn exit_on_context_lost(err: &dyn std::fmt::Display) -> ! {
+    error!("GPU context lost: {err}; exiting so the session can recover");
+    std::process::exit(1)
+}
+
 /// Index of the preferred DRM mode, or the first mode, or `None` when a
 /// connector reports no modes at all. e08s01t4: indexing `modes()[0]` on an
 /// empty list used to panic during connector setup.
@@ -2267,7 +2274,7 @@ impl State {
                         Some(DrmError::Access(DrmAccessError { source, .. }))
                             if source.kind() == io::ErrorKind::PermissionDenied
                     ),
-                    SwapBuffersError::ContextLost(err) => panic!("rendering loop lost: {err}"),
+                    SwapBuffersError::ContextLost(err) => exit_on_context_lost(&err),
                 }
             }
             None => false,
@@ -3017,7 +3024,7 @@ impl State {
                             }
                             true
                         }
-                        _ => panic!("rendering loop lost: {err}"),
+                        _ => exit_on_context_lost(&err),
                     },
                 }
             }
