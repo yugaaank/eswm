@@ -509,7 +509,8 @@ mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
 
-    fn test_api() -> (Lua, Arc<Mutex<Vec<Keybind>>>, Arc<Mutex<InputConfig>>) {
+    type TestApi = (Lua, Arc<Mutex<Vec<Keybind>>>, Arc<Mutex<InputConfig>>);
+    fn test_api() -> TestApi {
         let lua = init().expect("lua init");
         let snapshot = Arc::new(Mutex::new(crate::ipc::Snapshot::default()));
         let (cmd_tx, _cmd_rx) = flume::unbounded();
