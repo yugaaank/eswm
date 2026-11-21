@@ -702,14 +702,16 @@ impl WindowManager {
         self.set_mode(id, mode)
     }
 
-    /// Windows-like spawn placement: centered, cascaded.
+    /// Windows-like spawn placement: centered, cascaded. e08s01t3: the 640x480
+    /// minimum is capped to the work area so tiny outputs cannot underflow the
+    /// centering subtraction (or wrap into a gigantic offset in release builds).
     fn floating_target(&mut self, geometry: Rect) -> Rect {
-        let width = (geometry.width as u64 * 62 / 100).max(640) as u32;
-        let height = (geometry.height as u64 * 68 / 100).max(480) as u32;
+        let width = ((geometry.width as u64 * 62 / 100).max(640) as u32).min(geometry.width.max(1));
+        let height = ((geometry.height as u64 * 68 / 100).max(480) as u32).min(geometry.height.max(1));
         let offset = ((self.cascade_count % 6) * 28) as i32;
         self.cascade_count = self.cascade_count.wrapping_add(1);
-        let x = geometry.x + ((geometry.width - width) / 2) as i32 + offset;
-        let y = geometry.y + ((geometry.height - height) / 2) as i32 + offset;
+        let x = geometry.x + (geometry.width.saturating_sub(width) / 2) as i32 + offset;
+        let y = geometry.y + (geometry.height.saturating_sub(height) / 2) as i32 + offset;
         Rect { x, y, width, height }
     }
 
