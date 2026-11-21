@@ -32,7 +32,7 @@ handoff:
     - specs/epics/e08-panics-correctness/epic.yaml
     - specs/epics/e08-panics-correctness/e08s04-window-state-and-content-scaling.md
     - specs/epics/e08-panics-correctness/e08s04-tasks.yaml
-  next_skill: kickoff-branch
+  next_skill: develop-tdd
 decisions:
   - story: BUG-2026-11-17T00:30:00
     note: "Freeze/stutter fix closed via validate-fix: five stacked defects (unconditional re-render, empty frames treated as failed paints, dmabuf on the idle dGPU, callbacks on two clocks, and a dropped frame callback deadlocking the client). Final fix 02f57d2; diagnostics now blame wait time rather than the existence of work (be0f2bd); PointerMotionAbsolute now requests a redraw (6922ccc). Operator confirmed on the DRM session."
