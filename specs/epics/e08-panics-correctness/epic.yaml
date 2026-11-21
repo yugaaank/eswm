@@ -13,7 +13,7 @@ stories:
     title: "Panics: dock underflow, floating_target underflow, connector modes, renderer errors"
     bcps: 5
     delta: MODIFIED
-    status: pending
+    status: completed
   - id: e08s02
     title: "Correctness: close button, dock layering, fullscreen layering, CSD geometry"
     bcps: 5

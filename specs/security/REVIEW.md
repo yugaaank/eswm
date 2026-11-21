@@ -1,3 +1,25 @@
+# Security Review — current: e08s01 (panics/correctness)
+
+**Branch:** `e08s01-panics` (`main..HEAD`)
+**Date:** 2026-11-21
+**Risk:** P2 (per story)
+
+## Scope
+- `src/udev.rs`: saturating dock segment/layout helpers; skip connectors with no modes; logged frame-skip on renderer acquisition failure; clean status-1 exit on GPU context loss (`DeviceAddError::Renderer` variant).
+- `src/wm.rs`: clamp floating target to small work areas with saturating centering.
+- `specs/*`: e08s01 story spec, tasks ledger, verification and audit evidence.
+
+## Findings
+- **HIGH (≥8 confidence):** none.
+- **MEDIUM/LOW:** none identified.
+- No secrets, credentials, network access, auth checks, or new filesystem writes introduced. All changes are geometric arithmetic and error handling in the DRM/render path; no user-data or external-API surface touched (`security: none` on all tasks).
+
+## Notes
+- Failure modes changed intentionally: panic → logged skip (renderer failure, empty-mode connector) and panic → logged `exit(1)` (GPU context loss). This improves availability and does not weaken any trust boundary.
+- Runtime/manual UAT on a live DRM session (tiny dock, 600x400 floating spawn, empty-mode connector, injected context loss) remains a documented verification gap, not a security finding.
+
+---
+
 # Security Review — e07s02 (keybinds)
 
 **Branch:** `e07s02-keybinds` (`main..HEAD`)

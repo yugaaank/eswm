@@ -17,16 +17,17 @@ git:
   branch: main
   hash: "7045721"
 handoff:
-  last_step_completed: "plan-work complete for e08s01; e07-spawn-keybinds complete (e07s02 landed/released on main)"
+  last_step_completed: "develop-tdd complete for e08s01: all 7 tasks passing; preflight green (122 tests); verification recorded in specs/verifications/e08s01-verify.yaml"
   open_decisions:
     - "bug-2026-11-17t141711 remains open (low): master-mode single-window border breaks at bottom in src/udev.rs"
-    - "e08s01 plan approved; kickoff on branch e08s01-panics (worktree ../e08s01-panics) with story lock acquired"
+    - "e08s01 implementation complete on branch e08s01-panics; manual UAT (live DRM session) pending operator per story verification script"
+    - "story lock for e08s01 held in specs/agent-locks.yaml; release at merge"
   required_reading:
     - CONVENTIONS.md
-    - specs/release-plan.yaml
     - specs/epics/e08-panics-correctness/epic.yaml
     - specs/epics/e08-panics-correctness/e08s01-tasks.yaml
-  next_skill: develop-tdd
+    - specs/verifications/e08s01-verify.yaml
+  next_skill: release-branch
 decisions:
   - story: BUG-2026-11-17T00:30:00
     note: "Freeze/stutter fix closed via validate-fix: five stacked defects (unconditional re-render, empty frames treated as failed paints, dmabuf on the idle dGPU, callbacks on two clocks, and a dropped frame callback deadlocking the client). Final fix 02f57d2; diagnostics now blame wait time rather than the existence of work (be0f2bd); PointerMotionAbsolute now requests a redraw (6922ccc). Operator confirmed on the DRM session."

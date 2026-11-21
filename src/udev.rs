@@ -537,7 +537,8 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
     );
     
     // Create renderer for the primary GPU (used for dmabuf formats)
-    let renderer = udev.gpus.single_renderer(&primary_for_dmabuf).unwrap();
+    // e08s01t5: propagate a renderer failure through init instead of panicking.
+    let renderer = udev.gpus.single_renderer(&primary_for_dmabuf)?;
 
     // init dmabuf support with format list from the first GPU with hw acceleration
     let dmabuf_formats = renderer.dmabuf_formats();
@@ -892,6 +893,58 @@ fn callback_min_gap_ms(refresh_mhz: u32) -> u32 {
         return 16;
     }
     (1_000_000 / refresh_mhz).max(1)
+}
+
+/// Pure, panic-safe dock segment geometry. Inset 1px on each side/top so the
+/// base bar shows as separators; saturating on negative/tiny sizes.
+fn dock_inner_size(w: i32, dock_h: i32) -> (usize, usize) {
+    (
+        w.saturating_sub(2).max(0) as usize,
+        dock_h.saturating_sub(1).max(0) as usize,
+    )
+}
+
+/// Glyph placement within a dock segment, computed without underflow. A scale
+/// of 0 means no glyph is drawn (segment too small), which the renderer skips.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DockSegmentLayout {
+    scale: usize,
+    glyph_width: usize,
+    glyph_height: usize,
+    offset_x: usize,
+    offset_y: usize,
+}
+
+fn dock_segment_layout(seg_w_in: usize, seg_h: usize) -> DockSegmentLayout {
+    let scale = (seg_w_in / 5)
+        .min(seg_h.saturating_sub(2) / 7)
+        .min(3);
+    let glyph_width = 5 * scale;
+    let glyph_height = 7 * scale;
+    DockSegmentLayout {
+        scale,
+        glyph_width,
+        glyph_height,
+        offset_x: seg_w_in.saturating_sub(glyph_width) / 2,
+        offset_y: seg_h.saturating_sub(glyph_height) / 2,
+    }
+}
+
+/// A lost GPU context is fatal: no frames can ever be presented again. e08s01t6
+/// turns the old panic into one clear error log and a clean status-1 exit.
+fn exit_on_context_lost(err: &dyn std::fmt::Display) -> ! {
+    error!("GPU context lost: {err}; exiting so the session can recover");
+    std::process::exit(1)
+}
+
+/// Index of the preferred DRM mode, or the first mode, or `None` when a
+/// connector reports no modes at all. e08s01t4: indexing `modes()[0]` on an
+/// empty list used to panic during connector setup.
+fn preferred_mode_index(len: usize, is_preferred: impl Fn(usize) -> bool) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    Some((0..len).find(|&i| is_preferred(i)).unwrap_or(0))
 }
 
 /// Pick the GPU whose formats the dmabuf global advertises.
@@ -1796,7 +1849,15 @@ impl State {
             SUPPORTED_FORMATS
         };
         let target = render_node.unwrap_or(self.udev.as_ref().unwrap().primary_gpu);
-        let mut renderer = self.udev.as_mut().unwrap().gpus.single_renderer(&target).unwrap();
+        // e08s01t5: a renderer failure here is a device-add failure, not a
+        // compositor-wide panic. Propagate it through the existing error path.
+        let mut renderer = self
+            .udev
+            .as_mut()
+            .unwrap()
+            .gpus
+            .single_renderer(&target)
+            .map_err(|err| DeviceAddError::Renderer(err.to_string()))?;
         let render_formats = renderer
             .as_mut()
             .egl_context()
@@ -1840,9 +1901,15 @@ impl State {
         };
 
         let render_node = device.render_node.unwrap_or(primary_gpu);
-        let mut renderer = udev.gpus.single_renderer(&render_node).unwrap();
-
         let output_name = format!("{}-{}", connector.interface().as_str(), connector.interface_id());
+        // e08s01t5: keep a dead GPU from taking down the whole compositor.
+        let mut renderer = match udev.gpus.single_renderer(&render_node) {
+            Ok(renderer) => renderer,
+            Err(err) => {
+                warn!(?err, ?render_node, "renderer unavailable, skipping connector {output_name}");
+                return;
+            }
+        };
         info!(?crtc, "trying to setup connector {output_name}");
 
         let drm_device = device.drm_output_manager.device();
@@ -1891,11 +1958,17 @@ impl State {
             },
         );
 
-        let mode_id = connector
-            .modes()
-            .iter()
-            .position(|mode| mode.mode_type().contains(ModeTypeFlags::PREFERRED))
-            .unwrap_or(0);
+        // e08s01t4: a connector with no modes cannot drive an output. Skip it
+        // with a clear warning instead of panicking on `modes()[0]`.
+        let mode_id = match preferred_mode_index(connector.modes().len(), |i| {
+            connector.modes()[i].mode_type().contains(ModeTypeFlags::PREFERRED)
+        }) {
+            Some(id) => id,
+            None => {
+                warn!("connector {output_name} reports no modes, skipping");
+                return;
+            }
+        };
 
         let drm_mode = connector.modes()[mode_id];
         let wl_mode = WlMode::from(drm_mode);
@@ -2201,7 +2274,7 @@ impl State {
                         Some(DrmError::Access(DrmAccessError { source, .. }))
                             if source.kind() == io::ErrorKind::PermissionDenied
                     ),
-                    SwapBuffersError::ContextLost(err) => panic!("rendering loop lost: {err}"),
+                    SwapBuffersError::ContextLost(err) => exit_on_context_lost(&err),
                 }
             }
             None => false,
@@ -2324,12 +2397,20 @@ impl State {
 
         let _time_ms = now(self); // must precede the mutable udev borrow below
         let udev = self.udev.as_mut().unwrap();
-        let mut renderer = if primary_gpu == render_node {
+        // e08s01t5: renderer acquisition can fail (GPU reset, device hotplug).
+        // Panicking here took down the compositor on every frame; log and skip
+        // this frame instead so the retry timer can try again later.
+        let mut renderer = match if primary_gpu == render_node {
             udev.gpus.single_renderer(&render_node)
         } else {
             udev.gpus.renderer(&primary_gpu, &render_node, format_needed)
-        }
-        .unwrap();
+        } {
+            Ok(renderer) => renderer,
+            Err(err) => {
+                warn!(?err, ?node, ?crtc, "renderer acquisition failed, skipping frame");
+                return false;
+            }
+        };
         tracing::debug!("render debug2: output_mode={:?} scale={:?} mode_size={:?} pointer=({:.0},{:.0}) cursor_buffer={}",
             mode_size.map(|s| (s.w, s.h)),
             output.current_scale(),
@@ -2723,8 +2804,9 @@ impl State {
                             }
                             // Inset 1px left/right/top so the base bar shows as
                             // separators; bottom stays flush with the screen edge.
-                            let seg_w_in = (w - 2) as usize;
-                            let seg_h = (dock_h - 1) as usize;
+                            // e08s01t2: use saturating helper — subtraction used
+                            // to underflow and panic on tiny dock heights.
+                            let (seg_w_in, seg_h) = dock_inner_size(w, dock_h);
                             let color: [u8; 4] = if entry.focused {
                                 [70u8, 110, 170, 255]  // focused: clearly blue
                             } else if entry.minimized {
@@ -2746,11 +2828,10 @@ impl State {
                                 .find(|(g, _)| *g == label)
                                 .map(|(_, r)| *r)
                                 .unwrap_or([0; 7]);
-                            let s = ((seg_w_in / 5).min((seg_h - 2) / 7)).clamp(1, 3);
-                            let gw = 5 * s;
-                            let gh = 7 * s;
-                            let ox = (seg_w_in - gw) / 2;
-                            let oy = (seg_h - gh) / 2;
+                            let layout = dock_segment_layout(seg_w_in, seg_h);
+                            let s = layout.scale;
+                            let ox = layout.offset_x;
+                            let oy = layout.offset_y;
                             for (ry, &bits) in rows.iter().enumerate() {
                                 for rx in 0..5u32 {
                                     if bits & (1 << (4 - rx)) != 0 {
@@ -2943,7 +3024,7 @@ impl State {
                             }
                             true
                         }
-                        _ => panic!("rendering loop lost: {err}"),
+                        _ => exit_on_context_lost(&err),
                     },
                 }
             }
@@ -3105,6 +3186,7 @@ enum DeviceAddError {
     AddNode(egl::Error),
     NoRenderNode,
     PrimaryGpuMissing,
+    Renderer(String),
 }
 
 #[cfg(test)]
@@ -3440,6 +3522,72 @@ mod tests {
 
         let release = key_filter_result(&mut intercepted, key_code, false, || FilterResult::Forward);
         assert!(matches!(release, FilterResult::Forward));
+    }
+
+    // e08s01t4 — connectors reporting no modes must be skipped, not indexed.
+    #[test]
+    fn preferred_mode_index_none_for_empty_modes() {
+        assert_eq!(preferred_mode_index(0, |_| false), None, "no modes -> skip connector");
+    }
+
+    #[test]
+    fn preferred_mode_index_prefers_flagged_mode() {
+        assert_eq!(preferred_mode_index(3, |i| i == 2), Some(2));
+        assert_eq!(preferred_mode_index(3, |_| false), Some(0), "fallback to first mode");
+    }
+
+    // e08s01t1 — dock segment/layout math must never underflow or panic,
+    // including absurdly small docks and many windows. Integers are
+    // surprisingly good at finding the floor when nobody gives them a handrail.
+    #[test]
+    fn dock_segment_layout_never_underflows_for_edge_sizes() {
+        for dock_h in 0..=10i32 {
+            for n in 1..=20u32 {
+                let total_w = 1920i32;
+                let seg_w = total_w / n as i32;
+                for i in 0..n {
+                    let w = if i == n.saturating_sub(1) {
+                        total_w.saturating_sub(seg_w * (n.saturating_sub(1) as i32))
+                    } else {
+                        seg_w
+                    };
+                    let (seg_w_in, seg_h) = dock_inner_size(w, dock_h);
+                    let layout = dock_segment_layout(seg_w_in, seg_h);
+                    // Offsets and glyph geometry must stay inside the segment.
+                    if layout.scale > 0 {
+                        assert!(layout.offset_x + layout.glyph_width <= seg_w_in);
+                        assert!(layout.offset_y + layout.glyph_height <= seg_h);
+                    }
+                    assert!(layout.scale <= 3);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn dock_inner_size_clamps_to_zero_for_tiny_docks() {
+        assert_eq!(dock_inner_size(1, 0), (0, 0));
+        assert_eq!(dock_inner_size(1, 1), (0, 0));
+        assert_eq!(dock_inner_size(1, 2), (0, 1));
+        assert_eq!(dock_inner_size(100, 7), (98, 6));
+        assert_eq!(dock_inner_size(-5, -5), (0, 0));
+    }
+
+    #[test]
+    fn dock_segment_layout_keeps_hint_scale_in_bounds() {
+        // Normal-size segment: scale clamps to 3 and glyph fits.
+        let l = dock_segment_layout(60, 40);
+        assert_eq!(l.scale, 3);
+        assert_eq!(l.glyph_width, 15);
+        assert_eq!(l.glyph_height, 21);
+        assert!(l.offset_x + l.glyph_width <= 60);
+        assert!(l.offset_y + l.glyph_height <= 40);
+
+        // Tiny segment: scale collapses to 0, no glyph drawn, no underflow.
+        let tiny = dock_segment_layout(2, 1);
+        assert_eq!(tiny.scale, 0);
+        assert_eq!(tiny.glyph_width, 0);
+        assert_eq!(tiny.glyph_height, 0);
     }
 
 }
