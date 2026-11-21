@@ -1,0 +1,81 @@
+story_id: e08s02
+verified_at: "2026-11-21T18:30:00Z"
+verifier: develop-tdd
+risk: P2
+phases:
+  branch_check:
+    passed: true
+    branch: e08s02-correctness
+    note: "Isolated worktree /home/yugaaank/Projects/e08s02-correctness; story lock acquired."
+  preflight:
+    passed: true
+    command: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
+  pre_uat_verify_validation:
+    passed: true
+    tasks:
+      - id: e08s02t1
+        command: "cargo test --bin eswm titlebar_close"
+        passed: true
+        result: "3 passed, 0 failed"
+      - id: e08s02t2
+        command: "cargo build"
+        passed: true
+        result: "0 warnings, 0 errors"
+      - id: e08s02t3
+        command: "cargo test --bin eswm render_order"
+        passed: true
+        result: "3 passed, 0 failed"
+      - id: e08s02t4
+        command: "cargo build"
+        passed: true
+        result: "0 warnings, 0 errors"
+      - id: e08s02t5
+        command: "cargo test --bin eswm csd_geometry"
+        passed: true
+        result: "3 passed, 0 failed"
+      - id: e08s02t6
+        command: "cargo build"
+        passed: true
+        result: "0 warnings, 0 errors"
+      - id: e08s02t7
+        command: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
+        passed: true
+        result: "131 passed, 0 failed"
+  smoke:
+    skipped: true
+    reason: "Bare-metal compositor: DRM/libseat only; running backend in-session forbidden by AGENTS.md (VT grab). P2 depth."
+  build:
+    passed: true
+    command: "cargo build"
+  typecheck:
+    passed: true
+    note: "Covered by cargo build/clippy (Rust)"
+  lint:
+    passed: true
+    command: "cargo clippy --all-targets"
+  tests:
+    passed: true
+    command: "cargo test --bin eswm"
+    result: "131 passed, 0 failed"
+  terminal_verdict:
+    command: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
+    exit_code: 0
+    captured_at: "2026-11-21T18:30:00Z"
+    note: "Single contiguous run: clippy 0, 131 passed, build 0."
+  security_scan:
+    skipped: true
+    reason: "No security-sensitive changes (security: none on all tasks)"
+  blind_spot_check:
+    skipped: true
+    reason: "scripts/check-blind-spots.sh not present"
+  manual:
+    skipped: true
+    reason: "P2 risk-scaled depth; live DRM UAT (close button, overlay/fullscreen z-order, CSD positioning) handed to operator"
+  gaps:
+    closed: true
+    notes:
+      - "t2 wiring (send_close via toplevel lookup) cannot be fully unit-tested without a fake ToplevelSurface; regression test asserts no orphan removal when no toplevel exists. Behavioral RED established at t1."
+      - "t4 render-band application is hardware-bound; policy is unit-tested via render_band_order in t3; full render loop verified by build + full suite."
+      - "t6 commit handler read of SurfaceCachedState.geometry is hardware/Wayland-bound; mapping helper unit-tested in t5."
+      - "Runtime manual UAT (live DRM session) pending operator per story verification script."
+      - "No RED unit test for t2/t4/t6 (hardware/toplevel boundaries) — documented per TDD interface constraint."

@@ -1,95 +1,97 @@
 spec: specs/epics/e08-panics-correctness/e08s02-correctness.md
 story_id: e08s02
-title: "Correctness: close button, dock layering, fullscreen layering, CSD geometry"
-status: failing
+title: 'Correctness: close button, dock layering, fullscreen layering, CSD geometry'
+status: passing
 bcps: 5
 tasks:
-  - id: e08s02t1
-    description: "Add pure toplevel-close decision helper in src/udev.rs (no toplevel -> no WM removal) with inline tests (RED then GREEN)"
-    verify: "cargo test --bin eswm titlebar_close"
-    risk: P2
-    security: none
-    status: failing
-    allure:
-      severity: normal
-      categories:
-        - "e08-panics-correctness"
-        - "correctness"
-        - "unit"
-
-  - id: e08s02t2
-    description: "Change apply_titlebar_action Close branch to resolve the window's ToplevelSurface via crate::toplevel_for_window and call send_close(); remove the direct wm.remove_window on Close"
-    verify: "cargo build"
-    risk: P2
-    security: none
-    status: failing
-    allure:
-      severity: normal
-      categories:
-        - "e08-panics-correctness"
-        - "correctness"
-        - "input"
-
-  - id: e08s02t3
-    description: "Add pure render-band ordering helper with tests: overlay/top above dock, fullscreen above all layers and dock, cursor topmost"
-    verify: "cargo test --bin eswm render_order"
-    risk: P2
-    security: none
-    status: failing
-    allure:
-      severity: normal
-      categories:
-        - "e08-panics-correctness"
-        - "correctness"
-        - "rendering"
-
-  - id: e08s02t4
-    description: "Apply band order in render_surface: collect fullscreen surface trees separately, place overlay/top above dock, splice fullscreen band above all layers and dock"
-    verify: "cargo build"
-    risk: P2
-    security: none
-    status: failing
-    allure:
-      severity: normal
-      categories:
-        - "e08-panics-correctness"
-        - "correctness"
-        - "rendering"
-
-  - id: e08s02t5
-    description: "Add pure window-geometry-to-xdg_offset helper (Option<Rectangle> loc -> (i32,i32); None -> (0,0)) with inline tests (RED then GREEN)"
-    verify: "cargo test --bin eswm csd_geometry"
-    risk: P2
-    security: none
-    status: failing
-    allure:
-      severity: normal
-      categories:
-        - "e08-panics-correctness"
-        - "correctness"
-        - "unit"
-
-  - id: e08s02t6
-    description: "Read smithay SurfaceCachedState.geometry.current() on toplevel commit via with_states and update wm::Window.xdg_offset (import SurfaceCachedState)"
-    verify: "cargo build"
-    risk: P2
-    security: none
-    status: failing
-    allure:
-      severity: normal
-      categories:
-        - "e08-panics-correctness"
-        - "correctness"
-        - "wayland"
-
-  - id: e08s02t7
-    description: "Run full preflight verification gates for e08s02"
-    verify: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
-    risk: P2
-    security: none
-    status: failing
-    allure:
-      severity: normal
-      categories:
-        - "e08-panics-correctness"
-        - "verification"
+- id: e08s02t1
+  description: Add pure toplevel-close decision helper in src/udev.rs (no toplevel
+    -> no WM removal) with inline tests (RED then GREEN)
+  verify: cargo test --bin eswm titlebar_close
+  risk: P2
+  security: none
+  status: passing
+  allure:
+    severity: normal
+    categories:
+    - e08-panics-correctness
+    - correctness
+    - unit
+- id: e08s02t2
+  description: Change apply_titlebar_action Close branch to resolve the window's ToplevelSurface
+    via crate::toplevel_for_window and call send_close(); remove the direct wm.remove_window
+    on Close
+  verify: cargo build
+  risk: P2
+  security: none
+  status: passing
+  allure:
+    severity: normal
+    categories:
+    - e08-panics-correctness
+    - correctness
+    - input
+- id: e08s02t3
+  description: 'Add pure render-band ordering helper with tests: overlay/top above
+    dock, fullscreen above all layers and dock, cursor topmost'
+  verify: cargo test --bin eswm render_order
+  risk: P2
+  security: none
+  status: passing
+  allure:
+    severity: normal
+    categories:
+    - e08-panics-correctness
+    - correctness
+    - rendering
+- id: e08s02t4
+  description: 'Apply band order in render_surface: collect fullscreen surface trees
+    separately, place overlay/top above dock, splice fullscreen band above all layers
+    and dock'
+  verify: cargo build
+  risk: P2
+  security: none
+  status: passing
+  allure:
+    severity: normal
+    categories:
+    - e08-panics-correctness
+    - correctness
+    - rendering
+- id: e08s02t5
+  description: Add pure window-geometry-to-xdg_offset helper (Option<Rectangle> loc
+    -> (i32,i32); None -> (0,0)) with inline tests (RED then GREEN)
+  verify: cargo test --bin eswm csd_geometry
+  risk: P2
+  security: none
+  status: passing
+  allure:
+    severity: normal
+    categories:
+    - e08-panics-correctness
+    - correctness
+    - unit
+- id: e08s02t6
+  description: Read smithay SurfaceCachedState.geometry.current() on toplevel commit
+    via with_states and update wm::Window.xdg_offset (import SurfaceCachedState)
+  verify: cargo build
+  risk: P2
+  security: none
+  status: passing
+  allure:
+    severity: normal
+    categories:
+    - e08-panics-correctness
+    - correctness
+    - wayland
+- id: e08s02t7
+  description: Run full preflight verification gates for e08s02
+  verify: cargo clippy --all-targets && cargo test --bin eswm && cargo build
+  risk: P2
+  security: none
+  status: passing
+  allure:
+    severity: normal
+    categories:
+    - e08-panics-correctness
+    - verification
