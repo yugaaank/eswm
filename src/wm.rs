@@ -2253,4 +2253,40 @@ mod tests {
         assert!(manager.toggle_minimize(id));
         assert!(!manager.window(id).unwrap().minimized);
     }
+
+    // e09s01t4 — one global focus with MRU history.
+    #[test]
+    fn focus_mru_tracks_single_focus_across_outputs() {
+        let mut manager = WindowManager::new();
+        manager.set_outer(0);
+        manager.set_inner(0);
+        let out_a = manager.add_output("a", Rect { x: 0, y: 0, width: 1920, height: 1080 });
+        let out_b = manager.add_output("b", Rect { x: 1920, y: 0, width: 1920, height: 1080 });
+        let a1 = manager.add_window(out_a, "app", "a1").unwrap();
+        let b1 = manager.add_window(out_b, "app", "b1").unwrap();
+
+        assert!(manager.focus_window(a1));
+        assert_eq!(manager.focused_id(), Some(a1));
+        assert!(manager.focus_window(b1));
+        assert_eq!(manager.focused_id(), Some(b1));
+        // Exactly one window carries the derived focused mirror.
+        assert_eq!(manager.windows.values().filter(|w| w.focused).count(), 1);
+        // MRU: most recent first, then previous.
+        assert_eq!(manager.focus_history_first(), Some(b1));
+        assert!(manager.focus_history().contains(&a1));
+    }
+
+    #[test]
+    fn focus_mru_restores_workspace_focus() {
+        let (mut manager, output) = manager();
+        let first = manager.add_window(output, "app", "first").unwrap();
+        let second = manager.add_window(output, "app", "second").unwrap();
+        manager.add_workspace(output, 2, "2");
+        assert!(manager.focus_window(first));
+        assert!(manager.focus_window(second));
+        assert!(manager.move_window_to_workspace(second, 2));
+        // After moving the focused window away, MRU restores the other
+        // window on the active workspace rather than clearing focus.
+        assert_eq!(manager.focused_id(), Some(first));
+    }
 }
