@@ -1,6 +1,6 @@
 story_id: e08s02
 verified_at: "2026-11-21T18:30:00Z"
-verifier: develop-tdd
+verifier: verify-work
 risk: P2
 phases:
   branch_check:
@@ -12,6 +12,7 @@ phases:
     command: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
   pre_uat_verify_validation:
     passed: true
+    note: "All 7 task verify commands re-run at verify-work; each exited 0. No grep/pattern mismatches."
     tasks:
       - id: e08s02t1
         command: "cargo test --bin eswm titlebar_close"
@@ -43,7 +44,7 @@ phases:
         result: "131 passed, 0 failed"
   smoke:
     skipped: true
-    reason: "Bare-metal compositor: DRM/libseat only; running backend in-session forbidden by AGENTS.md (VT grab). P2 depth."
+    reason: "Bare-metal compositor: DRM/libseat only. Running backend inside this session is forbidden by AGENTS.md (VT grab); no stub server for cold-start. P2 depth also skips cold-start."
   build:
     passed: true
     command: "cargo build"
@@ -61,13 +62,19 @@ phases:
     command: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
     exit_code: 0
     captured_at: "2026-11-21T18:30:00Z"
-    note: "Single contiguous run: clippy 0, 131 passed, build 0."
+    note: "Single contiguous run at verify-work: cargo clippy --all-targets && cargo test --bin eswm && cargo build; exit 0, 131 passed."
   security_scan:
     skipped: true
     reason: "No security-sensitive changes (security: none on all tasks)"
   blind_spot_check:
     skipped: true
     reason: "scripts/check-blind-spots.sh not present"
+  completeness_critic:
+    skipped: true
+    reason: "scripts/lib/completeness-critic.sh not present"
+  adversarial_mutation_gate:
+    skipped: true
+    reason: "scripts/verify-adversarial.sh not present"
   manual:
     skipped: true
     reason: "P2 risk-scaled depth; live DRM UAT (close button, overlay/fullscreen z-order, CSD positioning) handed to operator"
