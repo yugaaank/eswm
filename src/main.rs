@@ -494,6 +494,13 @@ pub(crate) fn sync_window_input_region(state: &mut State, surface: &WlSurface) {
 }
 
 
+/// Map a client's xdg_surface window geometry to the WM's xdg_offset.
+/// e08s02t5: render position is `target_rect - xdg_offset`, so the offset is
+/// the window-geometry origin relative to the surface origin.
+fn window_geometry_offset(geometry: Option<Rectangle<i32, smithay::utils::Logical>>) -> (i32, i32) {
+    geometry.map(|geo| (geo.loc.x, geo.loc.y)).unwrap_or((0, 0))
+}
+
 fn toplevel_for_window(state: &State, id: wm::WindowId) -> Option<ToplevelSurface> {
     state
         .xdg_shell_state
