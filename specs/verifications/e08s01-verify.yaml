@@ -1,0 +1,79 @@
+story_id: e08s01
+verified_at: "2026-11-21T00:00:00Z"
+verifier: develop-tdd
+risk: P2
+phases:
+  branch_check:
+    passed: true
+    branch: e08s01-panics
+    note: "Isolated worktree at /home/yugaaank/Projects/e08s01-panics; story lock acquired in specs/agent-locks.yaml."
+  preflight:
+    passed: true
+    command: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
+  pre_uat_verify_validation:
+    passed: true
+    tasks:
+      - id: e08s01t1
+        command: "cargo test --bin eswm dock_segment"
+        passed: true
+        result: "3 passed, 0 failed (dock_inner_size/dock_segment_layout edge sizes)"
+      - id: e08s01t2
+        command: "cargo build"
+        passed: true
+        result: "0 warnings, 0 errors"
+      - id: e08s01t3
+        command: "cargo test --bin eswm floating_target"
+        passed: true
+        result: "1 passed, 0 failed (600x400 work area)"
+      - id: e08s01t4
+        command: "cargo build"
+        passed: true
+        result: "0 warnings, 0 errors; preferred_mode_index tests: 2 passed"
+      - id: e08s01t5
+        command: "cargo build"
+        passed: true
+        result: "0 warnings, 0 errors"
+      - id: e08s01t6
+        command: "cargo build"
+        passed: true
+        result: "0 warnings, 0 errors"
+      - id: e08s01t7
+        command: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
+        passed: true
+        result: "122 passed, 0 failed"
+  smoke:
+    skipped: true
+    reason: "P2; no new external surface"
+  build:
+    passed: true
+    command: "cargo build"
+  typecheck:
+    passed: true
+    note: "Covered by cargo build/clippy (Rust)"
+  lint:
+    passed: true
+    command: "cargo clippy --all-targets"
+  tests:
+    passed: true
+    command: "cargo test --bin eswm"
+    result: "122 passed, 0 failed"
+  terminal_verdict:
+    command: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
+    exit_code: 0
+    captured_at: "2026-11-21T00:00:00Z"
+    note: "Single contiguous run (P2 preflight/evidence)."
+  security_scan:
+    skipped: true
+    reason: "No security-sensitive changes (security: none on all tasks)"
+  blind_spot_check:
+    skipped: true
+    reason: "scripts/check-blind-spots.sh not present"
+  manual:
+    skipped: true
+    reason: "P2 risk-scaled depth; hardware paths (connector with no modes, GPU context loss) require live DRM session / fault injection"
+  gaps:
+    closed: true
+    notes:
+      - "t5 (renderer acquisition failure) and t6 (ContextLost exit) are hardware/error paths without unit tests: no fake GPU/DRM device in test fixture. Verified by build + full inline test suite; logs use warn!/error! at each site."
+      - "Runtime manual verification (per story spec Verification Script) still pending operator on live DRM session: floating spawn on 600x400-class output, tiny dock heights, connector with no modes warning log, GPU ContextLost exit status 1."
+      - "No RED unit test for t2 (behavior-preserving refactor under t1's helper tests), t5, t6 — documented per TDD hardware/interface constraint."

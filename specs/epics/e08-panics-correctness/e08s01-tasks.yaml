@@ -2,7 +2,7 @@ spec: specs/epics/e08-panics-correctness/e08s01-panics.md
 story_id: e08s01
 title: 'Panics: dock underflow, floating_target underflow, connector modes, renderer
   errors'
-status: failing
+status: passing
 bcps: 5
 tasks:
 - id: e08s01t1
@@ -26,7 +26,7 @@ tasks:
   verify: cargo build
   risk: P2
   security: none
-  status: failing
+  status: passing
   allure:
     severity: normal
     categories:
@@ -40,7 +40,7 @@ tasks:
   verify: cargo test --bin eswm floating_target
   risk: P2
   security: none
-  status: failing
+  status: passing
   allure:
     severity: normal
     categories:
@@ -53,7 +53,7 @@ tasks:
   verify: cargo build
   risk: P2
   security: none
-  status: failing
+  status: passing
   allure:
     severity: normal
     categories:
@@ -67,7 +67,7 @@ tasks:
   verify: cargo build
   risk: P2
   security: none
-  status: failing
+  status: passing
   allure:
     severity: normal
     categories:
@@ -80,7 +80,7 @@ tasks:
   verify: cargo build
   risk: P2
   security: none
-  status: failing
+  status: passing
   allure:
     severity: normal
     categories:
@@ -92,7 +92,7 @@ tasks:
   verify: cargo clippy --all-targets && cargo test --bin eswm && cargo build
   risk: P2
   security: none
-  status: failing
+  status: passing
   allure:
     severity: normal
     categories:
