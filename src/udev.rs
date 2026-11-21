@@ -894,6 +894,41 @@ fn callback_min_gap_ms(refresh_mhz: u32) -> u32 {
     (1_000_000 / refresh_mhz).max(1)
 }
 
+/// Pure, panic-safe dock segment geometry. Inset 1px on each side/top so the
+/// base bar shows as separators; saturating on negative/tiny sizes.
+fn dock_inner_size(w: i32, dock_h: i32) -> (usize, usize) {
+    (
+        w.saturating_sub(2).max(0) as usize,
+        dock_h.saturating_sub(1).max(0) as usize,
+    )
+}
+
+/// Glyph placement within a dock segment, computed without underflow. A scale
+/// of 0 means no glyph is drawn (segment too small), which the renderer skips.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DockSegmentLayout {
+    scale: usize,
+    glyph_width: usize,
+    glyph_height: usize,
+    offset_x: usize,
+    offset_y: usize,
+}
+
+fn dock_segment_layout(seg_w_in: usize, seg_h: usize) -> DockSegmentLayout {
+    let scale = (seg_w_in / 5)
+        .min(seg_h.saturating_sub(2) / 7)
+        .min(3);
+    let glyph_width = 5 * scale;
+    let glyph_height = 7 * scale;
+    DockSegmentLayout {
+        scale,
+        glyph_width,
+        glyph_height,
+        offset_x: seg_w_in.saturating_sub(glyph_width) / 2,
+        offset_y: seg_h.saturating_sub(glyph_height) / 2,
+    }
+}
+
 /// Pick the GPU whose formats the dmabuf global advertises.
 ///
 /// It must be the GPU that scans out: clients allocate on the advertised
