@@ -93,6 +93,8 @@ pub struct Window {
     pub xdg_offset: (i32, i32),
     /// Focus state last sent to the client as xdg Activated; None = never sent.
     pub activated_sent: Option<bool>,
+    /// Window mode last sent to the client as xdg state flags; None = never sent.
+    pub mode_sent: Option<WindowMode>,
     /// Committed wl_surface input region (surface-local). None/default = whole surface.
     pub input_region: InputRegion,
 }
@@ -490,6 +492,13 @@ impl WindowManager {
         }
     }
 
+    /// Record the window mode last configured to the client (e08s04t2).
+    pub fn set_mode_sent(&mut self, id: WindowId, mode: WindowMode) {
+        if let Some(window) = self.windows.get_mut(&id) {
+            window.mode_sent = Some(mode);
+        }
+    }
+
     pub fn set_window_input_region(&mut self, id: WindowId, region: InputRegion) -> bool {
         let Some(window) = self.windows.get_mut(&id) else {
             return false;
@@ -881,6 +890,7 @@ impl WindowManager {
                 target_rect: floating_rect.unwrap_or_default(),
                 saved_rect: None,
                 activated_sent: None,
+                mode_sent: None,
                 xdg_offset: (0, 0),
                 input_region: InputRegion::default(),
             },

@@ -1,0 +1,77 @@
+story_id: e08s04
+verified_at: "2026-11-22T18:00:00Z"
+verifier: verify-work
+risk: P2
+phases:
+  branch_check:
+    passed: true
+    branch: e08s04-state-flags
+  preflight:
+    passed: true
+    command: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
+  pre_uat_verify_validation:
+    passed: true
+    note: "Automated task verify commands (t1-t5) re-run at verify-work; each exited 0. t6 manual UAT waived by operator override."
+    tasks:
+      - id: e08s04t1
+        command: "cargo test --bin eswm xdg_state_flags"
+        passed: true
+        result: "2 passed"
+      - id: e08s04t2
+        command: "cargo build"
+        passed: true
+      - id: e08s04t3
+        command: "cargo test --bin eswm apply_layout"
+        passed: true
+        result: "1 passed (mode_sent tracking; verify command added with test to avoid false-green 0-test filter)"
+      - id: e08s04t4
+        command: "! grep -rq 'ViewportCachedState' src/"
+        passed: true
+        result: "no viewport override in source"
+      - id: e08s04t5
+        command: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
+        passed: true
+        result: "144 passed, warning-free"
+  smoke:
+    skipped: true
+    reason: "Bare-metal DRM/libseat compositor: in-session backend forbidden by AGENTS.md (VT grab); no stub server for cold-start. P2 depth also skips cold-start."
+  build:
+    passed: true
+    command: "cargo build"
+  typecheck:
+    passed: true
+    note: "Covered by cargo build/clippy (Rust)"
+  lint:
+    passed: true
+    command: "cargo clippy --all-targets"
+  tests:
+    passed: true
+    command: "cargo test --bin eswm"
+    result: "144 passed, 0 failed"
+  terminal_verdict:
+    command: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
+    exit_code: 0
+    note: "Single contiguous run: clippy 0 (no warnings), 144 passed, build 0."
+  security_scan:
+    skipped: true
+    reason: "No security-sensitive changes (security: none on all tasks)"
+  blind_spot_check:
+    skipped: true
+    reason: "scripts/check-blind-spots.sh not present"
+  manual:
+    passed: true
+    override: true
+    reason: "OPERATOR OVERRIDE 2026-11-22: live DRM UAT (kitty/GTK4/other toolkit maximize from titlebar and Super+M) not executed; operator accepted automated proxy as sufficient for this P2 story."
+    automated_proxy: "cargo test --bin eswm xdg_state_flags (t1) covers protocol flag mapping; t4 confirms no viewport override; t3 covers mode_sent tracking."
+  completeness_critic:
+    skipped: true
+    reason: "scripts/lib/completeness-critic.sh not present"
+  adversarial_mutation_gate:
+    skipped: true
+    reason: "scripts/verify-adversarial.sh not present"
+  gaps:
+    closed: true
+    notes:
+      - "Manual UAT waived by explicit operator override; automated proxy covers flag mapping, mode-change tracking, and absence of viewport override but not real client resize behavior."
+      - "t3 real configure assertion needs a fake xdg toplevel fixture; test covers mode_sent tracking as the configure-needed signal."
+      - "Story lock held until merge."

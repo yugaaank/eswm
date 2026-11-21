@@ -1,4 +1,26 @@
-# Security Review — current: e08s03 (scale, cursors, input settings)
+# Security Review — current: e08s04 (window state flags)
+
+**Branch:** `e08s04-state-flags` (`main..HEAD`)
+**Date:** 2026-11-22
+**Risk:** P2 (per story)
+
+## Scope
+- `src/main.rs`: pure `xdg_state_flags_for_mode`; `apply_layout` sends Maximized/Fullscreen xdg state bits and tracks `mode_sent`.
+- `src/wm.rs`: `Window.mode_sent` field + setter.
+- `specs/*`: e08s04 re-plan, tasks, verification (operator UAT override), audit evidence.
+
+## Findings
+- **HIGH (≥8 confidence):** none.
+- **MEDIUM/LOW:** none identified.
+- xdg state bits are standard protocol output; no auth, network, credentials, user data, or new filesystem writes introduced (`security: none` on all tasks).
+
+## Notes
+- Manual DRM UAT was waived by explicit operator decision (automated proxy accepted); recorded in verification evidence, not a security finding.
+- No viewport override exists or was introduced (verified by source check).
+
+---
+
+# Security Review — e08s03 (scale, cursors, input settings)
 
 **Branch:** `e08s03-scale-cursor` (`main..HEAD`)
 **Date:** 2026-11-22
