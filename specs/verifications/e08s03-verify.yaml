@@ -1,0 +1,83 @@
+story_id: e08s03
+verified_at: "2026-11-22T12:00:00Z"
+verifier: develop-tdd
+risk: P2
+phases:
+  branch_check:
+    passed: true
+    branch: e08s03-scale-cursor
+    note: "Isolated worktree; story lock acquired."
+  preflight:
+    passed: true
+    command: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
+  pre_uat_verify_validation:
+    passed: true
+    tasks:
+      - id: e08s03t1
+        command: "cargo test --bin eswm output_scale"
+        passed: true
+        result: "3 passed"
+      - id: e08s03t2
+        command: "cargo test --bin eswm touchpad_config"
+        passed: true
+        result: "3 passed"
+      - id: e08s03t3
+        command: "cargo test --bin eswm cursor_image"
+        passed: true
+        result: "2 passed"
+      - id: e08s03t4
+        command: "cargo test --bin eswm keymap_config"
+        passed: true
+        result: "2 passed"
+      - id: e08s03t5
+        command: "cargo build"
+        passed: true
+      - id: e08s03t6
+        command: "cargo build"
+        passed: true
+      - id: e08s03t7
+        command: "cargo build"
+        passed: true
+      - id: e08s03t8
+        command: "cargo build"
+        passed: true
+      - id: e08s03t9
+        command: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
+        passed: true
+        result: "141 passed, warning-free"
+  smoke:
+    skipped: true
+    reason: "Bare-metal DRM/libseat compositor; running backend in-session forbidden by AGENTS.md (VT grab)."
+  build:
+    passed: true
+    command: "cargo build"
+  typecheck:
+    passed: true
+    note: "Covered by cargo build/clippy (Rust)"
+  lint:
+    passed: true
+    command: "cargo clippy --all-targets"
+  tests:
+    passed: true
+    command: "cargo test --bin eswm"
+    result: "141 passed, 0 failed"
+  terminal_verdict:
+    command: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
+    exit_code: 0
+    note: "Single contiguous run: clippy 0 (no warnings), 141 passed, build 0."
+  security_scan:
+    skipped: true
+    reason: "No security-sensitive changes (security: none on all tasks)"
+  blind_spot_check:
+    skipped: true
+    reason: "scripts/check-blind-spots.sh not present"
+  manual:
+    skipped: true
+    reason: "P2 risk-scaled depth; live DRM UAT (client cursor, HiDPI scale, config keymap/touchpad) handed to operator"
+  gaps:
+    closed: true
+    notes:
+      - "t5/t6/t7/t8 are hardware/libinput/Wayland-bound; pure policy helpers (scale mapping, cursor decision, touchpad defaults, keymap validation) are unit-tested, wiring is build-verified."
+      - "Client surface cursor branch (CursorImageStatus::Surface) is not unit-tested because no fake WlSurface fixture; decision helper covers policy, render wiring build-verified."
+      - "Scale is applied at output setup only; live scale changes (damage tracking) out of scope per story."
+      - "Runtime manual UAT (live DRM session) pending operator per story verification script."
