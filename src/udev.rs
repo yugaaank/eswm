@@ -21,7 +21,7 @@ use smithay::{
             dmabuf::Dmabuf,
             format::FormatSet,
             gbm::{GbmAllocator, GbmBufferFlags, GbmDevice},
-            Fourcc, Modifier,
+            Format, Fourcc, Modifier,
         },
         drm::{
             compositor::{FrameError, FrameFlags},
@@ -3801,6 +3801,32 @@ mod tests {
     #[test]
     fn render_order_without_fullscreen_has_no_fullscreen_band() {
         assert!(!render_band_order(false).contains(&RenderBand::Fullscreen));
+    }
+
+    // BUG-2026-11-21-DMABUF-IMPORT — cross-GPU feedback must advertise only
+    // modifiers that can actually be copied between the two devices.
+    #[test]
+    fn dmabuf_feedback_cross_device_render_tranche_is_linear_only() {
+        let scanout: FormatSet = [Format { code: Fourcc::Abgr8888, modifier: Modifier::Linear }].into_iter().collect();
+        let render: FormatSet = [
+            Format { code: Fourcc::Abgr8888, modifier: Modifier::Linear },
+            Format { code: Fourcc::Abgr8888, modifier: Modifier::from(0x1234) },
+        ]
+        .into_iter()
+        .collect();
+
+        let (scanout_formats, render_tranche) = dmabuf_feedback_formats(&scanout, &render, true);
+        assert!(scanout_formats.iter().all(|f| f.modifier == Modifier::Linear));
+        assert_eq!(render_tranche.iter().count(), 1);
+        assert!(render_tranche.iter().all(|f| f.modifier == Modifier::Linear));
+    }
+
+    #[test]
+    fn dmabuf_feedback_same_device_has_no_extra_tranche() {
+        let formats: FormatSet = [Format { code: Fourcc::Abgr8888, modifier: Modifier::from(0x1234) }].into_iter().collect();
+        let (scanout_formats, render_tranche) = dmabuf_feedback_formats(&formats, &formats, false);
+        assert_eq!(scanout_formats.iter().count(), 1);
+        assert_eq!(render_tranche.iter().count(), 0);
     }
 
 }
