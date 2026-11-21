@@ -1287,6 +1287,22 @@ fn pointer_focus(state: &mut State, pos: Point<f64, Logical>) -> Option<(wl_surf
 }
 
 /// Send wl_keyboard leave/enter for `id`; None => just leave.
+/// What the titlebar close button may do. e08s02t1: the decision is kept pure
+/// so "never orphan a client" is a regression-testable policy, not a comment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TitlebarCloseAction {
+    RequestClientClose,
+    LeaveWindowUntouched,
+}
+
+fn titlebar_close_action(toplevel_present: bool) -> TitlebarCloseAction {
+    if toplevel_present {
+        TitlebarCloseAction::RequestClientClose
+    } else {
+        TitlebarCloseAction::LeaveWindowUntouched
+    }
+}
+
 /// Perform a server-side titlebar button action and push the resulting state
 /// to clients.
 ///
