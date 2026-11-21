@@ -2473,8 +2473,11 @@ impl State {
             udev.pointer_location.x, udev.pointer_location.y,
             udev.cursor_buffer.is_some());
 
-// Build the frame: placed client surfaces + cursor.
+// Build the frame: placed client surfaces + cursor. e08s02t4: elements are
+        // collected per band and assembled by `render_band_order` at the end.
         let mut elements: Vec<EswmRenderElements<UdevRenderer<'_>>> = Vec::new();
+        let mut cursor_elements: Vec<EswmRenderElements<UdevRenderer<'_>>> = Vec::new();
+        let mut fullscreen_elements: Vec<EswmRenderElements<UdevRenderer<'_>>> = Vec::new();
 
         // Cursor first so it renders on top (smithay renders elements top-to-bottom).
         let pointer_location = udev.pointer_location;
@@ -2492,7 +2495,7 @@ impl State {
                 None,
                 Kind::Cursor,
             ) {
-                elements.push(EswmRenderElements::Cursor(cursor));
+                cursor_elements.push(EswmRenderElements::Cursor(cursor));
             }
         } else if !udev.cursor_images.is_empty() {
             let img = udev.cursor_images[0].clone();
@@ -2517,7 +2520,7 @@ impl State {
                 None,
                 Kind::Cursor,
             ) {
-                elements.push(EswmRenderElements::Cursor(cursor));
+                cursor_elements.push(EswmRenderElements::Cursor(cursor));
             }
         }
 
@@ -2551,7 +2554,8 @@ impl State {
                 target.extend(tree.into_iter().map(EswmRenderElements::Surface));
             }
         }
-        elements.extend(layer_elements_above);
+        // Overlay/top layers are collected in `layer_elements_above` and appended
+        // in band order after the frame is assembled (e08s02t4).
 
         // M5/P2: visible borders around each window (Hyprland-style: outside the rect,
         // fullscreen/maximized windows skip them). Edge strips plus corner circles
@@ -2714,7 +2718,9 @@ impl State {
                         elements.push(EswmRenderElements::Cursor(elem));
                     }
                 }
-                // Always render the window surface tree (bottom layer).
+                // Always render the window surface tree. e08s02t4: a fullscreen
+                // window's tree goes to its own band so it can paint above all
+                // layers and the dock.
                 let tree_elements = render_elements_from_surface_tree(
                     &mut renderer,
                     ws,
@@ -2723,14 +2729,22 @@ impl State {
                     1.0,
                     Kind::Unspecified,
                 );
-                elements.extend(
+                let tree_target = if matches!(
+                    self.wm.window(*id).map(|w| w.mode),
+                    Some(wm::WindowMode::Fullscreen)
+                ) {
+                    &mut fullscreen_elements
+                } else {
+                    &mut elements
+                };
+                tree_target.extend(
                     tree_elements
                         .into_iter()
                         .map(EswmRenderElements::Surface),
                 );
             }
         } else {
-            for (ws, x, y, _, _, _rect) in &placed {
+            for (ws, x, y, id, _, _rect) in &placed {
                 let tree_elements = render_elements_from_surface_tree(
                     &mut renderer,
                     ws,
@@ -2739,7 +2753,15 @@ impl State {
                     1.0,
                     Kind::Unspecified,
                 );
-                elements.extend(
+                let tree_target = if matches!(
+                    self.wm.window(*id).map(|w| w.mode),
+                    Some(wm::WindowMode::Fullscreen)
+                ) {
+                    &mut fullscreen_elements
+                } else {
+                    &mut elements
+                };
+                tree_target.extend(
                     tree_elements
                         .into_iter()
                         .map(EswmRenderElements::Surface),
@@ -2941,10 +2963,23 @@ impl State {
                     }
                 }
             }
-        // Dock on top of windows: index 0 renders last (on top).
-        elements.splice(0..0, dock_elements);
-
-        elements.extend(layer_elements_below);
+        // e08s02t4: assemble bands in the policy order. Index 0 draws last
+        // (on top): cursor, fullscreen, overlay/top, dock, windows, background.
+        let fullscreen_active = placed.iter().any(|(_, _, _, id, _, _)| {
+            matches!(self.wm.window(*id).map(|w| w.mode), Some(wm::WindowMode::Fullscreen))
+        });
+        let mut frame_elements: Vec<EswmRenderElements<UdevRenderer<'_>>> = Vec::new();
+        for band in render_band_order(fullscreen_active) {
+            match band {
+                RenderBand::Cursor => frame_elements.append(&mut cursor_elements),
+                RenderBand::Fullscreen => frame_elements.append(&mut fullscreen_elements),
+                RenderBand::OverlayTop => frame_elements.append(&mut layer_elements_above),
+                RenderBand::Dock => frame_elements.append(&mut dock_elements),
+                RenderBand::Windows => frame_elements.append(&mut elements),
+                RenderBand::Background => frame_elements.append(&mut layer_elements_below),
+            }
+        }
+        elements = frame_elements;
 
         // shortcut: with no clients AND no cursor the damage tracker marks the
         // frame empty and it never scans out; prime it with a 1x1 element
