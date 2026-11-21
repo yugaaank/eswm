@@ -992,6 +992,26 @@ fn choose_dmabuf_gpu(
         .unwrap_or(fallback)
 }
 
+/// Formats for the dmabuf feedback tranches (BUG-2026-11-21-DMABUF-IMPORT).
+///
+/// Returns `(scanout_formats, render_tranche_formats)`. When the render device
+/// differs from the scanout device, smithay can only copy buffers whose
+/// modifier is Linear, so the extra render tranche is restricted to those.
+/// Callers omit the render tranche entirely when its set is empty.
+fn dmabuf_feedback_formats(
+    scanout: &FormatSet,
+    render: &FormatSet,
+    cross_device: bool,
+) -> (FormatSet, FormatSet) {
+    let scanout_formats: FormatSet = scanout.intersection(render).copied().collect();
+    let render_tranche: FormatSet = if cross_device {
+        render.iter().filter(|f| f.modifier == Modifier::Linear).copied().collect()
+    } else {
+        FormatSet::default()
+    };
+    (scanout_formats, render_tranche)
+}
+
 fn frame_outcome(empty_error: bool, queued: bool) -> FrameOutcome {
     if queued {
         // A flip happened. This includes cursor-plane-only updates: the damage
