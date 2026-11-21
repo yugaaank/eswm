@@ -3637,4 +3637,30 @@ mod tests {
         );
     }
 
+    // e08s02t3 — z-order is a policy decision, tested without a GPU.
+    #[test]
+    fn render_band_order_puts_overlay_above_dock() {
+        let order = render_band_order(false);
+        let overlay = order.iter().position(|b| *b == RenderBand::OverlayTop).unwrap();
+        let dock = order.iter().position(|b| *b == RenderBand::Dock).unwrap();
+        assert!(overlay < dock, "overlay/top layers must paint above the dock");
+    }
+
+    #[test]
+    fn render_band_order_puts_fullscreen_above_layers_and_dock() {
+        let order = render_band_order(true);
+        let fullscreen = order.iter().position(|b| *b == RenderBand::Fullscreen).unwrap();
+        for other in [RenderBand::OverlayTop, RenderBand::Dock, RenderBand::Windows, RenderBand::Background] {
+            let pos = order.iter().position(|b| *b == other).unwrap();
+            assert!(fullscreen < pos, "fullscreen must paint above {other:?}");
+        }
+        let cursor = order.iter().position(|b| *b == RenderBand::Cursor).unwrap();
+        assert!(cursor < fullscreen, "cursor stays topmost overall");
+    }
+
+    #[test]
+    fn render_band_order_without_fullscreen_has_no_fullscreen_band() {
+        assert!(!render_band_order(false).contains(&RenderBand::Fullscreen));
+    }
+
 }
