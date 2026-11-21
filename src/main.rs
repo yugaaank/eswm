@@ -862,7 +862,14 @@ impl SeatHandler for State {
         // Do not force primary selection to keyboard focus here: e06s04t2
         // requires primary selection to follow pointer focus.
     }
-    fn cursor_image(&mut self, _seat: &Seat<Self>, _image: smithay::input::pointer::CursorImageStatus) {}
+    fn cursor_image(&mut self, _seat: &Seat<Self>, image: smithay::input::pointer::CursorImageStatus) {
+        // e08s03t6: remember the client's cursor request so the render loop
+        // can draw a custom surface (or hide the pointer) accordingly.
+        if let Some(udev) = self.udev.as_mut() {
+            udev.cursor_image = image;
+        }
+        self.redraw_needed = true;
+    }
 }
 
 /// Dock strip render signature: output geometry + per-entry visual state.

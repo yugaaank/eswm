@@ -144,6 +144,8 @@ pub struct UdevData {
     pub dmabuf_state: Option<(DmabufState, DmabufGlobal)>,
     cursor_images: Vec<xcursor::parser::Image>,
     cursor_buffer: Option<(MemoryRenderBuffer, (f64, f64))>, // (buffer, hotspot)
+    /// Latest cursor image requested by a client (e08s03t6).
+    pub cursor_image: smithay::input::pointer::CursorImageStatus,
     /// Cache of titlebar background render buffers keyed by (window_id, rect, color, titlebar_height)
     /// to avoid reallocating per-frame buffers for static windows.
     titlebar_buffer_cache: HashMap<(u64, Rect, [u8; 4], u32), MemoryRenderBuffer>,
@@ -338,6 +340,7 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         backends: HashMap::new(),
         dmabuf_state: None,
         cursor_images,
+        cursor_image: smithay::input::pointer::CursorImageStatus::default_named(),
         cursor_buffer: None,
         titlebar_buffer_cache: HashMap::new(),
         pointer_location: (0.0, 0.0).into(),
@@ -2506,8 +2509,35 @@ impl State {
         let mut fullscreen_elements: Vec<EswmRenderElements<UdevRenderer<'_>>> = Vec::new();
 
         // Cursor first so it renders on top (smithay renders elements top-to-bottom).
+        // e08s03t6: a client-provided surface wins; Hidden removes the pointer;
+        // Named keeps the Xcursor-derived buffer fallback.
         let pointer_location = udev.pointer_location;
-        if let Some((buffer, hotspot)) = udev.cursor_buffer.clone() {
+        let cursor_decision = crate::cursor_render_decision(&udev.cursor_image);
+        if cursor_decision == crate::CursorRenderDecision::ClientSurface {
+            let surface = match &udev.cursor_image {
+                smithay::input::pointer::CursorImageStatus::Surface(surface) => Some(surface.clone()),
+                _ => None,
+            };
+            if let Some(surface) = surface {
+                let hotspot = smithay::wayland::compositor::with_states(&surface, |states| {
+                    use smithay::input::pointer::CursorImageSurfaceData;
+                    states.data_map.get::<CursorImageSurfaceData>().map(|data| data.lock().unwrap().hotspot)
+                }).unwrap_or_default();
+                let pos = (pointer_location - Point::from((hotspot.x as f64, hotspot.y as f64)))
+                    .to_physical(Scale::from(output.current_scale().fractional_scale()))
+                    .to_i32_round();
+                let tree = render_elements_from_surface_tree(
+                    &mut renderer,
+                    &surface,
+                    pos,
+                    1.0,
+                    1.0,
+                    Kind::Cursor,
+                );
+                cursor_elements.extend(tree.into_iter().map(EswmRenderElements::Surface));
+            }
+        } else if cursor_decision == crate::CursorRenderDecision::XcursorFallback
+            && let Some((buffer, hotspot)) = udev.cursor_buffer.clone() {
             let pos = (pointer_location - Point::from(hotspot))
                 .to_physical(Scale::from(output.current_scale().fractional_scale()))
                 .to_i32_round();
