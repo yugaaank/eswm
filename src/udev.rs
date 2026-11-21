@@ -710,6 +710,18 @@ if lua_config_path.exists()
     }
     // e08s03t5: outputs may have been set up before the config was read.
     state.apply_configured_scales();
+    // e08s03t8: apply a config-provided XKB keymap; an invalid string leaves
+    // smithay's default keymap in place and is logged for the operator.
+    let configured_keymap = state.input_config.lock().unwrap().keymap.clone();
+    if let Some(keymap) = configured_keymap
+        && let Some(keyboard) = state.seat.get_keyboard()
+    {
+        if let Err(err) = keyboard.set_keymap_from_string(&mut state, keymap) {
+            tracing::warn!("failed to apply configured XKB keymap: {err}");
+        } else {
+            info!("applied configured XKB keymap");
+        }
+    }
 
 
     while !state.udev.as_ref().unwrap().quit.load(Ordering::SeqCst) {
