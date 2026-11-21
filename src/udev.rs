@@ -1313,7 +1313,18 @@ fn titlebar_close_action(toplevel_present: bool) -> TitlebarCloseAction {
 pub fn apply_titlebar_action(state: &mut State, id: wm::WindowId, button: wm::TitlebarButton) {
     match button {
         wm::TitlebarButton::Close => {
-            state.wm.remove_window(id);
+            // e08s02t2: ask the client to close; its destroy path removes the
+            // WM window. Removing it here orphaned the process (invisible app).
+            let toplevel = crate::toplevel_for_window(state, id);
+            match titlebar_close_action(toplevel.is_some()) {
+                TitlebarCloseAction::RequestClientClose => {
+                    if let Some(toplevel) = toplevel {
+                        toplevel.send_close();
+                    }
+                }
+                TitlebarCloseAction::LeaveWindowUntouched => {}
+            }
+            return;
         }
         wm::TitlebarButton::Maximize => {
             state.wm.toggle_maximized(id);

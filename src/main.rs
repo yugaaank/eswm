@@ -2238,4 +2238,24 @@ mod tests {
              the client is never configured and the frame outgrows its content"
         );
     }
+
+    // e08s02t2 — the old Close branch called wm.remove_window directly; with
+    // no toplevel to receive xdg_toplevel.close that orphaned the client.
+    #[test]
+    fn titlebar_close_without_toplevel_keeps_wm_window() {
+        let mut state = test_state();
+        let output_id = state.wm.primary_output_id().unwrap();
+        let id = state
+            .wm
+            .add_window(output_id, "test-app", "Test App")
+            .expect("add window");
+        assert!(toplevel_for_window(&state, id).is_none(), "fixture has no live toplevel");
+
+        crate::udev::apply_titlebar_action(&mut state, id, wm::TitlebarButton::Close);
+
+        assert!(
+            state.wm.window(id).is_some(),
+            "close without a toplevel must not remove the WM window"
+        );
+    }
 }
