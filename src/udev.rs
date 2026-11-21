@@ -2758,8 +2758,9 @@ impl State {
                             }
                             // Inset 1px left/right/top so the base bar shows as
                             // separators; bottom stays flush with the screen edge.
-                            let seg_w_in = (w - 2) as usize;
-                            let seg_h = (dock_h - 1) as usize;
+                            // e08s01t2: use saturating helper — subtraction used
+                            // to underflow and panic on tiny dock heights.
+                            let (seg_w_in, seg_h) = dock_inner_size(w, dock_h);
                             let color: [u8; 4] = if entry.focused {
                                 [70u8, 110, 170, 255]  // focused: clearly blue
                             } else if entry.minimized {
@@ -2781,11 +2782,10 @@ impl State {
                                 .find(|(g, _)| *g == label)
                                 .map(|(_, r)| *r)
                                 .unwrap_or([0; 7]);
-                            let s = ((seg_w_in / 5).min((seg_h - 2) / 7)).clamp(1, 3);
-                            let gw = 5 * s;
-                            let gh = 7 * s;
-                            let ox = (seg_w_in - gw) / 2;
-                            let oy = (seg_h - gh) / 2;
+                            let layout = dock_segment_layout(seg_w_in, seg_h);
+                            let s = layout.scale;
+                            let ox = layout.offset_x;
+                            let oy = layout.offset_y;
                             for (ry, &bits) in rows.iter().enumerate() {
                                 for rx in 0..5u32 {
                                     if bits & (1 << (4 - rx)) != 0 {

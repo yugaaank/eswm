@@ -1,95 +1,100 @@
 spec: specs/epics/e08-panics-correctness/e08s01-panics.md
 story_id: e08s01
-title: "Panics: dock underflow, floating_target underflow, connector modes, renderer errors"
+title: 'Panics: dock underflow, floating_target underflow, connector modes, renderer
+  errors'
 status: failing
 bcps: 5
 tasks:
-  - id: e08s01t1
-    description: "Add pure dock segment/layout helper(s) in src/udev.rs using saturating/checked arithmetic and inline unit tests covering dock heights 0-10 with 1-20 windows (no underflow/panic, valid geometry)"
-    verify: "cargo test --bin eswm dock_segment"
-    risk: P2
-    security: none
-    status: failing
-    allure:
-      severity: normal
-      categories:
-        - "e08-panics-correctness"
-        - "correctness"
-        - "unit"
-
-  - id: e08s01t2
-    description: "Integrate safe dock segment/layout helper(s) into the udev dock rendering path, replacing inline underflow-prone segment/label math while preserving behavior for valid sizes"
-    verify: "cargo build"
-    risk: P2
-    security: none
-    status: failing
-    allure:
-      severity: normal
-      categories:
-        - "e08-panics-correctness"
-        - "correctness"
-        - "rendering"
-
-  - id: e08s01t3
-    description: "Harden wm::floating_target for small work areas (<640x480, incl. 600x400) with clamped/saturating arithmetic and add inline unit tests asserting no underflow and valid placement rect"
-    verify: "cargo test --bin eswm floating_target"
-    risk: P2
-    security: none
-    status: failing
-    allure:
-      severity: normal
-      categories:
-        - "e08-panics-correctness"
-        - "correctness"
-        - "unit"
-
-  - id: e08s01t4
-    description: "Skip connector setup when connector.modes() is empty; log a warning with connector identity and avoid mode indexing panic"
-    verify: "cargo build"
-    risk: P2
-    security: none
-    status: failing
-    allure:
-      severity: normal
-      categories:
-        - "e08-panics-correctness"
-        - "correctness"
-        - "drm"
-
-  - id: e08s01t5
-    description: "Replace per-frame renderer acquisition unwrap() sites in render hot paths with logged error handling that skips the frame (no panic) consistent with existing render flow"
-    verify: "cargo build"
-    risk: P2
-    security: none
-    status: failing
-    allure:
-      severity: normal
-      categories:
-        - "e08-panics-correctness"
-        - "correctness"
-        - "rendering"
-
-  - id: e08s01t6
-    description: "Handle SwapBuffersError::ContextLost in frame finish and render submission paths by logging the error and exiting cleanly with status 1 (replace panic)"
-    verify: "cargo build"
-    risk: P2
-    security: none
-    status: failing
-    allure:
-      severity: normal
-      categories:
-        - "e08-panics-correctness"
-        - "correctness"
-        - "rendering"
-
-  - id: e08s01t7
-    description: "Run full preflight verification gates for e08s01"
-    verify: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
-    risk: P2
-    security: none
-    status: failing
-    allure:
-      severity: normal
-      categories:
-        - "e08-panics-correctness"
-        - "verification"
+- id: e08s01t1
+  description: Add pure dock segment/layout helper(s) in src/udev.rs using saturating/checked
+    arithmetic and inline unit tests covering dock heights 0-10 with 1-20 windows
+    (no underflow/panic, valid geometry)
+  verify: cargo test --bin eswm dock_segment
+  risk: P2
+  security: none
+  status: passing
+  allure:
+    severity: normal
+    categories:
+    - e08-panics-correctness
+    - correctness
+    - unit
+- id: e08s01t2
+  description: Integrate safe dock segment/layout helper(s) into the udev dock rendering
+    path, replacing inline underflow-prone segment/label math while preserving behavior
+    for valid sizes
+  verify: cargo build
+  risk: P2
+  security: none
+  status: failing
+  allure:
+    severity: normal
+    categories:
+    - e08-panics-correctness
+    - correctness
+    - rendering
+- id: e08s01t3
+  description: Harden wm::floating_target for small work areas (<640x480, incl. 600x400)
+    with clamped/saturating arithmetic and add inline unit tests asserting no underflow
+    and valid placement rect
+  verify: cargo test --bin eswm floating_target
+  risk: P2
+  security: none
+  status: failing
+  allure:
+    severity: normal
+    categories:
+    - e08-panics-correctness
+    - correctness
+    - unit
+- id: e08s01t4
+  description: Skip connector setup when connector.modes() is empty; log a warning
+    with connector identity and avoid mode indexing panic
+  verify: cargo build
+  risk: P2
+  security: none
+  status: failing
+  allure:
+    severity: normal
+    categories:
+    - e08-panics-correctness
+    - correctness
+    - drm
+- id: e08s01t5
+  description: Replace per-frame renderer acquisition unwrap() sites in render hot
+    paths with logged error handling that skips the frame (no panic) consistent with
+    existing render flow
+  verify: cargo build
+  risk: P2
+  security: none
+  status: failing
+  allure:
+    severity: normal
+    categories:
+    - e08-panics-correctness
+    - correctness
+    - rendering
+- id: e08s01t6
+  description: Handle SwapBuffersError::ContextLost in frame finish and render submission
+    paths by logging the error and exiting cleanly with status 1 (replace panic)
+  verify: cargo build
+  risk: P2
+  security: none
+  status: failing
+  allure:
+    severity: normal
+    categories:
+    - e08-panics-correctness
+    - correctness
+    - rendering
+- id: e08s01t7
+  description: Run full preflight verification gates for e08s01
+  verify: cargo clippy --all-targets && cargo test --bin eswm && cargo build
+  risk: P2
+  security: none
+  status: failing
+  allure:
+    severity: normal
+    categories:
+    - e08-panics-correctness
+    - verification
