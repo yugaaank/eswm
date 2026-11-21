@@ -1,7 +1,7 @@
-active_flow: planning
+active_flow: fix_bug
 active_epic_id: null
 active_story_id: null
-active_bug_id: null
+active_bug_id: BUG-2026-11-21-DMABUF-IMPORT
 release:
   target_version: null
   last_tag: null
@@ -11,7 +11,7 @@ epic_cycle:
   next_skill: null
   completed_steps: []
 bug_cycle:
-  current_step: null
+  current_step: 1
   completed_steps: []
 git:
   branch: main
@@ -36,7 +36,7 @@ handoff:
     - specs/epics/e09-design-decisions/epic.yaml
     - specs/epics/e09-design-decisions/e09s01-window-state-model.md
     - specs/epics/e09-design-decisions/e09s01-tasks.yaml
-  next_skill: develop-tdd
+  next_skill: investigate-bug
 decisions:
   - story: BUG-2026-11-17T00:30:00
     note: "Freeze/stutter fix closed via validate-fix: five stacked defects (unconditional re-render, empty frames treated as failed paints, dmabuf on the idle dGPU, callbacks on two clocks, and a dropped frame callback deadlocking the client). Final fix 02f57d2; diagnostics now blame wait time rather than the existence of work (be0f2bd); PointerMotionAbsolute now requests a redraw (6922ccc). Operator confirmed on the DRM session."
