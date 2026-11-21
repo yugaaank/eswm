@@ -4,11 +4,69 @@
 // and query state — matching Hyprland's `hl.bind`, `hl.define_submap`, `hl.dsp.*`, `hl.config{}`.
 
 use std::sync::Arc;
+use std::collections::HashMap;
 use flume::Sender;
 use mlua::{Lua, Table};
 use xkbcommon::xkb;
 
 use crate::wm::{DecorationConfig, DockEntry, TilingLayout, WmMode};
+
+/// Display/input settings supplied by Lua config. Shared with the compositor
+/// via Arc<Mutex<_>> so setters take effect without reloading the config file.
+#[derive(Debug, Default, Clone)]
+pub struct InputConfig {
+    pub output_scales: HashMap<String, f64>,
+    pub keymap: Option<String>,
+    pub touchpad_tap: Option<bool>,
+    pub touchpad_natural_scroll: Option<bool>,
+    pub touchpad_speed: Option<f64>,
+}
+
+impl InputConfig {
+    pub fn set_output_scale(&mut self, name: &str, value: f64) -> bool {
+        if output_scale_for(value).is_none() {
+            return false;
+        }
+        self.output_scales.insert(name.to_string(), value);
+        true
+    }
+
+    pub fn output_scale(&self, name: &str) -> Option<smithay::output::Scale> {
+        self.output_scales.get(name).copied().and_then(output_scale_for)
+    }
+}
+
+/// Resolved touchpad settings. e08s03t2: defaults preserve the values that
+/// used to be hardcoded in the libinput device-added callback.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TouchpadSettings {
+    pub tap: bool,
+    pub natural_scroll: bool,
+    pub speed: f64,
+}
+
+pub fn resolve_touchpad(config: &InputConfig) -> TouchpadSettings {
+    TouchpadSettings {
+        tap: config.touchpad_tap.unwrap_or(true),
+        natural_scroll: config.touchpad_natural_scroll.unwrap_or(false),
+        speed: config.touchpad_speed.filter(|s| s.is_finite() && *s >= 0.0).unwrap_or(0.7),
+    }
+}
+
+/// An empty or whitespace-only keymap would fail at compile time; reject it
+/// early so the current keymap stays in effect (e08s03t2).
+pub fn validate_keymap(keymap: &str) -> bool {
+    !keymap.trim().is_empty()
+}
+
+/// Map a positive finite f64 to a smithay fractional Scale (e08s03t1).
+fn output_scale_for(value: f64) -> Option<smithay::output::Scale> {
+    if value.is_finite() && value > 0.0 {
+        Some(smithay::output::Scale::Fractional(value))
+    } else {
+        None
+    }
+}
 
 /// Initialize a new Lua state with the eswm config API pre-loaded.
 /// Registers `es` table with `bind`, `define_submap`, `dsp`, `config` submodules,
@@ -75,6 +133,7 @@ pub fn register_api(
     lua_keybinds: Arc<std::sync::Mutex<Vec<Keybind>>>,
     decoration: Arc<std::sync::Mutex<DecorationConfig>>,
     dock_entries: Arc<std::sync::Mutex<Vec<DockEntry>>>,
+    input_config: Arc<std::sync::Mutex<InputConfig>>,
 ) -> Result<(), mlua::Error> {
     // Register the `es` table with all submodules
     let es = lua.create_table()?;
@@ -138,6 +197,56 @@ pub fn register_api(
     })?;
     let dsp_table = lua.create_table()?;
     dsp_table.set("global", dsp_global)?;
+
+    // e08s03t4: input/display settings. Invalid values raise a Lua error so
+    // config mistakes surface early instead of silently poisoning the seat.
+    {
+        let cfg = input_config.clone();
+        let setter = lua.create_function(move |_, (name, value): (String, f64)| -> Result<(), mlua::Error> {
+            if !cfg.lock().unwrap().set_output_scale(&name, value) {
+                return Err(mlua::Error::RuntimeError(format!("invalid scale for output {name}")));
+            }
+            Ok(())
+        })?;
+        dsp_table.set("set_output_scale", setter)?;
+    }
+    {
+        let cfg = input_config.clone();
+        let setter = lua.create_function(move |_, value: bool| -> Result<(), mlua::Error> {
+            cfg.lock().unwrap().touchpad_tap = Some(value);
+            Ok(())
+        })?;
+        dsp_table.set("set_touchpad_tap", setter)?;
+    }
+    {
+        let cfg = input_config.clone();
+        let setter = lua.create_function(move |_, value: bool| -> Result<(), mlua::Error> {
+            cfg.lock().unwrap().touchpad_natural_scroll = Some(value);
+            Ok(())
+        })?;
+        dsp_table.set("set_touchpad_natural_scroll", setter)?;
+    }
+    {
+        let cfg = input_config.clone();
+        let setter = lua.create_function(move |_, value: f64| -> Result<(), mlua::Error> {
+            if !value.is_finite() || value < 0.0 {
+                return Err(mlua::Error::RuntimeError("invalid touchpad speed".into()));
+            }
+            cfg.lock().unwrap().touchpad_speed = Some(value);
+            Ok(())
+        })?;
+        dsp_table.set("set_touchpad_speed", setter)?;
+    }
+    {
+        let setter = lua.create_function(move |_, keymap: String| -> Result<(), mlua::Error> {
+            if !validate_keymap(&keymap) {
+                return Err(mlua::Error::RuntimeError("empty keymap".into()));
+            }
+            input_config.lock().unwrap().keymap = Some(keymap);
+            Ok(())
+        })?;
+        dsp_table.set("set_keymap", setter)?;
+    }
     // es.dsp.exec_cmd("...") -> spawns a shell-interpreted command string (sh -c)
     let dsp_exec_cmd = lua.create_function(move |_, cmd: String| -> Result<(), mlua::Error> {
         if cmd.trim().is_empty() {
@@ -400,13 +509,15 @@ mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
 
-    fn test_api() -> (Lua, Arc<Mutex<Vec<Keybind>>>) {
+    type TestApi = (Lua, Arc<Mutex<Vec<Keybind>>>, Arc<Mutex<InputConfig>>);
+    fn test_api() -> TestApi {
         let lua = init().expect("lua init");
         let snapshot = Arc::new(Mutex::new(crate::ipc::Snapshot::default()));
         let (cmd_tx, _cmd_rx) = flume::unbounded();
         let keybinds = Arc::new(Mutex::new(Vec::new()));
         let decoration = Arc::new(Mutex::new(DecorationConfig::default()));
         let dock_entries = Arc::new(Mutex::new(Vec::new()));
+        let input_config = Arc::new(Mutex::new(InputConfig::default()));
         register_api(
             &lua,
             snapshot,
@@ -414,14 +525,15 @@ mod tests {
             keybinds.clone(),
             decoration,
             dock_entries,
+            input_config.clone(),
         )
         .expect("register api");
-        (lua, keybinds)
+        (lua, keybinds, input_config)
     }
 
     #[test]
     fn keybind_parse_stores_xkb_keysym_case_insensitive() {
-        let (lua, keybinds) = test_api();
+        let (lua, keybinds, _input_config) = test_api();
         lua.load(r#"es.bind("Super+Return", "spawn_terminal")"#)
             .exec()
             .expect("bind return");
@@ -434,9 +546,101 @@ mod tests {
         assert_eq!(kbs[1].keysym, xkbcommon::xkb::keysyms::KEY_r);
     }
 
+    // e08s03t1 — per-output scale mapping: invalid values must never reach
+    // Output::change_current_state (Scale::Fractional(NaN) would poison layout).
+    #[test]
+    fn output_scale_maps_positive_float_to_fractional() {
+        let scale = output_scale_for(2.0).expect("valid scale");
+        assert_eq!(scale.fractional_scale(), 2.0);
+    }
+
+    #[test]
+    fn output_scale_rejects_non_positive_and_non_finite() {
+        assert!(output_scale_for(0.0).is_none());
+        assert!(output_scale_for(-1.0).is_none());
+        assert!(output_scale_for(f64::NAN).is_none());
+        assert!(output_scale_for(f64::INFINITY).is_none());
+    }
+
+    // e08s03t2 — touchpad settings fall back to the current hardcoded values
+    // when config leaves them unset; keymap rejects empty input.
+    #[test]
+    fn touchpad_config_defaults_match_previous_hardcoded_values() {
+        let resolved = resolve_touchpad(&InputConfig::default());
+        assert!(resolved.tap);
+        assert!(!resolved.natural_scroll);
+        assert!((resolved.speed - 0.7).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn touchpad_config_overrides_are_honored() {
+        let config = InputConfig {
+            touchpad_tap: Some(false),
+            touchpad_natural_scroll: Some(true),
+            touchpad_speed: Some(1.2),
+            ..Default::default()
+        };
+        let resolved = resolve_touchpad(&config);
+        assert!(!resolved.tap);
+        assert!(resolved.natural_scroll);
+        assert!((resolved.speed - 1.2).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn touchpad_config_keymap_validation_rejects_empty_accepts_text() {
+        assert!(!validate_keymap(""));
+        assert!(!validate_keymap("   \n "));
+        assert!(validate_keymap("xkb_keymap { };"));
+    }
+
+    #[test]
+    fn output_scale_config_stores_and_looks_up_by_name() {
+        let mut config = InputConfig::default();
+        assert!(config.set_output_scale("eDP-1", 2.0));
+        assert!(!config.set_output_scale("eDP-1", 0.0), "invalid scale rejected");
+        assert_eq!(
+            config.output_scale("eDP-1").map(|s| s.fractional_scale()),
+            Some(2.0)
+        );
+        assert!(config.output_scale("HDMI-A-1").is_none(), "unknown output");
+    }
+
+    // e08s03t4 — es.dsp setters write into the shared config consumed by the
+    // compositor; invalid keymap/scales must not poison the config.
+    #[test]
+    fn keymap_config_setters_store_values() {
+        let (lua, _keybinds, input_config) = test_api();
+        lua.load(
+            r#"
+            es.dsp.set_output_scale("eDP-1", 2.0)
+            es.dsp.set_touchpad_tap(false)
+            es.dsp.set_touchpad_natural_scroll(true)
+            es.dsp.set_touchpad_speed(1.2)
+            es.dsp.set_keymap("xkb_keymap { };")
+            "#,
+        )
+        .exec()
+        .expect("setters");
+        let cfg = input_config.lock().unwrap();
+        assert_eq!(cfg.output_scale("eDP-1").map(|s| s.fractional_scale()), Some(2.0));
+        assert_eq!(cfg.touchpad_tap, Some(false));
+        assert_eq!(cfg.touchpad_natural_scroll, Some(true));
+        assert_eq!(cfg.touchpad_speed, Some(1.2));
+        assert_eq!(cfg.keymap.as_deref(), Some("xkb_keymap { };"));
+    }
+
+    #[test]
+    fn keymap_config_rejects_invalid_values() {
+        let (lua, _keybinds, input_config) = test_api();
+        assert!(lua.load(r#"es.dsp.set_keymap("")"#).exec().is_err());
+        assert!(lua.load(r#"es.dsp.set_output_scale("eDP-1", 0)"#).exec().is_err());
+        assert!(input_config.lock().unwrap().output_scales.is_empty());
+        assert!(input_config.lock().unwrap().keymap.is_none());
+    }
+
     #[test]
     fn keybind_parse_unknown_key_returns_lua_error() {
-        let (lua, keybinds) = test_api();
+        let (lua, keybinds, _input_config) = test_api();
         let err = lua
             .load(r#"es.bind("Super+NotARealKey_123", "spawn_terminal")"#)
             .exec()

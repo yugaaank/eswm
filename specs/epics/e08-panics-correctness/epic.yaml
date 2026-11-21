@@ -23,7 +23,7 @@ stories:
     title: Scale, cursors, input settings
     bcps: 3
     delta: MODIFIED
-    status: pending
+    status: completed
   - id: e08s04
     title: Window state flags and content scaling
     bcps: 3

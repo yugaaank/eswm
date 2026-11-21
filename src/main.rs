@@ -494,6 +494,24 @@ pub(crate) fn sync_window_input_region(state: &mut State, surface: &WlSurface) {
 }
 
 
+/// How the render loop should draw the pointer for a client's cursor status.
+/// e08s03t3: keeps the Hidden/Named/Surface policy out of the render loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CursorRenderDecision {
+    Hide,
+    XcursorFallback,
+    ClientSurface,
+}
+
+fn cursor_render_decision(status: &smithay::input::pointer::CursorImageStatus) -> CursorRenderDecision {
+    use smithay::input::pointer::CursorImageStatus;
+    match status {
+        CursorImageStatus::Hidden => CursorRenderDecision::Hide,
+        CursorImageStatus::Named(_) => CursorRenderDecision::XcursorFallback,
+        CursorImageStatus::Surface(_) => CursorRenderDecision::ClientSurface,
+    }
+}
+
 /// Map a client's xdg_surface window geometry to the WM's xdg_offset.
 /// e08s02t5: render position is `target_rect - xdg_offset`, so the offset is
 /// the window-geometry origin relative to the surface origin.
@@ -844,7 +862,14 @@ impl SeatHandler for State {
         // Do not force primary selection to keyboard focus here: e06s04t2
         // requires primary selection to follow pointer focus.
     }
-    fn cursor_image(&mut self, _seat: &Seat<Self>, _image: smithay::input::pointer::CursorImageStatus) {}
+    fn cursor_image(&mut self, _seat: &Seat<Self>, image: smithay::input::pointer::CursorImageStatus) {
+        // e08s03t6: remember the client's cursor request so the render loop
+        // can draw a custom surface (or hide the pointer) accordingly.
+        if let Some(udev) = self.udev.as_mut() {
+            udev.cursor_image = image;
+        }
+        self.redraw_needed = true;
+    }
 }
 
 /// Dock strip render signature: output geometry + per-entry visual state.
@@ -887,6 +912,9 @@ pub(crate) struct State {
     // Dock entries (active + minimized windows on the active workspace), rebuilt
     // each frame by apply_layout and exposed to frontends via es.dock.entries().
     pub dock_entries: Arc<std::sync::Mutex<Vec<wm::DockEntry>>>,
+    // Input/display settings mutated by Lua es.dsp.set_* and read by output
+    // setup, the libinput callback and keyboard init (e08s03).
+    pub input_config: Arc<std::sync::Mutex<lua_state::InputConfig>>,
     // Cached dock render buffers, keyed by a signature of geometry + entry
     // states. Reusing the same MemoryRenderBuffer across frames lets smithay
     // cache the GPU texture; rebuilding buffers every frame uploaded ~230KB+
@@ -1077,6 +1105,7 @@ fn new_state(
         lua_keybinds: Arc::new(std::sync::Mutex::new(Vec::new())),
         decoration: Arc::new(std::sync::Mutex::new(wm::DecorationConfig::standard())),
         dock_entries: Arc::new(std::sync::Mutex::new(Vec::new())),
+        input_config: Arc::new(std::sync::Mutex::new(lua_state::InputConfig::default())),
         dock_buffers: std::sync::Mutex::new(None),
         redraw_needed: true,
         last_frame_callback_ms: 0,
@@ -2293,5 +2322,24 @@ mod tests {
     fn csd_geometry_negative_origin_is_preserved() {
         let geo = Rectangle::new((-8, -16).into(), (100, 50).into());
         assert_eq!(window_geometry_offset(Some(geo)), (-8, -16));
+    }
+
+    // e08s03t3 — cursor status must map to exactly one render behavior.
+    #[test]
+    fn cursor_image_hidden_hides_the_pointer() {
+        use smithay::input::pointer::CursorImageStatus;
+        assert_eq!(
+            cursor_render_decision(&CursorImageStatus::Hidden),
+            CursorRenderDecision::Hide
+        );
+    }
+
+    #[test]
+    fn cursor_image_named_falls_back_to_xcursor_images() {
+        use smithay::input::pointer::{CursorIcon, CursorImageStatus};
+        assert_eq!(
+            cursor_render_decision(&CursorImageStatus::Named(CursorIcon::Default)),
+            CursorRenderDecision::XcursorFallback
+        );
     }
 }

@@ -144,6 +144,8 @@ pub struct UdevData {
     pub dmabuf_state: Option<(DmabufState, DmabufGlobal)>,
     cursor_images: Vec<xcursor::parser::Image>,
     cursor_buffer: Option<(MemoryRenderBuffer, (f64, f64))>, // (buffer, hotspot)
+    /// Latest cursor image requested by a client (e08s03t6).
+    pub cursor_image: smithay::input::pointer::CursorImageStatus,
     /// Cache of titlebar background render buffers keyed by (window_id, rect, color, titlebar_height)
     /// to avoid reallocating per-frame buffers for static windows.
     titlebar_buffer_cache: HashMap<(u64, Rect, [u8; 4], u32), MemoryRenderBuffer>,
@@ -338,6 +340,7 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         backends: HashMap::new(),
         dmabuf_state: None,
         cursor_images,
+        cursor_image: smithay::input::pointer::CursorImageStatus::default_named(),
         cursor_buffer: None,
         titlebar_buffer_cache: HashMap::new(),
         pointer_location: (0.0, 0.0).into(),
@@ -390,13 +393,22 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
                 // applies its config as each device appears, so hotplug works).
                 if device.config_tap_finger_count() > 0 {
                     use smithay::reexports::input::ScrollMethod;
-                    let _ = device.config_tap_set_enabled(true);
+                    // e08s03t7: tap/natural-scroll/speed come from Lua config;
+                    // drag, DWT and two-finger scroll keep their sane defaults.
+                    let settings = crate::lua_state::resolve_touchpad(
+                        &data.input_config.lock().unwrap(),
+                    );
+                    let _ = device.config_tap_set_enabled(settings.tap);
                     let _ = device.config_tap_set_drag_enabled(true);
                     let _ = device.config_tap_set_drag_lock_enabled(true);
                     let _ = device.config_dwt_set_enabled(true);
                     let _ = device.config_scroll_set_method(ScrollMethod::TwoFinger);
-                    let _ = device.config_accel_set_speed(0.7);
-                    info!("touchpad configured: {} (tap, dwt, two-finger scroll)", device.name());
+                    let _ = device.config_scroll_set_natural_scroll_enabled(settings.natural_scroll);
+                    let _ = device.config_accel_set_speed(settings.speed);
+                    info!(
+                        "touchpad configured: {} (tap={}, natural_scroll={}, speed={})",
+                        device.name(), settings.tap, settings.natural_scroll, settings.speed
+                    );
                 }
             }
             data.process_input_event(&event);
@@ -671,6 +683,7 @@ if let Err(e) = crate::lua_state::register_api(
     state.lua_keybinds.clone(),
     state.decoration.clone(),
     state.dock_entries.clone(),
+    state.input_config.clone(),
 ) {
     tracing::warn!("Lua API registration failed: {e}");
 }
@@ -693,6 +706,20 @@ if lua_config_path.exists()
         let cmd_tx = state.ipc.as_ref().unwrap().cmd_tx.clone();
         if let Err(e) = crate::lua_state::_do_file(lua, lua_config_path.to_str().unwrap(), snapshot, &cmd_tx) {
             tracing::warn!("Failed to load Lua config {}: {e}", lua_config_path.display());
+        }
+    }
+    // e08s03t5: outputs may have been set up before the config was read.
+    state.apply_configured_scales();
+    // e08s03t8: apply a config-provided XKB keymap; an invalid string leaves
+    // smithay's default keymap in place and is logged for the operator.
+    let configured_keymap = state.input_config.lock().unwrap().keymap.clone();
+    if let Some(keymap) = configured_keymap
+        && let Some(keyboard) = state.seat.get_keyboard()
+    {
+        if let Err(err) = keyboard.set_keymap_from_string(&mut state, keymap) {
+            tracing::warn!("failed to apply configured XKB keymap: {err}");
+        } else {
+            info!("applied configured XKB keymap");
         }
     }
 
@@ -2041,7 +2068,14 @@ impl State {
         let global = output.create_global::<State>(&self.dh);
 
         output.set_preferred(wl_mode);
-        output.change_current_state(Some(wl_mode), None, None, Some((0, 0).into()));
+        // e08s03t5: apply the configured per-output scale before the first
+        // frame; Scale::Fractional is what wl_output/fractional clients see.
+        let scale = self
+            .input_config
+            .lock()
+            .unwrap()
+            .output_scale(&output_name);
+        output.change_current_state(Some(wl_mode), None, scale, Some((0, 0).into()));
 
         // register real output geometry + workspaces 1..=9 into the window manager
         let mode_size = wl_mode.size;
@@ -2103,6 +2137,22 @@ impl State {
         handle.insert_idle(move |data: &mut State| {
             data.render(node, Some(crtc), 0);
         });
+    }
+
+    /// Apply configured scales to outputs created before the Lua config was
+    /// loaded (e08s03t5). Hotplugged outputs get their scale at setup instead.
+    fn apply_configured_scales(&self) {
+        let Some(udev) = self.udev.as_ref() else { return };
+        let config = self.input_config.lock().unwrap();
+        for backend in udev.backends.values() {
+            for surface in backend.surfaces.values() {
+                let name = surface.output.name();
+                if let Some(scale) = config.output_scale(&name) {
+                    surface.output.change_current_state(None, None, Some(scale), None);
+                    info!("output {name} scale set to {}", scale.fractional_scale());
+                }
+            }
+        }
     }
 
     fn connector_disconnected(&mut self, node: DrmNode, connector: connector::Info, crtc: crtc::Handle) {
@@ -2480,8 +2530,35 @@ impl State {
         let mut fullscreen_elements: Vec<EswmRenderElements<UdevRenderer<'_>>> = Vec::new();
 
         // Cursor first so it renders on top (smithay renders elements top-to-bottom).
+        // e08s03t6: a client-provided surface wins; Hidden removes the pointer;
+        // Named keeps the Xcursor-derived buffer fallback.
         let pointer_location = udev.pointer_location;
-        if let Some((buffer, hotspot)) = udev.cursor_buffer.clone() {
+        let cursor_decision = crate::cursor_render_decision(&udev.cursor_image);
+        if cursor_decision == crate::CursorRenderDecision::ClientSurface {
+            let surface = match &udev.cursor_image {
+                smithay::input::pointer::CursorImageStatus::Surface(surface) => Some(surface.clone()),
+                _ => None,
+            };
+            if let Some(surface) = surface {
+                let hotspot = smithay::wayland::compositor::with_states(&surface, |states| {
+                    use smithay::input::pointer::CursorImageSurfaceData;
+                    states.data_map.get::<CursorImageSurfaceData>().map(|data| data.lock().unwrap().hotspot)
+                }).unwrap_or_default();
+                let pos = (pointer_location - Point::from((hotspot.x as f64, hotspot.y as f64)))
+                    .to_physical(Scale::from(output.current_scale().fractional_scale()))
+                    .to_i32_round();
+                let tree = render_elements_from_surface_tree(
+                    &mut renderer,
+                    &surface,
+                    pos,
+                    1.0,
+                    1.0,
+                    Kind::Cursor,
+                );
+                cursor_elements.extend(tree.into_iter().map(EswmRenderElements::Surface));
+            }
+        } else if cursor_decision == crate::CursorRenderDecision::XcursorFallback
+            && let Some((buffer, hotspot)) = udev.cursor_buffer.clone() {
             let pos = (pointer_location - Point::from(hotspot))
                 .to_physical(Scale::from(output.current_scale().fractional_scale()))
                 .to_i32_round();
