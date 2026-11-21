@@ -3524,9 +3524,6 @@ mod tests {
         assert!(matches!(release, FilterResult::Forward));
     }
 
-    // e08s01t1 — dock segment/layout math must never underflow or panic,
-    // including absurdly small docks and many windows. Integers are
-    // surprisingly good at finding the floor when nobody gives them a handrail.
     // e08s01t4 — connectors reporting no modes must be skipped, not indexed.
     #[test]
     fn preferred_mode_index_none_for_empty_modes() {
@@ -3539,6 +3536,9 @@ mod tests {
         assert_eq!(preferred_mode_index(3, |_| false), Some(0), "fallback to first mode");
     }
 
+    // e08s01t1 — dock segment/layout math must never underflow or panic,
+    // including absurdly small docks and many windows. Integers are
+    // surprisingly good at finding the floor when nobody gives them a handrail.
     #[test]
     fn dock_segment_layout_never_underflows_for_edge_sizes() {
         for dock_h in 0..=10i32 {
