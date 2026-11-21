@@ -393,13 +393,22 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
                 // applies its config as each device appears, so hotplug works).
                 if device.config_tap_finger_count() > 0 {
                     use smithay::reexports::input::ScrollMethod;
-                    let _ = device.config_tap_set_enabled(true);
+                    // e08s03t7: tap/natural-scroll/speed come from Lua config;
+                    // drag, DWT and two-finger scroll keep their sane defaults.
+                    let settings = crate::lua_state::resolve_touchpad(
+                        &data.input_config.lock().unwrap(),
+                    );
+                    let _ = device.config_tap_set_enabled(settings.tap);
                     let _ = device.config_tap_set_drag_enabled(true);
                     let _ = device.config_tap_set_drag_lock_enabled(true);
                     let _ = device.config_dwt_set_enabled(true);
                     let _ = device.config_scroll_set_method(ScrollMethod::TwoFinger);
-                    let _ = device.config_accel_set_speed(0.7);
-                    info!("touchpad configured: {} (tap, dwt, two-finger scroll)", device.name());
+                    let _ = device.config_scroll_set_natural_scroll_enabled(settings.natural_scroll);
+                    let _ = device.config_accel_set_speed(settings.speed);
+                    info!(
+                        "touchpad configured: {} (tap={}, natural_scroll={}, speed={})",
+                        device.name(), settings.tap, settings.natural_scroll, settings.speed
+                    );
                 }
             }
             data.process_input_event(&event);
