@@ -1286,7 +1286,6 @@ fn pointer_focus(state: &mut State, pos: Point<f64, Logical>) -> Option<(wl_surf
     focus
 }
 
-/// Send wl_keyboard leave/enter for `id`; None => just leave.
 /// Render bands, listed top-first (smithay draws index 0 last / on top).
 /// e08s02t3: the z-order policy is pure so it can be tested without a GPU.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1367,6 +1366,7 @@ pub fn apply_titlebar_action(state: &mut State, id: wm::WindowId, button: wm::Ti
     state.redraw_needed = true;
 }
 
+/// Send wl_keyboard leave/enter for `id`; None => just leave.
 pub fn keyboard_focus_set(state: &mut State, id: Option<wm::WindowId>) {
     let changed = state
         .udev
