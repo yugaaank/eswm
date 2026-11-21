@@ -49,8 +49,8 @@ use smithay::{
         shell::wlr_layer::{Layer, LayerSurface, WlrLayerShellHandler, WlrLayerShellState},
         shell::xdg::{
             decoration::{XdgDecorationHandler, XdgDecorationState},
-            PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
-            XdgToplevelSurfaceData,
+            PopupSurface, PositionerState, SurfaceCachedState, ToplevelSurface, XdgShellHandler,
+            XdgShellState, XdgToplevelSurfaceData,
         },
         shm::{ShmHandler, ShmState},
         viewporter::ViewporterState,
@@ -783,6 +783,16 @@ impl CompositorHandler for State {
         }
         // e06s02t1: track committed input region for toplevel window surfaces.
         crate::sync_window_input_region(self, surface);
+        // e08s02t6: CSD clients move their window geometry inside the surface;
+        // track the offset so placement and pointer hit-testing use the same
+        // origin the client draws against.
+        if let Some(id) = window_id_of(surface) {
+            let geometry = with_states(surface, |states| {
+                states.cached_state.get::<SurfaceCachedState>().current().geometry
+            });
+            let offset = window_geometry_offset(geometry);
+            self.wm.set_window_xdg_offset(id, offset);
+        }
         // Popup lifecycle evidence: log the map/unmap transition so a run from
         // a TTY proves whether the client actually attached a buffer.
         if let Some(i) = self.popups.iter().position(|p| p.surface.wl_surface() == surface) {

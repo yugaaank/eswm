@@ -637,6 +637,16 @@ impl WindowManager {
         self.dock_height
     }
 
+    /// Update a window's client-declared window geometry offset (e08s02t6).
+    /// Returns false when the window no longer exists.
+    pub fn set_window_xdg_offset(&mut self, id: WindowId, offset: (i32, i32)) -> bool {
+        let Some(window) = self.windows.get_mut(&id) else {
+            return false;
+        };
+        window.xdg_offset = offset;
+        true
+    }
+
     /// Mark the window manager as needing re-arrangement. Call when external
     /// state (e.g. work_area) changes so arrange_output will run.
     pub fn mark_dirty(&mut self) {
