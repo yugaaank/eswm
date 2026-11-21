@@ -29,3 +29,13 @@ stories:
     bcps: 2
     delta: MODIFIED
     status: pending
+  - id: e09s05
+    title: "Toplevel ownership, client requests and window rules"
+    bcps: 3
+    delta: ADDED
+    status: pending
+    notes: |
+      Split from e09s01 during re-plan 2026-11-22. Covers: WM-owned ToplevelSurface
+      registration on first commit (real app_id/title), fullscreen_request/
+      maximize_request handlers, and window rules firing at creation with actual
+      app_id. Spec/tasks to be written by plan-work when e09s01 completes.
