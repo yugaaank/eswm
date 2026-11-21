@@ -929,6 +929,16 @@ fn dock_segment_layout(seg_w_in: usize, seg_h: usize) -> DockSegmentLayout {
     }
 }
 
+/// Index of the preferred DRM mode, or the first mode, or `None` when a
+/// connector reports no modes at all. e08s01t4: indexing `modes()[0]` on an
+/// empty list used to panic during connector setup.
+fn preferred_mode_index(len: usize, is_preferred: impl Fn(usize) -> bool) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    Some((0..len).find(|&i| is_preferred(i)).unwrap_or(0))
+}
+
 /// Pick the GPU whose formats the dmabuf global advertises.
 ///
 /// It must be the GPU that scans out: clients allocate on the advertised
@@ -1926,11 +1936,17 @@ impl State {
             },
         );
 
-        let mode_id = connector
-            .modes()
-            .iter()
-            .position(|mode| mode.mode_type().contains(ModeTypeFlags::PREFERRED))
-            .unwrap_or(0);
+        // e08s01t4: a connector with no modes cannot drive an output. Skip it
+        // with a clear warning instead of panicking on `modes()[0]`.
+        let mode_id = match preferred_mode_index(connector.modes().len(), |i| {
+            connector.modes()[i].mode_type().contains(ModeTypeFlags::PREFERRED)
+        }) {
+            Some(id) => id,
+            None => {
+                warn!("connector {output_name} reports no modes, skipping");
+                return;
+            }
+        };
 
         let drm_mode = connector.modes()[mode_id];
         let wl_mode = WlMode::from(drm_mode);
