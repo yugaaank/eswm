@@ -133,6 +133,7 @@ pub fn register_api(
     lua_keybinds: Arc<std::sync::Mutex<Vec<Keybind>>>,
     decoration: Arc<std::sync::Mutex<DecorationConfig>>,
     dock_entries: Arc<std::sync::Mutex<Vec<DockEntry>>>,
+    input_config: Arc<std::sync::Mutex<InputConfig>>,
 ) -> Result<(), mlua::Error> {
     // Register the `es` table with all submodules
     let es = lua.create_table()?;
@@ -196,6 +197,56 @@ pub fn register_api(
     })?;
     let dsp_table = lua.create_table()?;
     dsp_table.set("global", dsp_global)?;
+
+    // e08s03t4: input/display settings. Invalid values raise a Lua error so
+    // config mistakes surface early instead of silently poisoning the seat.
+    {
+        let cfg = input_config.clone();
+        let setter = lua.create_function(move |_, (name, value): (String, f64)| -> Result<(), mlua::Error> {
+            if !cfg.lock().unwrap().set_output_scale(&name, value) {
+                return Err(mlua::Error::RuntimeError(format!("invalid scale for output {name}")));
+            }
+            Ok(())
+        })?;
+        dsp_table.set("set_output_scale", setter)?;
+    }
+    {
+        let cfg = input_config.clone();
+        let setter = lua.create_function(move |_, value: bool| -> Result<(), mlua::Error> {
+            cfg.lock().unwrap().touchpad_tap = Some(value);
+            Ok(())
+        })?;
+        dsp_table.set("set_touchpad_tap", setter)?;
+    }
+    {
+        let cfg = input_config.clone();
+        let setter = lua.create_function(move |_, value: bool| -> Result<(), mlua::Error> {
+            cfg.lock().unwrap().touchpad_natural_scroll = Some(value);
+            Ok(())
+        })?;
+        dsp_table.set("set_touchpad_natural_scroll", setter)?;
+    }
+    {
+        let cfg = input_config.clone();
+        let setter = lua.create_function(move |_, value: f64| -> Result<(), mlua::Error> {
+            if !value.is_finite() || value < 0.0 {
+                return Err(mlua::Error::RuntimeError("invalid touchpad speed".into()));
+            }
+            cfg.lock().unwrap().touchpad_speed = Some(value);
+            Ok(())
+        })?;
+        dsp_table.set("set_touchpad_speed", setter)?;
+    }
+    {
+        let setter = lua.create_function(move |_, keymap: String| -> Result<(), mlua::Error> {
+            if !validate_keymap(&keymap) {
+                return Err(mlua::Error::RuntimeError("empty keymap".into()));
+            }
+            input_config.lock().unwrap().keymap = Some(keymap);
+            Ok(())
+        })?;
+        dsp_table.set("set_keymap", setter)?;
+    }
     // es.dsp.exec_cmd("...") -> spawns a shell-interpreted command string (sh -c)
     let dsp_exec_cmd = lua.create_function(move |_, cmd: String| -> Result<(), mlua::Error> {
         if cmd.trim().is_empty() {
@@ -515,20 +566,22 @@ mod tests {
     #[test]
     fn touchpad_config_defaults_match_previous_hardcoded_values() {
         let resolved = resolve_touchpad(&InputConfig::default());
-        assert_eq!(resolved.tap, true);
-        assert_eq!(resolved.natural_scroll, false);
+        assert!(resolved.tap);
+        assert!(!resolved.natural_scroll);
         assert!((resolved.speed - 0.7).abs() < f64::EPSILON);
     }
 
     #[test]
     fn touchpad_config_overrides_are_honored() {
-        let mut config = InputConfig::default();
-        config.touchpad_tap = Some(false);
-        config.touchpad_natural_scroll = Some(true);
-        config.touchpad_speed = Some(1.2);
+        let config = InputConfig {
+            touchpad_tap: Some(false),
+            touchpad_natural_scroll: Some(true),
+            touchpad_speed: Some(1.2),
+            ..Default::default()
+        };
         let resolved = resolve_touchpad(&config);
-        assert_eq!(resolved.tap, false);
-        assert_eq!(resolved.natural_scroll, true);
+        assert!(!resolved.tap);
+        assert!(resolved.natural_scroll);
         assert!((resolved.speed - 1.2).abs() < f64::EPSILON);
     }
 

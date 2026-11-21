@@ -671,6 +671,7 @@ if let Err(e) = crate::lua_state::register_api(
     state.lua_keybinds.clone(),
     state.decoration.clone(),
     state.dock_entries.clone(),
+    state.input_config.clone(),
 ) {
     tracing::warn!("Lua API registration failed: {e}");
 }

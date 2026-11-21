@@ -905,6 +905,9 @@ pub(crate) struct State {
     // Dock entries (active + minimized windows on the active workspace), rebuilt
     // each frame by apply_layout and exposed to frontends via es.dock.entries().
     pub dock_entries: Arc<std::sync::Mutex<Vec<wm::DockEntry>>>,
+    // Input/display settings mutated by Lua es.dsp.set_* and read by output
+    // setup, the libinput callback and keyboard init (e08s03).
+    pub input_config: Arc<std::sync::Mutex<lua_state::InputConfig>>,
     // Cached dock render buffers, keyed by a signature of geometry + entry
     // states. Reusing the same MemoryRenderBuffer across frames lets smithay
     // cache the GPU texture; rebuilding buffers every frame uploaded ~230KB+
@@ -1095,6 +1098,7 @@ fn new_state(
         lua_keybinds: Arc::new(std::sync::Mutex::new(Vec::new())),
         decoration: Arc::new(std::sync::Mutex::new(wm::DecorationConfig::standard())),
         dock_entries: Arc::new(std::sync::Mutex::new(Vec::new())),
+        input_config: Arc::new(std::sync::Mutex::new(lua_state::InputConfig::default())),
         dock_buffers: std::sync::Mutex::new(None),
         redraw_needed: true,
         last_frame_callback_ms: 0,
