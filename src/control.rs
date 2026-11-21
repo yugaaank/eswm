@@ -17,7 +17,7 @@ use std::{
 use serde_json::{json, Value};
 
 use crate::{
-    wm::{Rect, WindowMode},
+    wm::{ClientMode, Placement, Presentation, Rect},
     State,
 };
 
@@ -221,7 +221,7 @@ fn dispatch(state: &mut State, cmd: &str, args: &Value) -> Result<Value, String>
                 return Err(format!("no window {id}"));
             }
             crate::apply_layout(state);
-            Ok(json!({"window": id, "mode": mode_name(mode)}))
+            Ok(json!({"window": id, "mode": mode.mode_name()}))
         }
         "workspace.focus" => {
             let output = state.wm.primary_output_id().ok_or("no output")?;
@@ -253,7 +253,7 @@ fn window_id(args: &Value) -> Result<u64, String> {
 
 fn floating_rect(state: &State, id: u64) -> Result<Rect, String> {
     let window = state.wm.window(id).ok_or_else(|| format!("no window {id}"))?;
-    if window.mode == WindowMode::Tiled {
+    if window.mode.placement == Placement::Tiled && window.mode.presentation == Presentation::Normal {
         return Err(format!("window {id} is tiled"));
     }
     Ok(window.target_rect)
@@ -303,7 +303,7 @@ fn window_json(window: &crate::wm::Window) -> Value {
         "title": window.title,
         "workspace": window.workspace,
         "output": window.output,
-        "mode": mode_name(window.mode),
+        "mode": window.mode.mode_name(),
         "mapped": window.mapped,
         "focused": window.focused,
         "rect": rect_json(window.rect),
@@ -354,21 +354,12 @@ fn rect_json(rect: Rect) -> Value {
     json!({"x": rect.x, "y": rect.y, "width": rect.width, "height": rect.height})
 }
 
-fn mode_name(mode: WindowMode) -> &'static str {
-    match mode {
-        WindowMode::Tiled => "tiled",
-        WindowMode::Floating => "floating",
-        WindowMode::Maximized => "maximized",
-        WindowMode::Fullscreen => "fullscreen",
-    }
-}
-
-fn parse_mode(name: &str) -> Option<WindowMode> {
+fn parse_mode(name: &str) -> Option<ClientMode> {
     match name {
-        "tiled" => Some(WindowMode::Tiled),
-        "floating" => Some(WindowMode::Floating),
-        "maximized" => Some(WindowMode::Maximized),
-        "fullscreen" => Some(WindowMode::Fullscreen),
+        "tiled" => Some(ClientMode::tiled()),
+        "floating" => Some(ClientMode::floating()),
+        "maximized" => Some(ClientMode::maximized()),
+        "fullscreen" => Some(ClientMode::fullscreen()),
         _ => None,
     }
 }

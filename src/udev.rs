@@ -1653,7 +1653,7 @@ impl State {
                     // Super+button starts a move/resize drag on a floating window
                     if mods.logo && (button == BTN_LEFT || button == BTN_RIGHT)
                         && let Some(id) = self.wm.window_at((location.x, location.y), self.wm.border_size())
-                            && self.wm.window(id).map(|w| w.mode) == Some(wm::WindowMode::Floating) {
+                            && self.wm.window(id).map(|w| w.mode.placement == wm::Placement::Floating && w.mode.presentation == wm::Presentation::Normal).unwrap_or(false) {
                                 let rect = self.wm.window(id).unwrap().target_rect;
                                 self.udev.as_mut().unwrap().drag = Some(DragState {
                                     window: id,
@@ -1682,7 +1682,7 @@ impl State {
                             if in_titlebar {
                                 match wm::titlebar_button_at(rect, titlebar_height, location.x) {
                                     Some(button) => apply_titlebar_action(self, id, button),
-                                    None if mode == wm::WindowMode::Floating => {
+                                    None if mode.placement == wm::Placement::Floating && mode.presentation == wm::Presentation::Normal => {
                                         // Titlebar drag: start move on floating window
                                         let rect = self.wm.window(id).unwrap().target_rect;
                                         self.udev.as_mut().unwrap().drag = Some(DragState {
@@ -2658,7 +2658,7 @@ impl State {
                 // They render as a plain surface tree at the positioner-resolved
                 // origin (GTK draws its own menu frame and shadow).
                 let is_popup = *id == crate::POPUP_FAKE_ID;
-                let mode = self.wm.window(*id).map(|w| w.mode).unwrap_or(wm::WindowMode::Tiled);
+                let mode = self.wm.window(*id).map(|w| w.mode).unwrap_or(wm::ClientMode::tiled());
                 // Smithay draws input[0] last (on top), so the focused window
                 // (first in `placed`) paints on top overall. Within each window
                 // the order is [borders, titlebar, surface]: borders pushed
@@ -2674,7 +2674,7 @@ impl State {
                 // per-frame MemoryRenderBuffer allocations. One element per edge,
                 // re-created when color/size changes (no persistent cache needed
                 // because SolidColorRenderElement is cheap to construct).
-                if !is_popup && !matches!(mode, wm::WindowMode::Fullscreen) && border_size > 0 {
+                if !is_popup && mode.presentation != wm::Presentation::Fullscreen && border_size > 0 {
                     let color = if *focused { &color_focused } else { &color_unfocused };
                     let color32f = Color32F::new(
                         color[0] as f32 / 255.0,
@@ -2733,7 +2733,7 @@ impl State {
                 // Borders pushed first -> index 0 -> drawn last -> on top (capture titlebar edges).
                 elements.extend(border_elements);
                 // Titlebar strip (middle layer: on top of surface, under borders).
-                if !is_popup && titlebar_height > 0 && !matches!(mode, wm::WindowMode::Fullscreen) {
+                if !is_popup && titlebar_height > 0 && mode.presentation != wm::Presentation::Fullscreen {
                     let tb_w = rect.width;
                     let tb_h = titlebar_height;
                     let tb_px = if *focused { titlebar_color_focused } else { titlebar_color_unfocused };
@@ -2807,8 +2807,8 @@ impl State {
                     Kind::Unspecified,
                 );
                 let tree_target = if matches!(
-                    self.wm.window(*id).map(|w| w.mode),
-                    Some(wm::WindowMode::Fullscreen)
+                    self.wm.window(*id).map(|w| w.mode.presentation),
+                    Some(wm::Presentation::Fullscreen)
                 ) {
                     &mut fullscreen_elements
                 } else {
@@ -2831,8 +2831,8 @@ impl State {
                     Kind::Unspecified,
                 );
                 let tree_target = if matches!(
-                    self.wm.window(*id).map(|w| w.mode),
-                    Some(wm::WindowMode::Fullscreen)
+                    self.wm.window(*id).map(|w| w.mode.presentation),
+                    Some(wm::Presentation::Fullscreen)
                 ) {
                     &mut fullscreen_elements
                 } else {
@@ -3043,7 +3043,7 @@ impl State {
         // e08s02t4: assemble bands in the policy order. Index 0 draws last
         // (on top): cursor, fullscreen, overlay/top, dock, windows, background.
         let fullscreen_active = placed.iter().any(|(_, _, _, id, _, _)| {
-            matches!(self.wm.window(*id).map(|w| w.mode), Some(wm::WindowMode::Fullscreen))
+            matches!(self.wm.window(*id).map(|w| w.mode.presentation), Some(wm::Presentation::Fullscreen))
         });
         let mut frame_elements: Vec<EswmRenderElements<UdevRenderer<'_>>> = Vec::new();
         for band in render_band_order(fullscreen_active) {

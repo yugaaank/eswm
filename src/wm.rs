@@ -12,15 +12,6 @@ pub struct Rect {
     pub height: u32,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum WindowMode {
-    #[default]
-    Tiled,
-    Floating,
-    Maximized,
-    Fullscreen,
-}
-
 /// Where a window is placed — the persistent layout axis (e09s01).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Placement {
@@ -50,6 +41,12 @@ impl ClientMode {
     pub fn new(placement: Placement, presentation: Presentation) -> Self {
         Self { placement, presentation }
     }
+
+    /// Legacy constructors used while call sites migrate (e09s01t2).
+    pub fn tiled() -> Self { Self::new(Placement::Tiled, Presentation::Normal) }
+    pub fn floating() -> Self { Self::new(Placement::Floating, Presentation::Normal) }
+    pub fn maximized() -> Self { Self::new(Placement::Tiled, Presentation::Maximized) }
+    pub fn fullscreen() -> Self { Self::new(Placement::Tiled, Presentation::Fullscreen) }
 
     /// The same mode with presentation cleared — for restore transitions.
     pub fn without_presentation(self) -> Self {
@@ -138,7 +135,7 @@ pub struct Window {
     pub title: String,
     pub output: OutputId,
     pub workspace: WorkspaceId,
-    pub mode: WindowMode,
+    pub mode: ClientMode,
     pub mapped: bool,
     pub focused: bool,
     pub rect: Rect,
@@ -151,7 +148,7 @@ pub struct Window {
     /// Focus state last sent to the client as xdg Activated; None = never sent.
     pub activated_sent: Option<bool>,
     /// Window mode last sent to the client as xdg state flags; None = never sent.
-    pub mode_sent: Option<WindowMode>,
+    pub mode_sent: Option<Presentation>,
     /// Committed wl_surface input region (surface-local). None/default = whole surface.
     pub input_region: InputRegion,
 }
@@ -234,7 +231,7 @@ pub struct WindowManager {
 pub struct WindowRule {
     pub app_id: String,
     pub workspace: Option<WorkspaceId>,
-    pub mode: Option<WindowMode>,
+    pub mode: Option<ClientMode>,
 }
 
 /// Border frame geometry: the outer frame that wraps a window's target_rect.
@@ -550,9 +547,9 @@ impl WindowManager {
     }
 
     /// Record the window mode last configured to the client (e08s04t2).
-    pub fn set_mode_sent(&mut self, id: WindowId, mode: WindowMode) {
+    pub fn set_mode_sent(&mut self, id: WindowId, presentation: Presentation) {
         if let Some(window) = self.windows.get_mut(&id) {
-            window.mode_sent = Some(mode);
+            window.mode_sent = Some(presentation);
         }
     }
 
@@ -758,7 +755,7 @@ impl WindowManager {
     }
 
     /// Match a window's app_id against configured rules; return (workspace, mode).
-    fn match_rule(&self, app_id: &str) -> (Option<WorkspaceId>, Option<WindowMode>) {
+    fn match_rule(&self, app_id: &str) -> (Option<WorkspaceId>, Option<ClientMode>) {
         for rule in &self.rules {
             if rule.app_id == app_id {
                 return (rule.workspace, rule.mode);
@@ -771,9 +768,10 @@ impl WindowManager {
         let Some(window) = self.windows.get(&id) else {
             return false;
         };
-        let mode = match window.mode {
-            WindowMode::Tiled => WindowMode::Floating,
-            WindowMode::Floating | WindowMode::Maximized | WindowMode::Fullscreen => WindowMode::Tiled,
+        let mode = if window.mode.placement == Placement::Tiled && window.mode.presentation == Presentation::Normal {
+            ClientMode::floating()
+        } else {
+            ClientMode::tiled()
         };
         self.set_mode(id, mode)
     }
@@ -889,7 +887,7 @@ impl WindowManager {
             return false;
         };
         window.target_rect = rect;
-        if window.mode == WindowMode::Tiled {
+        if window.mode == ClientMode::tiled() {
             // tiled geometry is owned by the arrangement; ignore direct moves
             return false;
         }
@@ -920,8 +918,8 @@ impl WindowManager {
                     .unwrap_or(1)
             });
         let mode = rule_mode.unwrap_or(match self.wm_mode {
-            WmMode::Tiling => WindowMode::Tiled,
-            WmMode::Floating => WindowMode::Floating,
+            WmMode::Tiling => ClientMode::tiled(),
+            WmMode::Floating => ClientMode::floating(),
         });
         let id = self.next_window;
         self.next_window += 1;
@@ -929,7 +927,7 @@ impl WindowManager {
         // Floating placement respects the work area (waybar/dock excluded),
         // not the raw output geometry, or windows spawn over panels.
         let floating_rect = match mode {
-            WindowMode::Floating => Some(self.floating_target(self.work_area.unwrap_or(geometry))),
+            m if m.placement == Placement::Floating => Some(self.floating_target(self.work_area.unwrap_or(geometry))),
             _ => None,
         };
         self.windows.insert(
@@ -1055,8 +1053,8 @@ impl WindowManager {
             return false;
         };
         let mode = match window.mode {
-            WindowMode::Fullscreen => WindowMode::Tiled,
-            _ => WindowMode::Fullscreen,
+            m if m.presentation == Presentation::Fullscreen => m.without_presentation(),
+            m => ClientMode::new(m.placement, Presentation::Fullscreen),
         };
         self.set_mode(id, mode)
     }
@@ -1070,12 +1068,12 @@ impl WindowManager {
         };
 
         match mode {
-            WindowMode::Maximized => {
+            m if m.presentation == Presentation::Maximized => {
                 // Restore the saved floating rect so the window returns to
                 // its previous position (Windows-like maximise/unmaximise).
                 if let Some(w) = self.windows.get_mut(&id)
                     && let Some(saved) = w.saved_rect.take() {
-                        w.mode = WindowMode::Floating;
+                        w.mode = w.mode.without_presentation();
                         w.target_rect = saved;
                         // Deliberately leave `rect` at the maximized size: it is
                         // the "already applied" marker apply_layout compares
@@ -1089,11 +1087,17 @@ impl WindowManager {
                 true
             }
             _ => {
-                // Save the current rect before maximizing so we can restore it.
+                // Save rect and placement before maximizing so both can be
+                // restored (e09s01: presentation must not overwrite placement).
+                let placement = self
+                    .windows
+                    .get(&id)
+                    .map(|w| w.mode.placement)
+                    .unwrap_or(Placement::Tiled);
                 if let Some(w) = self.windows.get_mut(&id) {
                     w.saved_rect = Some(w.target_rect);
                 }
-                self.set_mode(id, WindowMode::Maximized)
+                self.set_mode(id, ClientMode::new(placement, Presentation::Maximized))
             }
         }
     }
@@ -1243,7 +1247,7 @@ impl WindowManager {
         self.focus_workspace(output, target).then_some(target)
     }
 
-    pub fn set_mode(&mut self, id: WindowId, mode: WindowMode) -> bool {
+    pub fn set_mode(&mut self, id: WindowId, mode: ClientMode) -> bool {
         let Some(window) = self.windows.get_mut(&id) else {
             return false;
         };
@@ -1269,7 +1273,7 @@ impl WindowManager {
             .windows
             .iter()
             .filter_map(|id| self.windows.get(id))
-            .find(|window| matches!(window.mode, WindowMode::Fullscreen | WindowMode::Maximized));
+            .find(|window| matches!(window.mode.presentation, Presentation::Fullscreen | Presentation::Maximized));
         if let Some(window) = maximized {
             // Fullscreen takes the entire output. Maximized fills the work area
             // (respects waybar/quickshell exclusive zones) minus the outer gap,
@@ -1278,7 +1282,7 @@ impl WindowManager {
             // the entire window (borders + titlebar + surface) fits within
             // work_area minus the outer gap — the titlebar does not extend above
             // work_area and cover waybar/quickshell panels.
-            let rect = if matches!(window.mode, WindowMode::Fullscreen) {
+            let rect = if window.mode.presentation == Presentation::Fullscreen {
                 output_state.geometry
             } else {
                 let base = self.work_area.unwrap_or(output_state.geometry);
@@ -1302,7 +1306,7 @@ impl WindowManager {
             .windows
             .iter()
             .filter_map(|id| self.windows.get(id))
-            .filter(|window| window.mapped && window.mode == WindowMode::Tiled)
+            .filter(|window| window.mapped && window.mode.placement == Placement::Tiled && window.mode.presentation == Presentation::Normal)
             .map(|window| window.id)
             .collect();
 
@@ -1527,7 +1531,7 @@ pub fn equal_split(
 
 #[cfg(test)]
 mod tests {
-    use super::{Rect, TilingLayout, WindowManager, WindowMode, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation};
+    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation};
 
     fn manager() -> (WindowManager, u64) {
         let mut manager = WindowManager::new();
@@ -1575,10 +1579,10 @@ mod tests {
         let (mut manager, output) = manager();
         let tiled = manager.add_window(output, "kitty", "one").unwrap();
         let floating = manager.add_window(output, "kitty", "two").unwrap();
-        assert!(manager.set_mode(floating, WindowMode::Floating));
+        assert!(manager.set_mode(floating, ClientMode::floating()));
 
         assert_eq!(manager.window(tiled).unwrap().target_rect.width, 1916);
-        assert_eq!(manager.window(floating).unwrap().mode, WindowMode::Floating);
+        assert_eq!(manager.window(floating).unwrap().mode, ClientMode::floating());
     }
 
     #[test]
@@ -1650,11 +1654,11 @@ mod tests {
         assert_eq!(manager.window(second).unwrap().target_rect.width, 767);
 
         assert!(manager.toggle_fullscreen(second));
-        assert_eq!(manager.window(second).unwrap().mode, WindowMode::Fullscreen);
+        assert_eq!(manager.window(second).unwrap().mode, ClientMode::fullscreen());
         assert_eq!(manager.window(second).unwrap().target_rect.width, 1920);
 
         assert!(manager.toggle_fullscreen(second));
-        assert_eq!(manager.window(second).unwrap().mode, WindowMode::Tiled);
+        assert_eq!(manager.window(second).unwrap().mode, ClientMode::tiled());
         assert_eq!(manager.window(first).unwrap().target_rect.width, 1149);
     }
 
@@ -1759,10 +1763,10 @@ mod tests {
         manager.add_window_rule(WindowRule {
             app_id: "fuzzel".into(),
             workspace: None,
-            mode: Some(WindowMode::Floating),
+            mode: Some(ClientMode::floating()),
         });
         let id = manager.add_window(output, "fuzzel", "one").unwrap();
-        assert_eq!(manager.window(id).unwrap().mode, WindowMode::Floating);
+        assert_eq!(manager.window(id).unwrap().mode, ClientMode::floating());
     }
 
     // e08s01t3 — small work areas must not underflow floating placement.
@@ -1781,7 +1785,7 @@ mod tests {
         manager.add_window_rule(WindowRule {
             app_id: "fuzzel".into(),
             workspace: None,
-            mode: Some(WindowMode::Floating),
+            mode: Some(ClientMode::floating()),
         });
 
         // Must not panic, and the target must fit inside the tiny work area.
@@ -1798,11 +1802,11 @@ mod tests {
         manager.add_window_rule(WindowRule {
             app_id: "other".into(),
             workspace: Some(2),
-            mode: Some(WindowMode::Floating),
+            mode: Some(ClientMode::floating()),
         });
         let id = manager.add_window(output, "kitty", "one").unwrap();
         assert_eq!(manager.window(id).unwrap().workspace, 1); // default active workspace
-        assert_eq!(manager.window(id).unwrap().mode, WindowMode::Tiled); // default Hyprland mode
+        assert_eq!(manager.window(id).unwrap().mode, ClientMode::tiled()); // default Hyprland mode
     }
 
     #[test]
@@ -1810,8 +1814,8 @@ mod tests {
         let (mut manager, output) = manager();
         let first = manager.add_window(output, "kitty", "one").unwrap();
         let second = manager.add_window(output, "kitty", "two").unwrap();
-        manager.set_mode(first, WindowMode::Floating);
-        manager.set_mode(second, WindowMode::Floating);
+        manager.set_mode(first, ClientMode::floating());
+        manager.set_mode(second, ClientMode::floating());
         assert_eq!(manager.workspace(1).unwrap().windows, vec![first, second]);
         // focusing a floating window focuses it without reordering the stack,
         // so focus cycling keeps a stable order over all windows.
@@ -1859,11 +1863,13 @@ mod tests {
         let before = manager.window(window).unwrap().target_rect;
 
         assert!(manager.toggle_maximized(window));
-        assert_eq!(manager.window(window).unwrap().mode, WindowMode::Maximized);
+        assert_eq!(manager.window(window).unwrap().mode, ClientMode::maximized());
 
         assert!(manager.toggle_maximized(window));
         let w = manager.window(window).unwrap();
-        assert_eq!(w.mode, WindowMode::Floating);
+        // e09s01: unmaximizing preserves the original placement (Tiled here),
+        // rather than forcing Floating.
+        assert_eq!(w.mode, ClientMode::tiled());
         assert_eq!(w.target_rect, before);
     }
 
@@ -1871,7 +1877,7 @@ mod tests {
     fn toggle_maximized_restore_forces_size_configure() {
         let (mut manager, output) = manager();
         let window = manager.add_window(output, "kitty", "one").unwrap();
-        manager.set_mode(window, WindowMode::Floating);
+        manager.set_mode(window, ClientMode::floating());
         let original = Rect { x: 100, y: 100, width: 400, height: 300 };
         manager.set_window_rect(window, original);
         // The client acknowledged the original size (what apply_layout does).
@@ -1885,7 +1891,7 @@ mod tests {
 
         assert!(manager.toggle_maximized(window));
         let w = manager.window(window).unwrap();
-        assert_eq!(w.mode, WindowMode::Floating);
+        assert_eq!(w.mode, ClientMode::floating());
         assert_eq!(w.target_rect, original, "geometry returns to the saved rect");
         // BUG-2026-11-19T235000 (restore half): if apply_layout thinks the
         // geometry is already applied it sends no configure, so the frame
@@ -1966,7 +1972,7 @@ mod tests {
         let w1 = manager.add_window(output, "kitty", "one").unwrap();
         assert!(manager.add_workspace(output, 2, "two"));
         let w2 = manager.add_window(output, "kitty", "two").unwrap();
-        manager.set_mode(w2, WindowMode::Floating);
+        manager.set_mode(w2, ClientMode::floating());
         assert!(manager.move_window_to_workspace(w2, 2));
 
         manager.arrange_output(output);
