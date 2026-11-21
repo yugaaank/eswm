@@ -1162,6 +1162,16 @@ fn apply_decoration_to_wm(state: &mut State) {
 }
 
 // M5: push target rects to clients as xdg_toplevel size configures, then mark applied.
+/// XDG window-state flags for a WM mode, as `(maximized, fullscreen)`.
+/// e08s04t1: pure so configure-state policy is testable without a client.
+fn xdg_state_flags_for_mode(mode: wm::WindowMode) -> (bool, bool) {
+    match mode {
+        wm::WindowMode::Maximized => (true, false),
+        wm::WindowMode::Fullscreen => (false, true),
+        wm::WindowMode::Tiled | wm::WindowMode::Floating => (false, false),
+    }
+}
+
 pub(crate) fn apply_layout(state: &mut State) {
     apply_decoration_to_wm(state);
     // Refresh the dock entries cache (active + minimized windows on the active
