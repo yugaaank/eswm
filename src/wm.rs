@@ -2320,4 +2320,26 @@ mod tests {
         // window on the active workspace rather than clearing focus.
         assert_eq!(manager.focused_id(), Some(first));
     }
+
+    // e09s01t5 — presentation toggles preserve placement in both directions.
+    #[test]
+    fn presentation_toggles_preserve_floating_placement() {
+        let (mut manager, output) = manager();
+        let id = manager.add_window(output, "kitty", "one").unwrap();
+        manager.set_mode(id, ClientMode::floating());
+
+        manager.toggle_maximized(id);
+        let m = manager.window(id).unwrap().mode;
+        assert_eq!(m.placement, Placement::Floating);
+        assert_eq!(m.presentation, Presentation::Maximized);
+        manager.toggle_maximized(id);
+        assert_eq!(manager.window(id).unwrap().mode, ClientMode::floating());
+
+        manager.toggle_fullscreen(id);
+        let m = manager.window(id).unwrap().mode;
+        assert_eq!(m.placement, Placement::Floating);
+        assert_eq!(m.presentation, Presentation::Fullscreen);
+        manager.toggle_fullscreen(id);
+        assert_eq!(manager.window(id).unwrap().mode, ClientMode::floating());
+    }
 }
