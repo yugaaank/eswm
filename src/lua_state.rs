@@ -4,11 +4,46 @@
 // and query state — matching Hyprland's `hl.bind`, `hl.define_submap`, `hl.dsp.*`, `hl.config{}`.
 
 use std::sync::Arc;
+use std::collections::HashMap;
 use flume::Sender;
 use mlua::{Lua, Table};
 use xkbcommon::xkb;
 
 use crate::wm::{DecorationConfig, DockEntry, TilingLayout, WmMode};
+
+/// Display/input settings supplied by Lua config. Shared with the compositor
+/// via Arc<Mutex<_>> so setters take effect without reloading the config file.
+#[derive(Debug, Default, Clone)]
+pub struct InputConfig {
+    pub output_scales: HashMap<String, f64>,
+    pub keymap: Option<String>,
+    pub touchpad_tap: Option<bool>,
+    pub touchpad_natural_scroll: Option<bool>,
+    pub touchpad_speed: Option<f64>,
+}
+
+impl InputConfig {
+    pub fn set_output_scale(&mut self, name: &str, value: f64) -> bool {
+        if output_scale_for(value).is_none() {
+            return false;
+        }
+        self.output_scales.insert(name.to_string(), value);
+        true
+    }
+
+    pub fn output_scale(&self, name: &str) -> Option<smithay::output::Scale> {
+        self.output_scales.get(name).copied().and_then(output_scale_for)
+    }
+}
+
+/// Map a positive finite f64 to a smithay fractional Scale (e08s03t1).
+fn output_scale_for(value: f64) -> Option<smithay::output::Scale> {
+    if value.is_finite() && value > 0.0 {
+        Some(smithay::output::Scale::Fractional(value))
+    } else {
+        None
+    }
+}
 
 /// Initialize a new Lua state with the eswm config API pre-loaded.
 /// Registers `es` table with `bind`, `define_submap`, `dsp`, `config` submodules,
