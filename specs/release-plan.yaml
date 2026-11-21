@@ -66,7 +66,7 @@ epics:
     slug: panics-correctness
     title: Panics & Correctness
     wsjf_rank: 7
-    status: pending
+    status: completed
     stories: []
     description: |
       Fix panics (dock underflow, floating_target underflow, connector modes,
