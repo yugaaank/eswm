@@ -458,13 +458,14 @@ mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
 
-    fn test_api() -> (Lua, Arc<Mutex<Vec<Keybind>>>) {
+    fn test_api() -> (Lua, Arc<Mutex<Vec<Keybind>>>, Arc<Mutex<InputConfig>>) {
         let lua = init().expect("lua init");
         let snapshot = Arc::new(Mutex::new(crate::ipc::Snapshot::default()));
         let (cmd_tx, _cmd_rx) = flume::unbounded();
         let keybinds = Arc::new(Mutex::new(Vec::new()));
         let decoration = Arc::new(Mutex::new(DecorationConfig::default()));
         let dock_entries = Arc::new(Mutex::new(Vec::new()));
+        let input_config = Arc::new(Mutex::new(InputConfig::default()));
         register_api(
             &lua,
             snapshot,
@@ -472,14 +473,15 @@ mod tests {
             keybinds.clone(),
             decoration,
             dock_entries,
+            input_config.clone(),
         )
         .expect("register api");
-        (lua, keybinds)
+        (lua, keybinds, input_config)
     }
 
     #[test]
     fn keybind_parse_stores_xkb_keysym_case_insensitive() {
-        let (lua, keybinds) = test_api();
+        let (lua, keybinds, _input_config) = test_api();
         lua.load(r#"es.bind("Super+Return", "spawn_terminal")"#)
             .exec()
             .expect("bind return");
@@ -549,9 +551,42 @@ mod tests {
         assert!(config.output_scale("HDMI-A-1").is_none(), "unknown output");
     }
 
+    // e08s03t4 — es.dsp setters write into the shared config consumed by the
+    // compositor; invalid keymap/scales must not poison the config.
+    #[test]
+    fn keymap_config_setters_store_values() {
+        let (lua, _keybinds, input_config) = test_api();
+        lua.load(
+            r#"
+            es.dsp.set_output_scale("eDP-1", 2.0)
+            es.dsp.set_touchpad_tap(false)
+            es.dsp.set_touchpad_natural_scroll(true)
+            es.dsp.set_touchpad_speed(1.2)
+            es.dsp.set_keymap("xkb_keymap { };")
+            "#,
+        )
+        .exec()
+        .expect("setters");
+        let cfg = input_config.lock().unwrap();
+        assert_eq!(cfg.output_scale("eDP-1").map(|s| s.fractional_scale()), Some(2.0));
+        assert_eq!(cfg.touchpad_tap, Some(false));
+        assert_eq!(cfg.touchpad_natural_scroll, Some(true));
+        assert_eq!(cfg.touchpad_speed, Some(1.2));
+        assert_eq!(cfg.keymap.as_deref(), Some("xkb_keymap { };"));
+    }
+
+    #[test]
+    fn keymap_config_rejects_invalid_values() {
+        let (lua, _keybinds, input_config) = test_api();
+        assert!(lua.load(r#"es.dsp.set_keymap("")"#).exec().is_err());
+        assert!(lua.load(r#"es.dsp.set_output_scale("eDP-1", 0)"#).exec().is_err());
+        assert!(input_config.lock().unwrap().output_scales.is_empty());
+        assert!(input_config.lock().unwrap().keymap.is_none());
+    }
+
     #[test]
     fn keybind_parse_unknown_key_returns_lua_error() {
-        let (lua, keybinds) = test_api();
+        let (lua, keybinds, _input_config) = test_api();
         let err = lua
             .load(r#"es.bind("Super+NotARealKey_123", "spawn_terminal")"#)
             .exec()
