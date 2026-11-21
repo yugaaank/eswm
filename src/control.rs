@@ -304,7 +304,7 @@ fn window_json(window: &crate::wm::Window) -> Value {
         "workspace": window.workspace,
         "output": window.output,
         "mode": window.mode.mode_name(),
-        "mapped": window.mapped,
+        "mapped": window.mapped && !window.minimized,
         "focused": window.focused,
         "rect": rect_json(window.rect),
         "target_rect": rect_json(window.target_rect),

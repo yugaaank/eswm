@@ -137,6 +137,8 @@ pub struct Window {
     pub workspace: WorkspaceId,
     pub mode: ClientMode,
     pub mapped: bool,
+    /// Explicit user-minimized (hidden) state, independent of buffer presence.
+    pub minimized: bool,
     pub focused: bool,
     pub rect: Rect,
     pub target_rect: Rect,
@@ -740,7 +742,7 @@ impl WindowManager {
                 id: *id,
                 app_id: w.app_id.clone(),
                 title: w.title.clone(),
-                minimized: !w.mapped,
+                minimized: w.minimized,
                 focused: focused == Some(*id),
             })
             .collect();
@@ -810,7 +812,7 @@ impl WindowManager {
         }
         for id in ordered {
             let Some(window) = self.windows.get(&id) else { continue };
-            if !window.mapped || window.target_rect.width == 0 || window.target_rect.height == 0 {
+            if !window.mapped || window.minimized || window.target_rect.width == 0 || window.target_rect.height == 0 {
                 continue;
             }
             let r = window.target_rect;
@@ -855,7 +857,7 @@ impl WindowManager {
         }
         for id in ordered {
             let Some(window) = self.windows.get(&id) else { continue };
-            if !window.mapped {
+            if !window.mapped || window.minimized {
                 continue;
             }
             // Hit test against target_rect expanded by border size (border is part of window)
@@ -940,6 +942,7 @@ impl WindowManager {
                 workspace,
                 mode,
                 mapped: true,
+                minimized: false,
                 focused: false,
                 rect: Rect::default(),
                 target_rect: floating_rect.unwrap_or_default(),
@@ -1108,7 +1111,7 @@ impl WindowManager {
     /// unmapped windows so the invisible window won't interrupt focus cycling.
     /// When restoring a non-focused minimized window, it receives focus.
     pub fn toggle_minimize(&mut self, id: WindowId) -> bool {
-        let (output, workspace, was_focused, was_mapped) = {
+        let (output, workspace, was_focused, was_minimized) = {
             let Some(window) = self.windows.get(&id) else {
                 return false;
             };
@@ -1116,18 +1119,18 @@ impl WindowManager {
                 window.output,
                 window.workspace,
                 window.focused,
-                window.mapped,
+                window.minimized,
             )
         };
 
         if let Some(window) = self.windows.get_mut(&id) {
-            window.mapped = !window.mapped;
+            window.minimized = !window.minimized;
         }
 
-        if was_focused && was_mapped {
+        if was_focused && !was_minimized {
             // Minimizing the focused window: keep focus on it (invisible now).
             // Super+M again restores it since focused_id() still returns it.
-        } else if !was_focused && !was_mapped {
+        } else if !was_focused && was_minimized {
             // Restoring a non-focused minimized window: give it focus.
             self.clear_focus_on_output(output);
             if let Some(ws) = self.workspaces.get_mut(&workspace) {
@@ -1137,7 +1140,7 @@ impl WindowManager {
                 }
             }
         }
-        // was_focused && !was_mapped: restoring a focused minimized window —
+        // was_focused && was_minimized: restoring a focused minimized window —
         // focus stays on it, nothing to do.
 
         self.dirty = true;
@@ -1158,7 +1161,7 @@ impl WindowManager {
         // Restore from minimized state if needed.
         if !was_mapped
             && let Some(w) = self.windows.get_mut(&id) {
-                w.mapped = true;
+                w.minimized = false;
             }
 
         self.focus_window(id);
@@ -1306,7 +1309,7 @@ impl WindowManager {
             .windows
             .iter()
             .filter_map(|id| self.windows.get(id))
-            .filter(|window| window.mapped && window.mode.placement == Placement::Tiled && window.mode.presentation == Presentation::Normal)
+            .filter(|window| window.mapped && !window.minimized && window.mode.placement == Placement::Tiled && window.mode.presentation == Presentation::Normal)
             .map(|window| window.id)
             .collect();
 
@@ -1414,7 +1417,7 @@ impl WindowManager {
             .windows
             .iter()
             .copied()
-            .filter(|id| self.windows.get(id).map(|w| w.mapped).unwrap_or(false))
+            .filter(|id| self.windows.get(id).map(|w| w.mapped && !w.minimized).unwrap_or(false))
             .collect();
         if windows.is_empty() {
             return false;

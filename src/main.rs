@@ -285,7 +285,7 @@ pub(crate) fn placed_windows(state: &mut State) -> Vec<(WlSurface, i32, i32, wm:
             let Some(window) = state.wm.window(id) else {
                 continue;
             };
-            if !window.mapped || window.target_rect.width == 0 {
+            if !window.mapped || window.minimized || window.target_rect.width == 0 {
                 continue;
             }
             let target_rect = window.target_rect;
