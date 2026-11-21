@@ -2131,4 +2131,39 @@ mod tests {
             "empty input region must accept no pointer events"
         );
     }
+
+    // e09s01t1 — placement and presentation are independent axes.
+    #[test]
+    fn client_mode_keeps_placement_across_presentation() {
+        let mode = ClientMode::new(Placement::Floating, Presentation::Maximized);
+        assert_eq!(mode.placement, Placement::Floating);
+        assert_eq!(mode.presentation, Presentation::Maximized);
+        let normal = mode.without_presentation();
+        assert_eq!(normal.placement, Placement::Floating);
+        assert_eq!(normal.presentation, Presentation::Normal);
+    }
+
+    #[test]
+    fn client_mode_xdg_flags_follow_presentation_only() {
+        assert_eq!(
+            ClientMode::new(Placement::Tiled, Presentation::Maximized).xdg_state_flags(),
+            (true, false)
+        );
+        assert_eq!(
+            ClientMode::new(Placement::Floating, Presentation::Fullscreen).xdg_state_flags(),
+            (false, true)
+        );
+        assert_eq!(
+            ClientMode::new(Placement::Tiled, Presentation::Normal).xdg_state_flags(),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn client_mode_name_matches_legacy_window_mode_names() {
+        assert_eq!(ClientMode::new(Placement::Tiled, Presentation::Normal).mode_name(), "tiled");
+        assert_eq!(ClientMode::new(Placement::Floating, Presentation::Normal).mode_name(), "floating");
+        assert_eq!(ClientMode::new(Placement::Tiled, Presentation::Maximized).mode_name(), "maximized");
+        assert_eq!(ClientMode::new(Placement::Tiled, Presentation::Fullscreen).mode_name(), "fullscreen");
+    }
 }
