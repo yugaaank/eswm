@@ -3442,4 +3442,58 @@ mod tests {
         assert!(matches!(release, FilterResult::Forward));
     }
 
+    // e08s01t1 — dock segment/layout math must never underflow or panic,
+    // including absurdly small docks and many windows. Integers are
+    // surprisingly good at finding the floor when nobody gives them a handrail.
+    #[test]
+    fn dock_segment_layout_never_underflows_for_edge_sizes() {
+        for dock_h in 0..=10i32 {
+            for n in 1..=20u32 {
+                let total_w = 1920i32;
+                let seg_w = total_w / n as i32;
+                for i in 0..n {
+                    let w = if i == n.saturating_sub(1) {
+                        total_w.saturating_sub(seg_w * (n.saturating_sub(1) as i32))
+                    } else {
+                        seg_w
+                    };
+                    let (seg_w_in, seg_h) = dock_inner_size(w, dock_h);
+                    let layout = dock_segment_layout(seg_w_in, seg_h);
+                    // Offsets and glyph geometry must stay inside the segment.
+                    if layout.scale > 0 {
+                        assert!(layout.offset_x + layout.glyph_width <= seg_w_in);
+                        assert!(layout.offset_y + layout.glyph_height <= seg_h);
+                    }
+                    assert!(layout.scale <= 3);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn dock_inner_size_clamps_to_zero_for_tiny_docks() {
+        assert_eq!(dock_inner_size(1, 0), (0, 0));
+        assert_eq!(dock_inner_size(1, 1), (0, 0));
+        assert_eq!(dock_inner_size(1, 2), (0, 1));
+        assert_eq!(dock_inner_size(100, 7), (98, 6));
+        assert_eq!(dock_inner_size(-5, -5), (0, 0));
+    }
+
+    #[test]
+    fn dock_segment_layout_keeps_hint_scale_in_bounds() {
+        // Normal-size segment: scale clamps to 3 and glyph fits.
+        let l = dock_segment_layout(60, 40);
+        assert_eq!(l.scale, 3);
+        assert_eq!(l.glyph_width, 15);
+        assert_eq!(l.glyph_height, 21);
+        assert!(l.offset_x + l.glyph_width <= 60);
+        assert!(l.offset_y + l.glyph_height <= 40);
+
+        // Tiny segment: scale collapses to 0, no glyph drawn, no underflow.
+        let tiny = dock_segment_layout(2, 1);
+        assert_eq!(tiny.scale, 0);
+        assert_eq!(tiny.glyph_width, 0);
+        assert_eq!(tiny.glyph_height, 0);
+    }
+
 }
