@@ -537,7 +537,8 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
     );
     
     // Create renderer for the primary GPU (used for dmabuf formats)
-    let renderer = udev.gpus.single_renderer(&primary_for_dmabuf).unwrap();
+    // e08s01t5: propagate a renderer failure through init instead of panicking.
+    let renderer = udev.gpus.single_renderer(&primary_for_dmabuf)?;
 
     // init dmabuf support with format list from the first GPU with hw acceleration
     let dmabuf_formats = renderer.dmabuf_formats();
@@ -1841,7 +1842,15 @@ impl State {
             SUPPORTED_FORMATS
         };
         let target = render_node.unwrap_or(self.udev.as_ref().unwrap().primary_gpu);
-        let mut renderer = self.udev.as_mut().unwrap().gpus.single_renderer(&target).unwrap();
+        // e08s01t5: a renderer failure here is a device-add failure, not a
+        // compositor-wide panic. Propagate it through the existing error path.
+        let mut renderer = self
+            .udev
+            .as_mut()
+            .unwrap()
+            .gpus
+            .single_renderer(&target)
+            .map_err(|err| DeviceAddError::Renderer(err.to_string()))?;
         let render_formats = renderer
             .as_mut()
             .egl_context()
@@ -1885,9 +1894,15 @@ impl State {
         };
 
         let render_node = device.render_node.unwrap_or(primary_gpu);
-        let mut renderer = udev.gpus.single_renderer(&render_node).unwrap();
-
         let output_name = format!("{}-{}", connector.interface().as_str(), connector.interface_id());
+        // e08s01t5: keep a dead GPU from taking down the whole compositor.
+        let mut renderer = match udev.gpus.single_renderer(&render_node) {
+            Ok(renderer) => renderer,
+            Err(err) => {
+                warn!(?err, ?render_node, "renderer unavailable, skipping connector {output_name}");
+                return;
+            }
+        };
         info!(?crtc, "trying to setup connector {output_name}");
 
         let drm_device = device.drm_output_manager.device();
@@ -2375,12 +2390,20 @@ impl State {
 
         let _time_ms = now(self); // must precede the mutable udev borrow below
         let udev = self.udev.as_mut().unwrap();
-        let mut renderer = if primary_gpu == render_node {
+        // e08s01t5: renderer acquisition can fail (GPU reset, device hotplug).
+        // Panicking here took down the compositor on every frame; log and skip
+        // this frame instead so the retry timer can try again later.
+        let mut renderer = match if primary_gpu == render_node {
             udev.gpus.single_renderer(&render_node)
         } else {
             udev.gpus.renderer(&primary_gpu, &render_node, format_needed)
-        }
-        .unwrap();
+        } {
+            Ok(renderer) => renderer,
+            Err(err) => {
+                warn!(?err, ?node, ?crtc, "renderer acquisition failed, skipping frame");
+                return false;
+            }
+        };
         tracing::debug!("render debug2: output_mode={:?} scale={:?} mode_size={:?} pointer=({:.0},{:.0}) cursor_buffer={}",
             mode_size.map(|s| (s.w, s.h)),
             output.current_scale(),
@@ -3156,6 +3179,7 @@ enum DeviceAddError {
     AddNode(egl::Error),
     NoRenderNode,
     PrimaryGpuMissing,
+    Renderer(String),
 }
 
 #[cfg(test)]
