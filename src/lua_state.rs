@@ -434,6 +434,34 @@ mod tests {
         assert_eq!(kbs[1].keysym, xkbcommon::xkb::keysyms::KEY_r);
     }
 
+    // e08s03t1 — per-output scale mapping: invalid values must never reach
+    // Output::change_current_state (Scale::Fractional(NaN) would poison layout).
+    #[test]
+    fn output_scale_maps_positive_float_to_fractional() {
+        let scale = output_scale_for(2.0).expect("valid scale");
+        assert_eq!(scale.fractional_scale(), 2.0);
+    }
+
+    #[test]
+    fn output_scale_rejects_non_positive_and_non_finite() {
+        assert!(output_scale_for(0.0).is_none());
+        assert!(output_scale_for(-1.0).is_none());
+        assert!(output_scale_for(f64::NAN).is_none());
+        assert!(output_scale_for(f64::INFINITY).is_none());
+    }
+
+    #[test]
+    fn output_scale_config_stores_and_looks_up_by_name() {
+        let mut config = InputConfig::default();
+        assert!(config.set_output_scale("eDP-1", 2.0));
+        assert!(!config.set_output_scale("eDP-1", 0.0), "invalid scale rejected");
+        assert_eq!(
+            config.output_scale("eDP-1").map(|s| s.fractional_scale()),
+            Some(2.0)
+        );
+        assert!(config.output_scale("HDMI-A-1").is_none(), "unknown output");
+    }
+
     #[test]
     fn keybind_parse_unknown_key_returns_lua_error() {
         let (lua, keybinds) = test_api();
