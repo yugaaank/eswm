@@ -2258,4 +2258,23 @@ mod tests {
             "close without a toplevel must not remove the WM window"
         );
     }
+
+    // e08s02t5 — CSD clients declare a window geometry offset; missing
+    // geometry must map to zero, not to garbage.
+    #[test]
+    fn csd_geometry_none_maps_to_zero_offset() {
+        assert_eq!(window_geometry_offset(None), (0, 0));
+    }
+
+    #[test]
+    fn csd_geometry_maps_window_geometry_origin() {
+        let geo = Rectangle::new((12, 34).into(), (100, 50).into());
+        assert_eq!(window_geometry_offset(Some(geo)), (12, 34));
+    }
+
+    #[test]
+    fn csd_geometry_negative_origin_is_preserved() {
+        let geo = Rectangle::new((-8, -16).into(), (100, 50).into());
+        assert_eq!(window_geometry_offset(Some(geo)), (-8, -16));
+    }
 }
