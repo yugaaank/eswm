@@ -494,6 +494,24 @@ pub(crate) fn sync_window_input_region(state: &mut State, surface: &WlSurface) {
 }
 
 
+/// How the render loop should draw the pointer for a client's cursor status.
+/// e08s03t3: keeps the Hidden/Named/Surface policy out of the render loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CursorRenderDecision {
+    Hide,
+    XcursorFallback,
+    ClientSurface,
+}
+
+fn cursor_render_decision(status: &smithay::input::pointer::CursorImageStatus) -> CursorRenderDecision {
+    use smithay::input::pointer::CursorImageStatus;
+    match status {
+        CursorImageStatus::Hidden => CursorRenderDecision::Hide,
+        CursorImageStatus::Named(_) => CursorRenderDecision::XcursorFallback,
+        CursorImageStatus::Surface(_) => CursorRenderDecision::ClientSurface,
+    }
+}
+
 /// Map a client's xdg_surface window geometry to the WM's xdg_offset.
 /// e08s02t5: render position is `target_rect - xdg_offset`, so the offset is
 /// the window-geometry origin relative to the surface origin.
