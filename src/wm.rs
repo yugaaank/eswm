@@ -1686,6 +1686,33 @@ mod tests {
         assert_eq!(manager.window(id).unwrap().mode, WindowMode::Floating);
     }
 
+    // e08s01t3 — small work areas must not underflow floating placement.
+    // In debug builds `600u32 - 640u32` panics; in release it wraps into a
+    // gigantic offset. Neither is a place anyone wants to put a window.
+    #[test]
+    fn floating_target_no_underflow_on_small_work_area() {
+        let mut manager = WindowManager::new();
+        manager.set_outer(0);
+        manager.set_inner(0);
+        let output = manager.add_output(
+            "small",
+            Rect { x: 0, y: 0, width: 600, height: 400 },
+        );
+        manager.work_area = Some(Rect { x: 0, y: 0, width: 600, height: 400 });
+        manager.add_window_rule(WindowRule {
+            app_id: "fuzzel".into(),
+            workspace: None,
+            mode: Some(WindowMode::Floating),
+        });
+
+        // Must not panic, and the target must fit inside the tiny work area.
+        let id = manager.add_window(output, "fuzzel", "menu").expect("floating window");
+        let r = manager.window(id).unwrap().target_rect;
+        assert!(r.width <= 600 && r.height <= 400, "floating target must fit work area, got {r:?}");
+        assert!(r.width > 0 && r.height > 0, "floating target must have area");
+        assert!(r.x >= 0 && r.y >= 0, "floating target must stay on screen, got {r:?}");
+    }
+
     #[test]
     fn window_rule_no_match_keeps_default() {
         let (mut manager, output) = manager();
