@@ -1194,11 +1194,15 @@ pub(crate) fn apply_layout(state: &mut State) {
         // frame, which triggers damage tracking and constant re-rendering —
         // the primary cause of rendering lag when windows are open.
         let rect_changed = target_valid && window.rect != target;
-        if !rect_changed && !needs_activation {
+        // e08s04t3: a mode change must reach the client even when the rect is
+        // unchanged (e.g. maximize into an already-full-sized window).
+        let mode_changed = window.mode_sent != Some(window.mode);
+        if !rect_changed && !needs_activation && !mode_changed {
             continue;
         }
         if let Some(toplevel) = toplevel_for_window(state, id) {
             tracing::debug!("configuring window id={id:?} -> {}x{} at {},{}", target.width, target.height, target.x, target.y);
+            let (maximized, fullscreen) = xdg_state_flags_for_mode(window.mode);
             toplevel.with_pending_state(|st| {
                 if target_valid {
                     st.size = Some((target.width.max(1) as i32, target.height.max(1) as i32).into());
@@ -1208,12 +1212,23 @@ pub(crate) fn apply_layout(state: &mut State) {
                 } else {
                     st.states.unset(xdg_toplevel::State::Activated);
                 }
+                if maximized {
+                    st.states.set(xdg_toplevel::State::Maximized);
+                } else {
+                    st.states.unset(xdg_toplevel::State::Maximized);
+                }
+                if fullscreen {
+                    st.states.set(xdg_toplevel::State::Fullscreen);
+                } else {
+                    st.states.unset(xdg_toplevel::State::Fullscreen);
+                }
             });
             toplevel.send_pending_configure();
             if rect_changed {
                 state.wm.set_rect(id, target);
             }
             state.wm.set_activated_sent(id, window.focused);
+            state.wm.set_mode_sent(id, window.mode);
         }
     }
     // e06s03: keep wl_keyboard focus in sync with state changes via policy,
@@ -2364,5 +2379,20 @@ mod tests {
     fn xdg_state_flags_other_modes_clear_both() {
         assert_eq!(xdg_state_flags_for_mode(wm::WindowMode::Tiled), (false, false));
         assert_eq!(xdg_state_flags_for_mode(wm::WindowMode::Floating), (false, false));
+    }
+
+    // e08s04t3 — the configure-needed check depends on mode_sent; verify the
+    // marker follows mode transitions (a real xdg client fixture is unavailable).
+    #[test]
+    fn apply_layout_mode_sent_tracks_mode_transitions() {
+        let mut state = test_state();
+        let output_id = state.wm.primary_output_id().unwrap();
+        let id = state.wm.add_window(output_id, "app", "App").unwrap();
+        assert_eq!(state.wm.window(id).unwrap().mode_sent, None);
+        state.wm.set_mode_sent(id, wm::WindowMode::Maximized);
+        assert_eq!(state.wm.window(id).unwrap().mode_sent, Some(wm::WindowMode::Maximized));
+        // A transition to a different mode changes the marker again.
+        state.wm.set_mode_sent(id, wm::WindowMode::Fullscreen);
+        assert_eq!(state.wm.window(id).unwrap().mode_sent, Some(wm::WindowMode::Fullscreen));
     }
 }
