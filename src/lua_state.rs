@@ -485,6 +485,35 @@ mod tests {
         assert!(output_scale_for(f64::INFINITY).is_none());
     }
 
+    // e08s03t2 — touchpad settings fall back to the current hardcoded values
+    // when config leaves them unset; keymap rejects empty input.
+    #[test]
+    fn touchpad_config_defaults_match_previous_hardcoded_values() {
+        let resolved = resolve_touchpad(&InputConfig::default());
+        assert_eq!(resolved.tap, true);
+        assert_eq!(resolved.natural_scroll, false);
+        assert!((resolved.speed - 0.7).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn touchpad_config_overrides_are_honored() {
+        let mut config = InputConfig::default();
+        config.touchpad_tap = Some(false);
+        config.touchpad_natural_scroll = Some(true);
+        config.touchpad_speed = Some(1.2);
+        let resolved = resolve_touchpad(&config);
+        assert_eq!(resolved.tap, false);
+        assert_eq!(resolved.natural_scroll, true);
+        assert!((resolved.speed - 1.2).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn keymap_config_rejects_empty_and_accepts_text() {
+        assert!(!validate_keymap(""));
+        assert!(!validate_keymap("   \n "));
+        assert!(validate_keymap("xkb_keymap { };"));
+    }
+
     #[test]
     fn output_scale_config_stores_and_looks_up_by_name() {
         let mut config = InputConfig::default();
