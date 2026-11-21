@@ -23,8 +23,9 @@ phases:
   manual:
     passed: false
     pending: true
-    reason: "t7 manual UAT on live DRM (F11/maximize/restore preserve placement; MRU focus across outputs) requires operator."
+    reason: "t7 manual UAT on live DRM (F11/maximize/restore preserve placement; MRU focus across outputs) requires operator. Operator attempted app checks but hit a pre-existing cross-GPU dmabuf import bug (Helium blank window, Wordcraft content spill); see BUG-2026-11-21-DMABUF-IMPORT. UAT of placement/MRU behavior still pending."
     automated_proxy: "client_mode, focus_mru, minimized_state, xdg_state_flags tests + presentation_toggles guard."
+    discovered_defect: "BUG-2026-11-21-DMABUF-IMPORT.md (open; separate fix-bug work)."
   security_scan:
     skipped: true
     reason: "No security-sensitive changes (security: none on all tasks)"
