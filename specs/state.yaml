@@ -17,7 +17,7 @@ git:
   branch: main
   hash: "4dd0b72"
 handoff:
-  last_step_completed: "plan-work complete for e09s01: ClientMode Copy struct + mapped/minimized split + single focus/MRU; e09 split confirmed (s05 = toplevel ownership/requests/rules). instantWM analysis docs saved."
+  last_step_completed: "develop-tdd complete for e09s01 automated tasks (t1-t6 passing, 151 tests, warning-free); manual UAT t7 pending operator; verification evidence recorded."
   open_decisions:
     - "bug-2026-11-17t141711 remains open (low): master-mode single-window border breaks at bottom in src/udev.rs"
     - "Manual UAT (live DRM session) for e08s01 pending operator: tiny dock, 600x400 floating spawn, empty-mode connector warning, ContextLost exit status 1"
@@ -36,7 +36,7 @@ handoff:
     - specs/epics/e09-design-decisions/epic.yaml
     - specs/epics/e09-design-decisions/e09s01-window-state-model.md
     - specs/epics/e09-design-decisions/e09s01-tasks.yaml
-  next_skill: develop-tdd
+  next_skill: verify-work
 decisions:
   - story: BUG-2026-11-17T00:30:00
     note: "Freeze/stutter fix closed via validate-fix: five stacked defects (unconditional re-render, empty frames treated as failed paints, dmabuf on the idle dGPU, callbacks on two clocks, and a dropped frame callback deadlocking the client). Final fix 02f57d2; diagnostics now blame wait time rather than the existence of work (be0f2bd); PointerMotionAbsolute now requests a redraw (6922ccc). Operator confirmed on the DRM session."

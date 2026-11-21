@@ -1,0 +1,40 @@
+story_id: e09s01
+verified_at: "2026-11-22T20:00:00Z"
+verifier: develop-tdd
+risk: P2
+phases:
+  branch_check:
+    passed: true
+    branch: e09s01-client-mode
+  preflight:
+    passed: true
+    command: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
+  task_verification:
+    t1: {command: "cargo test --bin eswm client_mode", passed: true, result: "3 passed"}
+    t2: {command: "cargo build", passed: true, result: "72 WindowMode usages migrated; WindowMode removed"}
+    t3: {command: "cargo test --bin eswm minimized_state", passed: true, result: "1 passed"}
+    t4: {command: "cargo test --bin eswm focus_mru", passed: true, result: "2 passed"}
+    t5: {command: "cargo test --bin eswm xdg_state_flags", passed: true, result: "2 passed (main) + placement preservation guard in wm.rs"}
+    t6: {command: "cargo clippy --all-targets && cargo test --bin eswm && cargo build", passed: true, result: "151 passed, warning-free"}
+  terminal_verdict:
+    command: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
+    exit_code: 0
+    note: "Single contiguous run: clippy 0 warnings, 151 passed, build 0."
+  manual:
+    passed: false
+    pending: true
+    reason: "t7 manual UAT on live DRM (F11/maximize/restore preserve placement; MRU focus across outputs) requires operator."
+    automated_proxy: "client_mode, focus_mru, minimized_state, xdg_state_flags tests + presentation_toggles guard."
+  security_scan:
+    skipped: true
+    reason: "No security-sensitive changes (security: none on all tasks)"
+  blind_spot_check:
+    skipped: true
+    reason: "scripts/check-blind-spots.sh not present"
+  gaps:
+    closed: false
+    notes:
+      - "Manual UAT (t7) pending operator; not waived by operator for this story."
+      - "Window.focused bool kept as a derived mirror of WindowManager.focused to limit blast radius; authoritative focus is the global Option. A later cleanup story may remove the mirror entirely."
+      - "mapped remains true from creation until e09s05 registers windows on first commit with accurate buffer presence."
+      - "t5 implementation landed during t2 migration; t5 test is the regression guard."

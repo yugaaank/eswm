@@ -13,7 +13,7 @@ stories:
     title: "Window state model: split WindowMode into layout + state flags"
     bcps: 2
     delta: MODIFIED
-    status: pending
+    status: completed
   - id: e09s02
     title: "Output model: position, scale, work area, LayerMap per output; focused output"
     bcps: 2
