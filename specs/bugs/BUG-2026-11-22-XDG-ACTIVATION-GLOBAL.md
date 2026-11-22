@@ -127,4 +127,10 @@ protocol implementations in `main.rs`.
 
 ## Resolution
 
-<!-- filled in by validate-fix -->
+**Fixed:** 2026-11-22
+**Root cause confirmed:** eswm never constructed `XdgActivationState`, so the `xdg_activation_v1` global did not exist and clients had no way to mint an activation token.
+**Fix applied:** Added `activation_state` to `State`, created it in `new_state()`, added `delegate_xdg_activation!(State)`, and implemented `XdgActivationHandler` to focus the toplevel matching the activated surface. Tokens older than 10 s and tokens for untracked surfaces are rejected.
+**Hardening added:** A pure `activation_token_is_fresh(age)` replay guard, tested at 0 s/9 s/11 s; tokens are removed from the pool on use so they cannot be replayed.
+**Evidence:** `cargo test --bin eswm activation` → 3 passed; `cargo test` → 176 passed; `cargo clippy --all-targets` and `cargo build` clean. A real Wayland client test proves the global is advertised and that `token.done` arrives. Defect-class sweep recorded in `specs/verifications/generalize-sweep-BUG-2026-11-22-XDG-ACTIVATION-GLOBAL.json`.
+**Commit:** `f97bc08 fix(wayland): advertise xdg_activation_v1 and honor activation requests`
+**Remaining:** Confirm in the live launchers that `spawn.log` no longer logs `Unable to mint xdg activation token` (operator UAT; launchers run in the DRM session).

@@ -1,0 +1,20 @@
+{
+  "defect_class": "missing-wayland-global-for-client-capability",
+  "description": "A smithay protocol state is never constructed/registered, so clients cannot bind its global and emit capability warnings even though the compositor otherwise looks healthy.",
+  "grep_pattern": "::new::<State>(dh)|delegate_[a-z_]*!\\(State\\)",
+  "match_count": 1,
+  "sweep_scope": "src/main.rs new_state() + delegate block; ~/.local/state/eswm/spawn.log client warnings",
+  "patched_in_pr": [
+    "src/main.rs:1112 — XdgActivationState::new::<State>(dh) now registers xdg_activation_v1",
+    "src/main.rs:1538 — delegate_xdg_activation!(State) supplies dispatch impls"
+  ],
+  "tracked_issues": [],
+  "evidence": {
+    "protocol_states_with_globals": 9,
+    "delegate_macros": 12,
+    "unpaired_states_after_fix": 0,
+    "client_log_corroboration": "23 'Unable to mint xdg activation token' lines plus one 'glfw error 65544: Wayland: activation requests not supported by this Wayland compositor' — all the same missing global",
+    "other_missing_global_warnings": "none found in spawn.log"
+  },
+  "verification_script": "not present in eswm repo; sweep recorded manually from grep and log output above"
+}

@@ -357,28 +357,39 @@ bug-2026-11-22t133134-xdg-activation:
   title: Clients cannot mint xdg activation tokens
   severity: low
   priority: p3
-  status: open
+  status: fixed
   reported_by: log_analysis
   date: "2026-11-22T13:31:26+05:30"
   scope: wayland
-  security_impact: none
+  security_impact: low
   files:
     - src/main.rs
+    - specs/bugs/BUG-2026-11-22-XDG-ACTIVATION-GLOBAL.md
   description: |
     Spawn log repeatedly reports "Unable to mint xdg activation token to
-    launch ..." for deckcraft and helium. eswm does not advertise the
-    xdg_activation_v1 global, so clients fall back to unactivated launches.
+    launch ..." for deckcraft, helium and other apps. eswm did not advertise
+    the xdg_activation_v1 global, so clients fell back to unactivated launches.
   what_expected: |
-    Compositor advertises xdg_activation_v1 or the launch path supplies a token
-    so client windows arrive with proper focus/activation semantics.
+    Compositor advertises xdg_activation_v1 so client windows arrive with
+    proper focus/activation semantics.
   steps_to_reproduce:
     - Launch deckcraft or Helium on eswm.
     - Grep spawn.log for 'Unable to mint xdg activation token'.
   root_cause: |
-    No xdg_activation_v1 global is registered with the Wayland display.
+    No xdg_activation_v1 global was registered with the Wayland display;
+    smithay 0.7 already ships the implementation, it was never wired in.
+  approach: |
+    Create XdgActivationState in new_state, delegate its dispatch, and handle
+    activation by focusing the toplevel matching the requested surface. Reject
+    tokens older than 10 s and untracked surfaces.
+  risk_level: low
+  files_changed:
+    - src/main.rs
+  commit_message: "fix(wayland): advertise xdg_activation_v1 and honor activation requests"
+  hardening: "pure 10-second token freshness guard plus single-use token removal, both covered by tests"
   verify: |
     cargo clippy --all-targets; cargo test --bin eswm; cargo build;
-    launch a client and confirm no activation-token warning in spawn.log.
+    launch a client and confirm no activation-token warning in spawn.log (operator UAT).
 
 
 bug-2026-11-22t143000-spec-lint-bookkeeping:

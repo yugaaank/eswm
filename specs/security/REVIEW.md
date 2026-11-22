@@ -1,4 +1,37 @@
-# Security Review — current: BUG-2026-11-22-DOUBLE-BIND-WL-DISPLAY
+# Security Review — current: BUG-2026-11-22-XDG-ACTIVATION-GLOBAL
+
+**Branch:** `fix-xdg-activation-global` (`main..HEAD`)
+**Date:** 2026-11-22
+**Risk:** P3 (per bug registry)
+**Security impact:** LOW — adds a wayland protocol surface, guarded against token replay.
+
+## Scope
+- `src/main.rs`: `XdgActivationState` created in `new_state`, stored on `State`,
+  `delegate_xdg_activation!(State)`, and `XdgActivationHandler` with a 10-second
+  freshness check and single-use token removal.
+- `specs/bugs/*`, `specs/state.yaml`, `specs/verifications/*`: RCA, resolution,
+  sweep evidence, cycle tracking.
+
+## Findings
+- **HIGH (≥8 confidence):** none.
+- **MEDIUM:** none.
+- **LOW:** activation is a focus-changing capability. A client can request focus
+  for a surface it knows; this is the protocol's intended behavior. Mitigated by
+  rejecting tokens older than 10 s, removing tokens after use, and requiring the
+  surface to map to an existing tracked toplevel. No new network, credentials,
+  filesystem writes, or data exposure.
+
+## Notes
+- The defect class is a missing protocol global, not a trust-boundary bypass.
+- Live launcher UAT (no more `Unable to mint xdg activation token` in
+  `spawn.log`) remains operator-only; it is a correctness gate, not a security
+  finding.
+
+**Verdict:** PASS (no unresolved HIGH findings). No exceptions required.
+
+---
+
+# Security Review — BUG-2026-11-22-DOUBLE-BIND-WL-DISPLAY
 
 **Branch:** `fix-double-bind-wl-display` (`main..HEAD`)
 **Date:** 2026-11-22
