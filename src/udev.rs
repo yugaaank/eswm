@@ -141,6 +141,10 @@ pub struct UdevData {
     pub session: LibSeatSession,
     pub primary_gpu: DrmNode,
     pub dmabuf_primary_gpu: DrmNode, // first GPU with hw accel; clients allocate here
+    /// Per-GPU format tables already queried for dmabuf feedback, ordered
+    /// scanout-first. Used to prove which GPU owns an imported buffer's
+    /// exact format+modifier before setting a node hint (AB24 bug).
+    dmabuf_sources: Vec<(DrmNode, FormatSet)>,
     pub gpus: GpuManager<GbmGlesBackend<GlesRenderer, DrmDeviceFd>>,
     pub backends: HashMap<DrmNode, BackendData>,
     pub dmabuf_state: Option<(DmabufState, DmabufGlobal)>,
@@ -257,23 +261,21 @@ impl DmabufHandler for State {
     }
 
     fn dmabuf_imported(&mut self, _global: &DmabufGlobal, dmabuf: Dmabuf, notifier: ImportNotifier) {
-        // BUG-2026-11-21-DMABUF-IMPORT: do NOT force the node hint to the
-        // scanout GPU. Clients on hybrid systems allocate on another device;
-        // forcing the node makes smithay import on the wrong EGL context and
-        // produces `eglCreateImageKHR ... BAD_MATCH`. Leaving `node` unset
-        // lets the buffer tell us where it was born — no GPU gaslighting.
-        // lets smithay's multi-GPU importer discover the source at render time
-        // and copy through a linear buffer when required.
         use smithay::backend::allocator::Buffer as _;
         let format = dmabuf.format();
+        // BUG-2026-11-21-DMABUF-IMPORT: never force the scanout GPU. The hint
+        // must come from a GPU's own format table, not its job title — a
+        // guessed hint is a blind date between NVIDIA buffers and Intel EGL.
+        // BUG-2026-11-22-AB24-IMPORT-NODE-HINT: an exact format+modifier match
+        // is the evidence; anything unknown keeps smithay's try-all path.
+        let hint = dmabuf_source_node(&format, &self.udev.as_ref().unwrap().dmabuf_sources);
+        if let Some(node) = hint {
+            dmabuf.set_node(node);
+        }
         // "Imported" is a commitment, not a promise: EGLImage can still reject
         // this buffer at render time. Like a horoscope, it only sounds certain.
         // Live evidence: specs/verifications/uat-2026-11-22-live-drm.md.
-        debug!(
-            ?format,
-            node = ?dmabuf.node(),
-            "dmabuf imported (accepting without node hint)"
-        );
+        debug!(?format, node = ?dmabuf.node(), "dmabuf imported");
         let _ = notifier.successful::<State>();
     }
 }
@@ -344,6 +346,7 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         session,
         primary_gpu,
         dmabuf_primary_gpu: primary_gpu, // will be updated after hw accel detection
+        dmabuf_sources: Vec::new(),
         gpus: GpuManager::new(GbmGlesBackend::with_context_priority(ContextPriority::High))?,
         backends: HashMap::new(),
         dmabuf_state: None,
@@ -585,6 +588,14 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|node| udev.gpus.single_renderer(&node).ok())
         .map(|r| r.dmabuf_formats())
         .unwrap_or_default();
+    // BUG-2026-11-22-AB24-IMPORT-NODE-HINT: keep these tables for import
+    // decisions instead of throwing them away after building the tranches.
+    // Scanout first, so a shared Linear format resolves without a GPU copy.
+    let mut sources = vec![(primary_for_dmabuf, dmabuf_formats.clone())];
+    if let Some(node) = render_gpu {
+        sources.push((node, render_formats.clone()));
+    }
+    udev.dmabuf_sources = sources;
     let (scanout_tranche, render_tranche) =
         dmabuf_feedback_formats(&dmabuf_formats, &render_formats, cross_device);
     let mut builder = DmabufFeedbackBuilder::new(primary_for_dmabuf.dev_id(), dmabuf_formats.clone());
