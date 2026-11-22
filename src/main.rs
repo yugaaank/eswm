@@ -831,6 +831,7 @@ impl CompositorHandler for State {
                         self.wm.note_oversize_commit(id);
                         crate::apply_layout(self);
                     }
+                    wm::OversizeAction::ResetBudget => self.wm.clear_oversize(id),
                     _ => {}
                 }
             }

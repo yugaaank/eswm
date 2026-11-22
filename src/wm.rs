@@ -188,12 +188,15 @@ pub enum OversizeAction {
 }
 
 pub fn oversize_action(target: Rect, buffer: (u32, u32), attempts: u8) -> OversizeAction {
+    // The retry budget finally has a backbone, unlike my New Year's resolutions.
     if buffer.0 > target.width || buffer.1 > target.height {
         if attempts < MAX_OVERSIZE_CONFIGURES {
             OversizeAction::Resend
         } else {
             OversizeAction::None
         }
+    } else if attempts > 0 {
+        OversizeAction::ResetBudget
     } else {
         OversizeAction::None
     }
