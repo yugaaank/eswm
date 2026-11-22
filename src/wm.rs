@@ -187,9 +187,13 @@ pub enum OversizeAction {
     None,
 }
 
-pub fn oversize_action(target: Rect, buffer: (u32, u32), _attempts: u8) -> OversizeAction {
+pub fn oversize_action(target: Rect, buffer: (u32, u32), attempts: u8) -> OversizeAction {
     if buffer.0 > target.width || buffer.1 > target.height {
-        OversizeAction::Resend
+        if attempts < MAX_OVERSIZE_CONFIGURES {
+            OversizeAction::Resend
+        } else {
+            OversizeAction::None
+        }
     } else {
         OversizeAction::None
     }
