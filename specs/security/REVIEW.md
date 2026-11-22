@@ -1,4 +1,38 @@
-# Security Review — current: BUG-2026-11-22-AB24-IMPORT-NODE-HINT
+# Security Review — current: BUG-2026-11-22-DRM-RESTORE-PERMISSION
+
+**Branch:** `fix-drm-restore-permission` (`7683b44..HEAD`)
+**Date:** 2026-11-22
+**Risk:** P3 (per bug registry)
+**Security impact:** NONE
+
+## Scope
+- `src/udev.rs`: add a private `Quiesce` seam and generic `quiesce_all` helper;
+  call `DrmOutputManager::pause()` on every backend after the event loop and
+  before `state` drops, unless the libseat session is already paused.
+- `specs/bugs/*`, `specs/verifications/*`, `specs/state.yaml`: RCA, TDD
+  evidence, defect-class sweep, verification record, and handoff.
+
+## Findings
+- **HIGH (≥8 confidence):** none.
+- **MEDIUM/LOW:** none identified.
+- No secrets, credentials, network access, auth checks, new dependencies, or
+  new filesystem writes. The only runtime change is skipping an ioctl that
+  could not succeed in an unprivileged session during process teardown.
+
+## Notes
+- The change removes an ERROR log line by removing the failing operation, not
+  by suppressing diagnostics or weakening a check. No trust boundary moves.
+- `DrmDevice::pause()` releases DRM master when held; that is the canonical
+  teardown sequence. The `session_paused` guard avoids a second release on a
+  privileged session, which would otherwise introduce a new ERROR.
+- Live DRM quit remains an operator-gated verification gap (VT-grab
+  constraint), recorded in the verification record — not a security finding.
+
+**Verdict:** PASS (no unresolved HIGH findings). No exceptions required.
+
+---
+
+# Security Review — BUG-2026-11-22-AB24-IMPORT-NODE-HINT
 
 **Branch:** `fix-ab24-import-node-hint` (`9ee6cf6..HEAD`)
 **Date:** 2026-11-22
