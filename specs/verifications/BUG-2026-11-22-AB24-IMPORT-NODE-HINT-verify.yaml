@@ -1,0 +1,178 @@
+bug_id: BUG-2026-11-22-AB24-IMPORT-NODE-HINT
+verified_at: "2026-11-22T10:45:00Z"
+verifier: verify-work
+branch: fix-ab24-import-node-hint
+risk: P3
+scope: automated-green-driver-proof-ab24-end-to-end-reproduced-clean
+gates:
+  preflight:
+    passed: true
+    commands:
+      - cargo clippy --all-targets
+      - cargo test
+      - cargo build
+  terminal_verdict:
+    command: "cargo clippy --all-targets && cargo test && cargo build"
+    exit_code: 0
+    captured_at: "2026-11-22T10:02:00Z"
+    note: >-
+      Single contiguous run; stdout/stderr saved to
+      /tmp/opencode/ab24-verify-terminal.log (sha256
+      298db5929e553cc3d7c47134e456c6fb33f46f6fc92cb8a2241ee93a7bc2e5dd).
+      clippy_exit=0, test_exit=0, build_exit=0, 179 tests passed.
+  targeted_tests:
+    passed: true
+    command: "cargo test --bin eswm dmabuf_source_node"
+    result: "3 passed"
+    tests:
+      - dmabuf_source_node_prefers_the_gpu_with_the_exact_modifier
+      - dmabuf_source_node_leaves_unproven_buffers_unhinted
+      - dmabuf_source_node_resolves_shared_linear_formats_to_scanout
+  red_green_discipline:
+    passed: true
+    red_commit: 87d48e2
+    red_evidence: "4 x E0425 cannot find function dmabuf_source_node"
+    green_commits: [b24492e, 9629c43]
+    note: >-
+      scripts/verify-tdd-red-commit.sh and scripts/bp-timing.sh do not exist in
+      this repo; the two-commit gate was enforced with git log and the RED
+      compiler output instead.
+  security_review:
+    passed: true
+    high_findings: 0
+    report: specs/security/REVIEW.md
+  defect_class_sweep:
+    passed: true
+    report: specs/verifications/generalize-sweep-BUG-2026-11-22-AB24-IMPORT-NODE-HINT.json
+    result: "1 guarded set_node call site, 0 unguarded hints"
+  unavailable_repo_scripts:
+    - scripts/check-blind-spots.sh
+    - scripts/lib/completeness-critic.sh
+    - scripts/verify-adversarial.sh
+    - scripts/bp-read-agents.sh
+    - scripts/verify-tdd-red-commit.sh
+    - scripts/bp-timing.sh
+driver_table_proof:
+  passed: true
+  method: >-
+    Direct eglQueryDmaBufFormatsEXT / eglQueryDmaBufModifiersEXT probe against
+    every /dev/dri node from this session (no TTY or VT grab). Throwaway probe at
+    /tmp/opencode/ab24_probe.c; query is read-only on the driver's advertised
+    format tables.
+  ab24_modifier_under_test: "0x300000000606014 (vendor 3 = NVIDIA)"
+  results:
+    - node: renderD128 / card1 (Intel scanout)
+      ab24: present
+      target_modifier: "NOT found (only vendor-1 Intel modifiers 0x0, 0x1000...)"
+    - node: renderD129 / card0 (NVIDIA)
+      ab24: present
+      target_modifier: "FOUND at mod[4] of 13 NVIDIA modifiers"
+  conclusion: >-
+    Only the NVIDIA GPU advertises AB24 with the baseline's NVIDIA modifier.
+    dmabuf_sources retains both GPUs' full FormatSets (scanout first), so an
+    AB24 buffer with this modifier can match only the NVIDIA source.
+    dmabuf_source_node therefore returns the NVIDIA node and the import is
+    routed to NVIDIA EGL first, where it succeeds without a BAD_MATCH on Intel.
+    This is the exact causal chain the fix repairs; it does not depend on the
+    client reallocating the buffer during UAT.
+hardware_uat:
+  status: passed_ab24_end_to_end_reproduced_clean
+  sessions:
+    - at: "15:37 IST"
+      debug_lines: 0
+      ab24_buffers: 0
+      bad_match: 0
+      eglimage_errors: 0
+      note: "RUST_LOG=debug did not take effect; no import detail available."
+    - at: "15:39 IST"
+      debug_lines: 6817
+      ab24_buffers: 0
+      bad_match: 0
+      eglimage_errors: 0
+      ar24_imports: "47, all node=Some(dev 57984 renderD128)"
+      note: "Hint path proven live: old build logged node=None here."
+    - at: "15:41 IST"
+      debug_lines: 4658
+      ab24_buffers: 0
+      bad_match: 0
+      eglimage_errors: 0
+      note: "App grid attempted; no AB24 allocated."
+    - at: "15:46 IST"
+      debug_lines: 4315
+      ab24_buffers: 0
+      bad_match: 0
+      eglimage_errors: 0
+      xdg_activation: 1
+      note: "Nautilus launched from terminal (not GIO grid path)."
+    - at: "15:50 IST"
+      debug_lines: 2643
+      ab24_buffers: 0
+      bad_match: 0
+      eglimage_errors: 0
+      note: "Grid never opened; zero toplevels."
+    - at: "16:07 IST"
+      toplevels: 4
+      ab24_buffers: 0
+      bad_match: 0
+      note: >-
+        Launcher sent Nautilus to Hyprland (wayland-1), not eswm (eswm-test),
+        because the launcher inherits the wrong WAYLAND_DISPLAY. This is why
+        AB24 never appeared in the 5 client-driven runs.
+  deterministic_ab24_reproduction:
+    status: passed
+    at: "16:11 IST"
+    method: >-
+      Throwaway Wayland client (/tmp/opencode/ab24_client.c) allocated an AB24
+      GBM BO on renderD129 (NVIDIA) with the exact baseline modifier, then
+      submitted it via wp_linux_dmabuf_v1.create_immed. smithay fires
+      dmabuf_imported at create_immed time, exercising the exact fixed path.
+      Auto-injected via /tmp/opencode/ab24_watch_and_inject.sh on eswm socket
+      appearance; no launcher/keybind dependency.
+    buffer:
+      fourcc: AB24
+      modifier: "216172782120099860 (0x300000000606014)"
+      source_node: "/dev/dri/renderD129 (NVIDIA, vendor 0x10de)"
+    observed_log_lines: 2
+    imported_node: >-
+      node=Some(DrmNode { dev: 57856, ty: Primary }) -- dev 57856 = major 226
+      minor 0 = /dev/dri/card0, vendor 0x10de = NVIDIA. Correct GPU.
+    bad_match: 0
+    eglimage_errors: 0
+    import_failures: 0
+    evidence_log: /tmp/opencode/ab24-final-clean.log
+    evidence_sha256: 863ad7f5a4078237f5d2a80c16d3998e298777ff739f14a0a8c5e32bd7fb5127
+    contrast: >-
+      Same code and modifier as the 15:12 baseline which produced 6 BAD_MATCH,
+      6 EGLImage errors and node=None; now node=Some(NVIDIA) with zero errors.
+  steps_confirmed:
+    - step: "Start fixed build from TTY with RUST_LOG=debug."
+      passed: true
+    - step: "Import buffers with node hints set."
+      passed: true
+      evidence: "AR24/XR24 imports all node=Some(renderD128); old build node=None"
+    - step: "Zero BAD_MATCH / EGLImage / Failed to import surface ERROR lines."
+      passed: true
+    - step: "AB24/NVIDIA-modifier buffer imported under fixed binary."
+      passed: true
+      evidence: >-
+        Deterministic injection at 16:11 IST: AB24 modifier 0x300000000606014
+        imported with node=Some(card0/NVIDIA), zero BAD_MATCH/EGLImage errors.
+        See deterministic_ab24_reproduction above.
+  baseline_for_comparison:
+    source: ~/.local/state/eswm/eswm.log (15:12 IST session)
+    bad_match: 6
+    eglimage_errors: 6
+    eglimage_not_supported: 1
+    import_failures: 0
+    ab24_buffers: 3
+  only_remaining_errors: >-
+    2 x "Failed to restore previous state. Permission denied" on card0/card1,
+    tracked by BUG-2026-11-22-DRM-RESTORE-PERMISSION, out of scope.
+verdict: >-
+  All automated gates, security review, defect-class sweep, direct driver-table
+  proof, and end-to-end AB24 reproduction pass. The 15:12 baseline buffer (AB24,
+  modifier 0x300000000606014, node=None, 6 BAD_MATCH + 6 EGLImage errors) now
+  imports as node=Some(card0/NVIDIA) with zero errors under the fixed binary.
+  The 5 client-driven runs could not recreate the buffer because the launcher
+  sent it to Hyprland, not eswm; the deterministic injection closed that gap.
+  BUG is fully verified; ready to close and merge.

@@ -22,7 +22,7 @@ use smithay::{
             dmabuf::Dmabuf,
             format::FormatSet,
             gbm::{GbmAllocator, GbmBufferFlags, GbmDevice},
-            Fourcc, Modifier,
+            Format, Fourcc, Modifier,
         },
         drm::{
             compositor::{FrameError, FrameFlags},
@@ -141,6 +141,10 @@ pub struct UdevData {
     pub session: LibSeatSession,
     pub primary_gpu: DrmNode,
     pub dmabuf_primary_gpu: DrmNode, // first GPU with hw accel; clients allocate here
+    /// Per-GPU format tables already queried for dmabuf feedback, ordered
+    /// scanout-first. Used to prove which GPU owns an imported buffer's
+    /// exact format+modifier before setting a node hint (AB24 bug).
+    dmabuf_sources: Vec<(DrmNode, FormatSet)>,
     pub gpus: GpuManager<GbmGlesBackend<GlesRenderer, DrmDeviceFd>>,
     pub backends: HashMap<DrmNode, BackendData>,
     pub dmabuf_state: Option<(DmabufState, DmabufGlobal)>,
@@ -257,23 +261,21 @@ impl DmabufHandler for State {
     }
 
     fn dmabuf_imported(&mut self, _global: &DmabufGlobal, dmabuf: Dmabuf, notifier: ImportNotifier) {
-        // BUG-2026-11-21-DMABUF-IMPORT: do NOT force the node hint to the
-        // scanout GPU. Clients on hybrid systems allocate on another device;
-        // forcing the node makes smithay import on the wrong EGL context and
-        // produces `eglCreateImageKHR ... BAD_MATCH`. Leaving `node` unset
-        // lets the buffer tell us where it was born — no GPU gaslighting.
-        // lets smithay's multi-GPU importer discover the source at render time
-        // and copy through a linear buffer when required.
         use smithay::backend::allocator::Buffer as _;
         let format = dmabuf.format();
+        // BUG-2026-11-21-DMABUF-IMPORT: never force the scanout GPU. The hint
+        // must come from a GPU's own format table, not its job title — a
+        // guessed hint is a blind date between NVIDIA buffers and Intel EGL.
+        // BUG-2026-11-22-AB24-IMPORT-NODE-HINT: an exact format+modifier match
+        // is the evidence; anything unknown keeps smithay's try-all path.
+        let hint = dmabuf_source_node(&format, &self.udev.as_ref().unwrap().dmabuf_sources);
+        if let Some(node) = hint {
+            dmabuf.set_node(node);
+        }
         // "Imported" is a commitment, not a promise: EGLImage can still reject
         // this buffer at render time. Like a horoscope, it only sounds certain.
         // Live evidence: specs/verifications/uat-2026-11-22-live-drm.md.
-        debug!(
-            ?format,
-            node = ?dmabuf.node(),
-            "dmabuf imported (accepting without node hint)"
-        );
+        debug!(?format, node = ?dmabuf.node(), "dmabuf imported");
         let _ = notifier.successful::<State>();
     }
 }
@@ -344,6 +346,7 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         session,
         primary_gpu,
         dmabuf_primary_gpu: primary_gpu, // will be updated after hw accel detection
+        dmabuf_sources: Vec::new(),
         gpus: GpuManager::new(GbmGlesBackend::with_context_priority(ContextPriority::High))?,
         backends: HashMap::new(),
         dmabuf_state: None,
@@ -585,6 +588,14 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|node| udev.gpus.single_renderer(&node).ok())
         .map(|r| r.dmabuf_formats())
         .unwrap_or_default();
+    // BUG-2026-11-22-AB24-IMPORT-NODE-HINT: keep these tables for import
+    // decisions instead of throwing them away after building the tranches.
+    // Scanout first, so a shared Linear format resolves without a GPU copy.
+    let mut sources = vec![(primary_for_dmabuf, dmabuf_formats.clone())];
+    if let Some(node) = render_gpu {
+        sources.push((node, render_formats.clone()));
+    }
+    udev.dmabuf_sources = sources;
     let (scanout_tranche, render_tranche) =
         dmabuf_feedback_formats(&dmabuf_formats, &render_formats, cross_device);
     let mut builder = DmabufFeedbackBuilder::new(primary_for_dmabuf.dev_id(), dmabuf_formats.clone());
@@ -1064,6 +1075,19 @@ fn choose_dmabuf_gpu(
     scanout
         .or_else(|| hw_accel.first().copied())
         .unwrap_or(fallback)
+}
+
+/// Pick the GPU whose own format table proves it can import `format`.
+///
+/// `sources` is ordered scanout-first, so a format advertised by two GPUs
+/// (usually Linear) resolves to the scanout device and needs no copy. Unknown
+/// formats return `None` and keep smithay's try-all path: a node hint is a
+/// strong claim, not a guess.
+fn dmabuf_source_node<N: Copy>(format: &Format, sources: &[(N, FormatSet)]) -> Option<N> {
+    sources
+        .iter()
+        .find(|(_, formats)| formats.contains(format))
+        .map(|(node, _)| *node)
 }
 
 /// Formats for the dmabuf feedback tranches (BUG-2026-11-21-DMABUF-IMPORT).
@@ -3486,7 +3510,6 @@ enum DeviceAddError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use smithay::backend::allocator::Format;
 
     #[test]
     fn idle_frame_skips_render_timer() {
@@ -4006,6 +4029,57 @@ mod tests {
         let (scanout_formats, render_tranche) = dmabuf_feedback_formats(&formats, &formats, false);
         assert_eq!(scanout_formats.iter().count(), 0);
         assert_eq!(render_tranche.iter().count(), 0);
+    }
+
+    // BUG-2026-11-22-AB24-IMPORT-NODE-HINT — a device hint is only allowed
+    // when a GPU's own format table proves it can import the exact buffer.
+    #[test]
+    fn dmabuf_source_node_prefers_the_gpu_with_the_exact_modifier() {
+        let ab24_nvidia = Format {
+            code: Fourcc::Abgr8888,
+            modifier: Modifier::from(0x300000000606014),
+        };
+        let ar24_intel = Format {
+            code: Fourcc::Abgr8888,
+            modifier: Modifier::from(0x100000000000008),
+        };
+        let scanout: FormatSet = [ar24_intel].into_iter().collect();
+        let nvidia: FormatSet = [ab24_nvidia].into_iter().collect();
+        let sources = [(0u32, scanout), (1u32, nvidia)];
+
+        assert_eq!(dmabuf_source_node(&ab24_nvidia, &sources), Some(1));
+        assert_eq!(dmabuf_source_node(&ar24_intel, &sources), Some(0));
+    }
+
+    #[test]
+    fn dmabuf_source_node_leaves_unproven_buffers_unhinted() {
+        let unknown = Format {
+            code: Fourcc::Abgr8888,
+            modifier: Modifier::from(0x3000deadbeef),
+        };
+        let scanout: FormatSet = [Format {
+            code: Fourcc::Abgr8888,
+            modifier: Modifier::Linear,
+        }]
+        .into_iter()
+        .collect();
+
+        assert_eq!(dmabuf_source_node(&unknown, &[(0u32, scanout)]), None);
+    }
+
+    #[test]
+    fn dmabuf_source_node_resolves_shared_linear_formats_to_scanout() {
+        let linear = Format {
+            code: Fourcc::Abgr8888,
+            modifier: Modifier::Linear,
+        };
+        let scanout: FormatSet = [linear].into_iter().collect();
+        let other: FormatSet = [linear].into_iter().collect();
+
+        assert_eq!(
+            dmabuf_source_node(&linear, &[(0u32, scanout), (1u32, other)]),
+            Some(0)
+        );
     }
 
 }

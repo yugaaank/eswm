@@ -1,0 +1,24 @@
+{
+  "defect_class": "device-hint-set-from-role-instead-of-proven-format-support",
+  "description": "A cross-GPU dmabuf import hint is either forced to a device by its role (earlier bug) or omitted entirely (this bug), so a buffer whose modifier belongs to one GPU is offered first to an incompatible EGL context and logs BAD_MATCH at ERROR level.",
+  "grep_pattern": "set_node\\(|node = \\?dmabuf\\.node\\(\\)|dmabuf_sources",
+  "match_count": 1,
+  "sweep_scope": "src/udev.rs: all dmabuf import, feedback and GPU selection paths; live session logs 15:10 and 15:12 IST",
+  "patched_in_pr": [
+    "src/udev.rs:591 — retain per-GPU FormatSets in UdevData, ordered scanout-first",
+    "src/udev.rs:1087 — pure dmabuf_source_node resolves exact format+modifier to a GPU",
+    "src/udev.rs:271 — dmabuf_imported sets the hint only on an exact match"
+  ],
+  "tracked_issues": [
+    "BUG-2026-11-21-DMABUF-IMPORT — same defect class, opposite direction (forced scanout hint); its feedback tranches are unchanged by this fix"
+  ],
+  "evidence": {
+    "set_node_call_sites_after_fix": 1,
+    "unguarded_hint_assignments": 0,
+    "per_gpu_format_tables_retained": "scanout primary + one render GPU (the two devices present on the hybrid laptop)",
+    "unknown_format_behavior": "None -> smithay try-all path, matching the pre-fix behavior exactly",
+    "log_baseline_15_10": "0 AB24 imports, 0 BAD_MATCH, 0 EGLImage errors",
+    "log_finding_15_12": "3 AB24 imports with NVIDIA modifier 0x300000000606014, 6 BAD_MATCH, 6 EGLImage errors, 0 Failed to import surface"
+  },
+  "verification_script": "not present in eswm repo; sweep recorded manually from grep output and retained session logs"
+}
