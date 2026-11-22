@@ -282,33 +282,44 @@ bug-2026-11-22t123500:
 
 bug-2026-11-22t080129-double-bind:
   id: BUG-2026-11-22-DOUBLE-BIND-WL-DISPLAY
-  title: Wayland display bound twice on one physical GPU at startup
+  title: Wayland display bound twice at startup
   severity: low
   priority: p2
-  status: open
+  status: fixed
   reported_by: log_analysis
   date: "2026-11-22T13:31:26+05:30"
   scope: drm
   security_impact: none
   files:
     - src/udev.rs
+    - specs/bugs/BUG-2026-11-22-DOUBLE-BIND-WL-DISPLAY.md
   description: |
     On the hybrid-GPU laptop, startup reports "Double bind_wl_display,
     smithay does not support this, please report" while enabling hardware
-    acceleration. Both card0 and renderD129 belong to the same physical GPU
-    but are treated as separate candidates because their DRM device ids differ.
-    The second bind on a shared EGL display is not supported by smithay.
+    acceleration. card0 (minor 0) and renderD129 (minor 129, card1's render
+    node) are different physical GPUs; the warning comes from smithay's
+    process-global EGLBufferReader being bound a second time.
   what_expected: |
-    Bind the Wayland display at most once per physical GPU; no smithay warning.
+    Bind the Wayland display at most once per process; no smithay warning.
   steps_to_reproduce:
     - Start eswm on the hybrid-GPU laptop with RUST_LOG=debug.
     - Grep eswm.log for 'Double bind_wl_display' and 'trying GPU'.
   root_cause: |
-    Candidate deduplication keys on (dev_id, node type), which cannot collapse
-    a primary node and its render node when the driver reports different ids.
+    The DRM setup loop called bind_wl_display once per candidate GPU. Smithay
+    0.7.0 guards a process-global EGLBufferReader and warns on a second
+    successful bind, regardless of which physical GPU is involved.
+  approach: |
+    Extract a pure bind_wl_display_once helper that keeps trying while binds
+    fail and stops at the first success, retaining every renderer-capable GPU
+    for cross-GPU dmabuf format advertising.
+  risk_level: low
+  files_changed:
+    - src/udev.rs
+  commit_message: "fix(udev): bind the Wayland display at most once"
+  hardening: "pure one-bind invariant helper with four behavioral tests"
   verify: |
     cargo clippy --all-targets; cargo test --bin eswm; cargo build;
-    live DRM startup with no 'Double bind_wl_display' warning.
+    live DRM startup with no 'Double bind_wl_display' warning (operator UAT).
 
 bug-2026-11-22t080159-drm-restore:
   id: BUG-2026-11-22-DRM-RESTORE-PERMISSION

@@ -11,8 +11,8 @@ epic_cycle:
   next_skill: null
   completed_steps: []
 bug_cycle:
-  current_step: 3
-  completed_steps: [1, 2]
+  current_step: 5
+  completed_steps: [1, 2, 3, 4]
 git:
   branch: main
   hash: "77ee71f"
@@ -37,7 +37,7 @@ handoff:
     - specs/epics/e09-design-decisions/epic.yaml
     - specs/epics/e09-design-decisions/e09s01-window-state-model.md
     - specs/epics/e09-design-decisions/e09s01-tasks.yaml
-  next_skill: validate-fix
+  next_skill: release-branch
 decisions:
   - story: BUG-2026-11-21-DMABUF-IMPORT
     note: "Operator UAT 2026-11-22 13:41 IST: 'stale pixels are gone, commit and merge into main'. Stale-pixel gate for the e08adfa damage/opaque fix confirmed; explicit merge instruction overrides the earlier full-UAT landing gate. 13:31 log corroborates: 0 BAD_MATCH/EGLImage/import failures, 3 bounded re-sends, 0 queue errors. Helium/Wordcraft/CSD/t7 checks remain unconfirmed in specs/verifications/."

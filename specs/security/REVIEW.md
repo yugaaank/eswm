@@ -1,4 +1,35 @@
-# Security Review — current: e08s04 (window state flags)
+# Security Review — current: BUG-2026-11-22-DOUBLE-BIND-WL-DISPLAY
+
+**Branch:** `fix-double-bind-wl-display` (`main..HEAD`)
+**Date:** 2026-11-22
+**Risk:** P2 (per bug registry)
+**Security impact:** NONE
+
+## Scope
+- `src/udev.rs`: new pure `bind_wl_display_once` helper; DRM setup loop now
+  attempts the process-global wl_drm bind at most once.
+- `specs/bugs/*`, `specs/state.yaml`, `specs/verifications/*`: RCA correction,
+  resolution, sweep evidence, cycle tracking.
+
+## Findings
+- **HIGH (≥8 confidence):** none.
+- **MEDIUM/LOW:** none identified.
+- The change touches local GPU initialization only. No untrusted input, no
+  network surface, no credentials, no new filesystem writes, and no protocol
+  exposure changes. The wl_drm global is still advertised exactly as before.
+
+## Notes
+- The previous bug hypothesis (physical-GPU dedup) was falsified by minor
+  numbers; the verified root cause is a process-global EGL reader. No security
+  consequence either way.
+- Live DRM startup UAT remains operator-only; it is a correctness gate, not a
+  security finding.
+
+**Verdict:** PASS (no unresolved HIGH findings). No exceptions required.
+
+---
+
+# Security Review — e08s04 (window state flags)
 
 **Branch:** `e08s04-state-flags` (`main..HEAD`)
 **Date:** 2026-11-22
