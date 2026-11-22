@@ -1,7 +1,7 @@
-active_flow: idle
+active_flow: fix_bug
 active_epic_id: null
 active_story_id: null
-active_bug_id: null
+active_bug_id: BUG-2026-11-22-XDG-ACTIVATION-GLOBAL
 release:
   target_version: null
   last_tag: null
@@ -11,11 +11,11 @@ epic_cycle:
   next_skill: null
   completed_steps: []
 bug_cycle:
-  current_step: 0
-  completed_steps: []
+  current_step: 3
+  completed_steps: [1, 2]
 git:
   branch: main
-  hash: "dcb78b6"
+  hash: "432be41"
 handoff:
   last_step_completed: "BUG-2026-11-22-DOUBLE-BIND-WL-DISPLAY landed on main as dcb78b6: RCA corrected (smithay's EGLBufferReader is process-global; card0 and renderD129 are different GPUs), one-bind helper + 4 tests, 173 tests/clippy/build green, defect-class sweep logged, live DRM UAT pending operator. CI unverified per operator skip. Previous: BUG-2026-11-22-OVERSIZE-RETRY-CAP + BUG-2026-11-21-DMABUF-IMPORT: retry cap fixed (3 re-sends/window), render-time ClippedSurfaceElement added for Craft overflow (b831a9a/e28fc09), damage/opaque clipped-coordinate fix via clip_local_region with TDD (9da9625/5fbbb7b, 0ecc6c9, 94594ac/e08adfa). 169 tests + clippy + build green. Operator UAT at 13:41 IST: 'stale pixels are gone, commit and merge into main' — stale-pixel gate confirmed and merge explicitly authorized. Craft border fit, CSD offset, Helium content and e09s01 t7 checks were not explicitly reconfirmed; recorded as unconfirmed, not waived. Landed on main as merge commit 60529b2; 169 tests + clippy + build green on main. CI unverified per operator skip."
   open_decisions:
@@ -37,7 +37,7 @@ handoff:
     - specs/epics/e09-design-decisions/epic.yaml
     - specs/epics/e09-design-decisions/e09s01-window-state-model.md
     - specs/epics/e09-design-decisions/e09s01-tasks.yaml
-  next_skill: survey-context
+  next_skill: develop-tdd
 decisions:
   - story: BUG-2026-11-21-DMABUF-IMPORT
     note: "Operator UAT 2026-11-22 13:41 IST: 'stale pixels are gone, commit and merge into main'. Stale-pixel gate for the e08adfa damage/opaque fix confirmed; explicit merge instruction overrides the earlier full-UAT landing gate. 13:31 log corroborates: 0 BAD_MATCH/EGLImage/import failures, 3 bounded re-sends, 0 queue errors. Helium/Wordcraft/CSD/t7 checks remain unconfirmed in specs/verifications/."
