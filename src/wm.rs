@@ -2078,6 +2078,17 @@ mod tests {
     }
 
     #[test]
+    fn oversize_action_never_resets_an_oversized_commit() {
+        let target = Rect { x: 0, y: 0, width: 800, height: 600 };
+        for attempts in 0..=MAX_OVERSIZE_CONFIGURES + 1 {
+            assert_ne!(
+                oversize_action(target, (1024, 768), attempts),
+                OversizeAction::ResetBudget
+            );
+        }
+    }
+
+    #[test]
     fn oversize_action_checks_each_size_boundary() {
         let target = Rect { x: 0, y: 0, width: 800, height: 600 };
         assert_eq!(oversize_action(target, (0, 0), 0), OversizeAction::None);
