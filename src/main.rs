@@ -810,6 +810,29 @@ impl CompositorHandler for State {
             });
             let offset = window_geometry_offset(geometry);
             self.wm.set_window_xdg_offset(id, offset);
+
+            // BUG-2026-11-21-DMABUF-IMPORT (bug B): Electron/Chromium can commit
+            // a default-sized buffer before honouring the size we configured,
+            // letting content spill past the frame. If the buffer is bigger than
+            // the target rect, ask again (bounded retries). A fitting commit
+            // resets the budget.
+            let buffer_size = with_renderer_surface_state(surface, |state| state.buffer_size())
+                .flatten()
+                .map(|size| (size.w.max(0) as u32, size.h.max(0) as u32));
+            if let (Some(buffer), Some(window)) = (buffer_size, self.wm.window(id)) {
+                let target = window.target_rect;
+                let attempts = window.oversize_configures;
+                if wm::commit_exceeds_target(target, buffer, attempts) {
+                    tracing::info!(
+                        "client committed {}x{} > configured {}x{}; re-sending size",
+                        buffer.0, buffer.1, target.width, target.height
+                    );
+                    self.wm.note_oversize_commit(id);
+                    crate::apply_layout(self);
+                } else if attempts > 0 {
+                    self.wm.clear_oversize(id);
+                }
+            }
         }
         // Popup lifecycle evidence: log the map/unmap transition so a run from
         // a TTY proves whether the client actually attached a buffer.

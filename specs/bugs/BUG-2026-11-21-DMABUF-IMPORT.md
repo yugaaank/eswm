@@ -45,14 +45,43 @@ Two independent bugs, both confirmed by code inspection:
 
 **Bug A — forced node hint kills cross-GPU import.** `dmabuf_imported` (udev.rs:257-270) imports each buffer on `single_renderer(&dmabuf_primary_gpu)` (Intel) and then calls `dmabuf.set_node(Intel)` unconditionally. Clients allocate on NVIDIA; smithay's `import_on_src_node` (multigpu/mod.rs:2105-2112) trusts that node hint and calls `eglCreateImageKHR` on the Intel EGL context with an NVIDIA modifier → `BAD_MATCH`. Because `dmabuf_primary_gpu == render_node` (both Intel), `render_surface` (udev.rs:2508) always takes the **single-renderer** branch; the multi-GPU copy renderer is never constructed. There is also no `add_preference_tranche` call anywhere — feedback advertises only Intel formats, no render tranche and no `TrancheFlags::Scanout` (contrast instantWM's `build_output_dmabuf_feedback`, two tranches + per-surface `select_dmabuf_feedback`).
 
-**Bug B — first configure has no size.** `new_toplevel` (main.rs:82-101) calls `add_window` with empty app_id/title and zero `target_rect`; `apply_layout` (main.rs:1188-1232) then sends a configure with activation/mode flags but **no size** because `target_valid` is false. Electron clients commit their default-sized buffer against that configure; eswm paints it at `target_rect` (main.rs:291-305) so content spills past the border until a maximize/minimize cycle forces a sized configure.
+**Bug B — client maps with a buffer larger than the configured size.** The
+earlier hypothesis that the first configure carries no size was **wrong**: an
+existing wm test (`arrange_output_only_arranges_active_workspace`) proves
+`add_window -> arrange_output` sets a non-zero `target_rect`, and `apply_layout`
+sends it because `rect_changed` is true on the first pass. The actual defect is
+that when an Electron/Chromium client commits a buffer **larger** than that
+configured size (they often map at their own default size before honouring the
+configure), eswm draws the surface tree at its natural buffer size and never
+re-asserts the size: `apply_layout` only reconfigures when
+`window.rect != target_rect`, and that comparison is already satisfied. Content
+spills outside the drawn frame until a maximize/minimize cycle forces a new
+configure. Smithay 0.7 exposes no per-element clip for
+`WaylandSurfaceRenderElement`, so the bounded fix is a commit-time size
+re-assert rather than a render-time clip.
 
 ### Fix plan (TDD actionable)
-1. Add pure tests for a new feedback-format helper: `dmabuf_feedback_formats(scanout, render, cross_device) -> (scanout_formats, render_formats)` — assert linear-only render tranche when cross-device, no duplicate pairs.
-2. Build feedback with two tranches: main device + formats (scanout), `add_preference_tranche(scanout_id, Some(TrancheFlags::Scanout), scanout_formats)`, `add_preference_tranche(render_id, None, linear_render_formats)`. Use `DmabufFeedbackBuilder::new/add_preference_tranche` (smithay `wayland/dmabuf/mod.rs:315,341-346`).
-3. In `dmabuf_imported`: remove the forced `set_node(Intel)`; log `dmabuf.format()` + modifier; validate using a renderer that includes the client's device, or accept unconditionally (`notifier.successful()`) and let smithay's `None` node path discover the source GPU at render time.
-4. In `render_surface`: construct the multi-GPU renderer (`gpus.renderer(&render_gpu, &scanout_node, format_needed)`) when the buffer's source device differs from scanout, so `texture_copy`/`dma_shadow_copy`/`mem_copy` can bridge GPUs. Use linear copy format when devices differ.
-5. Bug B: in `new_toplevel`, give the new window a non-zero initial `target_rect` (from `wm.work_area`) before `apply_layout`, so the first configure carries a size. Defensive backstop: render surface trees clipped to the committed buffer size (intersection with `target_rect`) so oversized first buffers cannot spill past borders.
+1. DONE — pure helper `dmabuf_feedback_formats(scanout, render, cross_device)`
+   with tests: scanout tranche keeps the scanout device's formats, render
+   tranche is Linear-only when cross-device, both empty on a single GPU.
+2. DONE — feedback now has a `TrancheFlags::Scanout` tranche on the scanout
+   device plus a Linear-only preference tranche on the other GPU
+   (`udev.rs`, dmabuf init). Tranches are only added when non-empty.
+3. DONE — `dmabuf_imported` no longer forces `set_node(scanout)`. It logs the
+   format and accepts, letting smithay's `None`-node path in
+   `import_on_src_node` try every device, import on the GPU that allocated the
+   buffer, and copy to the render node.
+4. NOT NEEDED (as written) — `single_renderer(scanout)` already carries the
+   other GPUs in `other_renderers`, so the `None`-node path reaches them.
+   Observed behaviour: Intel import fails, NVIDIA import succeeds,
+   `texture_copy` bridges to the scanout GPU. Rendering the whole frame on the
+   dGPU with `gpus.renderer(render_gpu, scanout, fmt)` is a later performance
+   optimisation, not a correctness fix (see INSTANTWM-PERFORMANCE-ANALYSIS).
+5. Bug B (implemented): on commit, if the client's buffer is larger than
+   `target_rect`, `WindowManager::note_oversize_commit` clears `rect` so
+   `apply_layout` re-sends the size. Bounded by `MAX_OVERSIZE_CONFIGURES = 3`;
+   a fitting commit resets the budget (`clear_oversize`). Pure predicate
+   `wm::commit_exceeds_target` is unit-tested.
 6. Re-run manual UAT on the hybrid laptop: Helium/Wordcraft render content on first open with no `BAD_MATCH`/`EGLImage` errors and no content spill.
 
 The Wordcraft "content spilling outside border" is a related configure-timing issue: the client committed a buffer before receiving the compositor's size configure; the buffer was rendered at the wrong geometry until a maximize/minimize cycle forced a proper resize. This is likely a missing/early configure or CSD geometry race, to be verified separately.
