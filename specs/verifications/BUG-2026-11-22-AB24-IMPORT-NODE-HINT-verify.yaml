@@ -1,9 +1,9 @@
 bug_id: BUG-2026-11-22-AB24-IMPORT-NODE-HINT
-verified_at: "2026-11-22T10:25:00Z"
+verified_at: "2026-11-22T10:45:00Z"
 verifier: verify-work
 branch: fix-ab24-import-node-hint
 risk: P3
-scope: automated-green-driver-proof-live-logs-clean-ab24-client-buffer-not-reproduced
+scope: automated-green-driver-proof-ab24-end-to-end-reproduced-clean
 gates:
   preflight:
     passed: true
@@ -76,7 +76,7 @@ driver_table_proof:
     This is the exact causal chain the fix repairs; it does not depend on the
     client reallocating the buffer during UAT.
 hardware_uat:
-  status: operator_runs_clean_ab24_client_buffer_not_reproduced
+  status: passed_ab24_end_to_end_reproduced_clean
   sessions:
     - at: "15:37 IST"
       debug_lines: 0
@@ -110,6 +110,40 @@ hardware_uat:
       bad_match: 0
       eglimage_errors: 0
       note: "Grid never opened; zero toplevels."
+    - at: "16:07 IST"
+      toplevels: 4
+      ab24_buffers: 0
+      bad_match: 0
+      note: >-
+        Launcher sent Nautilus to Hyprland (wayland-1), not eswm (eswm-test),
+        because the launcher inherits the wrong WAYLAND_DISPLAY. This is why
+        AB24 never appeared in the 5 client-driven runs.
+  deterministic_ab24_reproduction:
+    status: passed
+    at: "16:11 IST"
+    method: >-
+      Throwaway Wayland client (/tmp/opencode/ab24_client.c) allocated an AB24
+      GBM BO on renderD129 (NVIDIA) with the exact baseline modifier, then
+      submitted it via wp_linux_dmabuf_v1.create_immed. smithay fires
+      dmabuf_imported at create_immed time, exercising the exact fixed path.
+      Auto-injected via /tmp/opencode/ab24_watch_and_inject.sh on eswm socket
+      appearance; no launcher/keybind dependency.
+    buffer:
+      fourcc: AB24
+      modifier: "216172782120099860 (0x300000000606014)"
+      source_node: "/dev/dri/renderD129 (NVIDIA, vendor 0x10de)"
+    observed_log_lines: 2
+    imported_node: >-
+      node=Some(DrmNode { dev: 57856, ty: Primary }) -- dev 57856 = major 226
+      minor 0 = /dev/dri/card0, vendor 0x10de = NVIDIA. Correct GPU.
+    bad_match: 0
+    eglimage_errors: 0
+    import_failures: 0
+    evidence_log: /tmp/opencode/ab24-final-clean.log
+    evidence_sha256: 863ad7f5a4078237f5d2a80c16d3998e298777ff739f14a0a8c5e32bd7fb5127
+    contrast: >-
+      Same code and modifier as the 15:12 baseline which produced 6 BAD_MATCH,
+      6 EGLImage errors and node=None; now node=Some(NVIDIA) with zero errors.
   steps_confirmed:
     - step: "Start fixed build from TTY with RUST_LOG=debug."
       passed: true
@@ -119,12 +153,11 @@ hardware_uat:
     - step: "Zero BAD_MATCH / EGLImage / Failed to import surface ERROR lines."
       passed: true
     - step: "AB24/NVIDIA-modifier buffer imported under fixed binary."
-      passed: null
-      reason: >-
-        Client-side allocation did not recur in 5 operator sessions. The 15:12
-        baseline buffer came through the GIO/desktop-file launcher path; the
-        exact trigger was not reproduced. Driver table proof (above) and the
-        exact-modifier unit test cover the decision logic instead.
+      passed: true
+      evidence: >-
+        Deterministic injection at 16:11 IST: AB24 modifier 0x300000000606014
+        imported with node=Some(card0/NVIDIA), zero BAD_MATCH/EGLImage errors.
+        See deterministic_ab24_reproduction above.
   baseline_for_comparison:
     source: ~/.local/state/eswm/eswm.log (15:12 IST session)
     bad_match: 6
@@ -136,11 +169,10 @@ hardware_uat:
     2 x "Failed to restore previous state. Permission denied" on card0/card1,
     tracked by BUG-2026-11-22-DRM-RESTORE-PERMISSION, out of scope.
 verdict: >-
-  All automated gates, security review, defect-class sweep and the direct
-  driver-table proof pass. Five operator live-DRM runs are clean: zero
-  BAD_MATCH/EGLImage/import failures, every dmabuf import carrying a node hint,
-  where the baseline had 6+6+1 errors and node=None. The AB24 client buffer
-  itself was not reallocated in any run, so the end-to-end AB24 import was not
-  observed under the fixed binary; the fix's decision for that exact buffer is
-  proven by the driver-table probe and the unit test instead. Recorded honestly
-  for operator acceptance rather than silently marked complete.
+  All automated gates, security review, defect-class sweep, direct driver-table
+  proof, and end-to-end AB24 reproduction pass. The 15:12 baseline buffer (AB24,
+  modifier 0x300000000606014, node=None, 6 BAD_MATCH + 6 EGLImage errors) now
+  imports as node=Some(card0/NVIDIA) with zero errors under the fixed binary.
+  The 5 client-driven runs could not recreate the buffer because the launcher
+  sent it to Hyprland, not eswm; the deterministic injection closed that gap.
+  BUG is fully verified; ready to close and merge.
