@@ -12,12 +12,12 @@ epic_cycle:
   completed_steps: []
 bug_cycle:
   current_step: 5
-  completed_steps: [1, 2, 3, 4]
+  completed_steps: [1, 2, 3, 4, 5]
 git:
-  branch: e09s01-dmabuf-uat
-  hash: "e08adfa"
+  branch: main
+  hash: "60529b2"
 handoff:
-  last_step_completed: "BUG-2026-11-22-OVERSIZE-RETRY-CAP + BUG-2026-11-21-DMABUF-IMPORT: retry cap fixed (3 re-sends/window), render-time ClippedSurfaceElement added for Craft overflow (b831a9a/e28fc09), damage/opaque clipped-coordinate fix via clip_local_region with TDD (9da9625/5fbbb7b, 0ecc6c9, 94594ac/e08adfa). 169 tests + clippy + build green. Operator UAT at 13:41 IST: 'stale pixels are gone, commit and merge into main' — stale-pixel gate confirmed and merge explicitly authorized. Craft border fit, CSD offset, Helium content and e09s01 t7 checks were not explicitly reconfirmed; recorded as unconfirmed, not waived. Landing on main in progress."
+  last_step_completed: "BUG-2026-11-22-OVERSIZE-RETRY-CAP + BUG-2026-11-21-DMABUF-IMPORT: retry cap fixed (3 re-sends/window), render-time ClippedSurfaceElement added for Craft overflow (b831a9a/e28fc09), damage/opaque clipped-coordinate fix via clip_local_region with TDD (9da9625/5fbbb7b, 0ecc6c9, 94594ac/e08adfa). 169 tests + clippy + build green. Operator UAT at 13:41 IST: 'stale pixels are gone, commit and merge into main' — stale-pixel gate confirmed and merge explicitly authorized. Craft border fit, CSD offset, Helium content and e09s01 t7 checks were not explicitly reconfirmed; recorded as unconfirmed, not waived. Landed on main as merge commit 60529b2; 169 tests + clippy + build green on main. CI unverified per operator skip."
   open_decisions:
     - "e09s01-dmabuf-uat integration branch merges the dmabuf fix into e09s01. Operator confirmed the stale-pixel gate at 13:41 IST and explicitly ordered commit + merge, overriding the earlier do-not-land-until-full-UAT gate. Remaining app/t7 checks stay unconfirmed in the verification records."
     - "bug-2026-11-17t141711 remains open (low): master-mode single-window border breaks at bottom in src/udev.rs"
