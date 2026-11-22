@@ -131,4 +131,10 @@ DRM selection helpers.
 
 ## Resolution
 
-<!-- filled in by validate-fix -->
+**Fixed:** 2026-11-22
+**Root cause confirmed:** eswm called smithay's `bind_wl_display` once per candidate GPU, but smithay's `EGLBufferReader` is a process-global singleton that warns and overwrites itself on a second bind.
+**Fix applied:** Added the pure `bind_wl_display_once` helper, which keeps trying while binds fail and stops at the first success. The DRM setup loop now routes its only bind call through it while retaining every renderer-capable GPU for dmabuf format advertising.
+**Hardening added:** The one-bind invariant is now encoded in a pure helper with an injected binder, covered by four tests (stop-after-success, all-fail, empty input, and a replay of the 08:01:29 log's minor numbers).
+**Evidence:** `cargo test --bin eswm bind_wl_display_once` → 4 passed; `cargo test` → 173 passed; `cargo clippy --all-targets` and `cargo build` clean. Defect-class sweep found one call site, now guarded (`specs/verifications/generalize-sweep-BUG-2026-11-22-DOUBLE-BIND-WL-DISPLAY.json`).
+**Commit:** `3ade09e fix(udev): bind the Wayland display at most once`
+**Remaining:** Live DRM startup with no `Double bind_wl_display` warning is operator UAT; this session cannot run the DRM backend from inside Wayland.

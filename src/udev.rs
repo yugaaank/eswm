@@ -3658,6 +3658,20 @@ mod tests {
         assert_eq!(usable, [2, 3], "nodes after the bound one remain usable");
     }
 
+    /// The 08:01:29 log bound card0, then card1 and renderD128 failed, then
+    /// renderD129 succeeded and triggered smithay's global-reader warning.
+    /// With the fix, only card0 is ever handed to `bind_wl_display`.
+    #[test]
+    fn bind_wl_display_once_matches_double_bind_log() {
+        let mut attempts = Vec::new();
+        let usable = bind_wl_display_once(&[0, 1, 128, 129], |minor| {
+            attempts.push(minor);
+            matches!(minor, 0 | 129)
+        });
+        assert_eq!(attempts, [0], "renderD129 must never bind after card0");
+        assert_eq!(usable, [0, 1, 128, 129], "all renderer-capable nodes stay usable");
+    }
+
     #[test]
     fn bind_wl_display_once_tries_every_node_when_all_fail() {
         let mut attempts = Vec::new();

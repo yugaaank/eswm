@@ -1,0 +1,12 @@
+{
+  "defect_class": "unguarded-process-global-bind",
+  "description": "A process-global resource is acquired once per candidate resource instead of once per process, so a later acquisition silently replaces the first.",
+  "grep_pattern": "\\.bind_wl_display\\(",
+  "match_count": 1,
+  "sweep_scope": "src/",
+  "patched_in_pr": [
+    "src/udev.rs:539 — sole bind_wl_display call site, now routed through bind_wl_display_once"
+  ],
+  "tracked_issues": [],
+  "verification_script": "not present in eswm repo; sweep recorded manually from grep output above"
+}
