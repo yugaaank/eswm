@@ -47,6 +47,24 @@ pub fn clip_element_geometry(
     Some((clipped_src, clipped_geo))
 }
 
+/// Convert a rectangle from the inner surface's local coordinates into the
+/// clipped element's local coordinates. Smithay's damage tracker adds
+/// `element.geometry().loc` to every region an `Element` returns, so the
+/// wrapper must return regions relative to the *clipped* origin — not the
+/// surface origin, and definitely not the output origin.
+pub fn clip_local_region(
+    region: Rectangle<i32, Physical>,
+    inner_loc: Point<i32, Physical>,
+    clip: Rectangle<i32, Physical>,
+    outer_loc: Point<i32, Physical>,
+) -> Option<Rectangle<i32, Physical>> {
+    let mut absolute = region;
+    absolute.loc += inner_loc;
+    let mut local = absolute.intersection(clip)?;
+    local.loc -= outer_loc;
+    Some(local)
+}
+
 /// Wraps a surface render element and clips it to a fixed physical rectangle.
 /// Always returns `None` for underlying storage so the DRM compositor cannot
 /// bypass the clip with direct scanout.
@@ -108,10 +126,12 @@ impl<R: Renderer + ImportAll> Element for ClippedSurfaceElement<R> {
         scale: Scale<f64>,
         commit: Option<CommitCounter>,
     ) -> DamageSet<i32, Physical> {
+        let inner_loc = self.inner.geometry(scale).loc;
+        let outer_loc = self.geometry(scale).loc;
         self.inner
             .damage_since(scale, commit)
             .into_iter()
-            .filter_map(|d| d.intersection(self.clip))
+            .filter_map(|d| clip_local_region(d, inner_loc, self.clip, outer_loc))
             .collect()
     }
 
