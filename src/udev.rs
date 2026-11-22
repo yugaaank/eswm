@@ -3606,6 +3606,20 @@ mod tests {
             < 0.01);
     }
 
+    /// Smithay's EGL wl_drm reader is a process-wide singleton. A second bind
+    /// warns and silently replaces the first — a compositor trying to wear two
+    /// hats and getting a stern letter from smithay about it.
+    #[test]
+    fn bind_wl_display_once_stops_after_first_success() {
+        let mut attempts = Vec::new();
+        let usable = bind_wl_display_once(&[1, 2, 3], |node| {
+            attempts.push(node);
+            node != 1
+        });
+        assert_eq!(attempts, [1, 2], "no bind attempts after the first success");
+        assert_eq!(usable, [2, 3], "nodes after the bound one remain usable");
+    }
+
     /// Clients allocate dmabufs on the GPU the feedback advertises. If that is
     /// not the GPU that scans out, every client frame crosses GPUs or lands in
     /// the cpu-copy fallback — measured here as 6-15ms per frame in
