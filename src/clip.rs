@@ -65,18 +65,23 @@ pub fn clip_local_region(
     Some(local)
 }
 
-/// Wraps a surface render element and clips it to a fixed physical rectangle.
+/// Wraps any render element and clips it to a fixed physical rectangle.
 /// Always returns `None` for underlying storage so the DRM compositor cannot
-/// bypass the clip with direct scanout.
-pub struct ClippedSurfaceElement<R: Renderer> {
-    inner: WaylandSurfaceRenderElement<R>,
+/// bypass the clip with direct scanout. Generic over the inner element so the
+/// coordinate transforms can be exercised without a live renderer — damage
+/// bookkeeping is too easy to get subtly wrong to leave untested.
+pub struct ClippedElement<E> {
+    inner: E,
     clip: Rectangle<i32, Physical>,
     scale: Scale<f64>,
 }
 
-impl<R: Renderer + ImportAll> ClippedSurfaceElement<R> {
+/// The production form: clip a Wayland surface tree element.
+pub type ClippedSurfaceElement<R> = ClippedElement<WaylandSurfaceRenderElement<R>>;
+
+impl<E: Element> ClippedElement<E> {
     pub fn new(
-        inner: WaylandSurfaceRenderElement<R>,
+        inner: E,
         clip: Rectangle<i32, Physical>,
         scale: Scale<f64>,
     ) -> Self {
@@ -91,7 +96,7 @@ impl<R: Renderer + ImportAll> ClippedSurfaceElement<R> {
     }
 }
 
-impl<R: Renderer + ImportAll> Element for ClippedSurfaceElement<R> {
+impl<E: Element> Element for ClippedElement<E> {
     fn id(&self) -> &Id {
         self.inner.id()
     }
@@ -152,10 +157,10 @@ impl<R: Renderer + ImportAll> Element for ClippedSurfaceElement<R> {
     }
 }
 
-impl<R> RenderElement<R> for ClippedSurfaceElement<R>
+impl<R, E> RenderElement<R> for ClippedElement<E>
 where
     R: Renderer + ImportAll,
-    R::TextureId: 'static,
+    E: RenderElement<R>,
 {
     fn draw(
         &self,
@@ -249,6 +254,64 @@ mod tests {
         assert!(result.is_none());
     }
 
+    struct FakeElement {
+        id: Id,
+        geometry: Rectangle<i32, Physical>,
+        damage: Vec<Rectangle<i32, Physical>>,
+        opaque: Vec<Rectangle<i32, Physical>>,
+    }
+
+    impl FakeElement {
+        fn at(geometry: Rectangle<i32, Physical>) -> Self {
+            Self {
+                id: Id::new(),
+                geometry,
+                damage: Vec::new(),
+                opaque: Vec::new(),
+            }
+        }
+
+        fn with_damage(mut self, rect: Rectangle<i32, Physical>) -> Self {
+            self.damage.push(rect);
+            self
+        }
+    }
+
+    impl Element for FakeElement {
+        fn id(&self) -> &Id {
+            &self.id
+        }
+
+        fn current_commit(&self) -> CommitCounter {
+            CommitCounter::default()
+        }
+
+        fn src(&self) -> Rectangle<f64, BufferCoords> {
+            src(
+                0.0,
+                0.0,
+                self.geometry.size.w as f64,
+                self.geometry.size.h as f64,
+            )
+        }
+
+        fn geometry(&self, _scale: Scale<f64>) -> Rectangle<i32, Physical> {
+            self.geometry
+        }
+
+        fn damage_since(
+            &self,
+            _scale: Scale<f64>,
+            _commit: Option<CommitCounter>,
+        ) -> DamageSet<i32, Physical> {
+            self.damage.iter().copied().collect()
+        }
+
+        fn opaque_regions(&self, _scale: Scale<f64>) -> OpaqueRegions<i32, Physical> {
+            self.opaque.iter().copied().collect()
+        }
+    }
+
     #[test]
     fn clipped_damage_keeps_surface_local_rect_inside_frame() {
         // Smithay gives us damage relative to the surface origin (349,177),
@@ -256,13 +319,13 @@ mod tests {
         // hand back a rect relative to the clipped origin. Getting this wrong
         // gives damage tracking amnesia and stale pixels — the compositor has
         // the memory of a goldfish with a hole punch.
-        let inner_loc = Point::from((349, 177));
+        let scale = Scale::from(1.0f64);
         let clip = rect(365, 187, 1190, 795);
-        let inner_damage = rect(0, 0, 1222, 837);
+        let inner = FakeElement::at(rect(349, 177, 1222, 837))
+            .with_damage(rect(0, 0, 1222, 837));
+        let element = ClippedElement::new(inner, clip, scale);
 
-        assert_eq!(
-            clip_local_region(inner_damage, inner_loc, clip, clip.loc),
-            Some(rect(0, 0, 1190, 795)),
-        );
+        let damage: Vec<_> = element.damage_since(scale, None).iter().copied().collect();
+        assert_eq!(damage, vec![rect(0, 0, 1190, 795)]);
     }
 }
