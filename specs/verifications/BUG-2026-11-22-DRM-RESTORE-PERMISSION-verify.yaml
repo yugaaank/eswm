@@ -14,12 +14,14 @@ gates:
   terminal_verdict:
     command: "cargo clippy --all-targets && cargo test && cargo build"
     exit_code: 0
-    captured_at: "2026-11-22T11:28:00Z"
+    captured_at: "2026-11-22T11:40:00Z"
     note: >-
-      Single contiguous run; stdout/stderr saved to
-      /tmp/opencode/drm-restore-preflight-v2.log (sha256
-      19ef437ae2419d0e8826fed8cbb90cae0078ee445d00f7d700fe5b5fe4de2f70).
-      clippy_exit=0, test_exit=0, build_exit=0, 183 tests passed.
+      Final single contiguous run at commit 2d5cdd0 after the re-review nit
+      edits; stdout/stderr saved to /tmp/opencode/drm-restore-preflight-final.log
+      (sha256 19733b7c83741c80908901f8b9ce6c85366009138d471bc4b88ef41445df910c).
+      clippy_exit=0, test_exit=0, build_exit=0, 183 tests passed. An earlier
+      equivalent run at 96fc777 is in /tmp/opencode/drm-restore-preflight-v2.log
+      (sha256 19ef437ae2419d0e8826fed8cbb90cae0078ee445d00f7d700fe5b5fe4de2f70).
   targeted_tests:
     passed: true
     commands:
@@ -84,12 +86,17 @@ generalize_sweep:
   status: passed
 review:
   independent_verdict_initial: REQUEST CHANGES
+  independent_verdict_final: APPROVE WITH NITS
   blocking_findings_resolved:
     - "HIGH: unconditional pause regressed privileged TTY quit — fixed by per-card drm_master policy"
     - "MEDIUM: session_paused flag missed late-added backends — fixed by Drop guard over all backends"
     - "MEDIUM: early setup ? returns bypassed end-of-loop quiesce — fixed by Drop for UdevData"
-    - "LOW: assertion-free empty test — fixed (assert_eq on len)"
-  rerun_requested: true
+  nits_resolved:
+    - "LOW: empty-map test renamed to empty_backend_set_does_not_panic — states only what it proves (no observable effect to assert)"
+    - "LOW: adjacent-ioctl master assumption documented at device open (commit 2d5cdd0)"
+    - "LOW: UAT steps tightened to active TTY, no prior VT switch"
+  nit_fixes_commit: 2d5cdd0
+  rerun_completed: true
 hardware_uat:
   status: pending_operator
   reason: >-
