@@ -231,3 +231,40 @@ bug-2026-11-18t160939:
        geometry/mapped/dismissed at info level.
   verify: |
     cargo test; cargo clippy; cargo build
+
+bug-2026-11-22t123500:
+  id: BUG-2026-11-22-OVERSIZE-RETRY-CAP
+  title: Oversize size-reassert retry cap resets itself and storms the client
+  severity: medium
+  status: open
+  reported_by: operator_observation
+  date: "2026-11-22T12:35:00+05:30"
+  priority: medium
+  scope: rendering
+  security_impact: none
+  files:
+    - src/main.rs
+    - src/wm.rs
+  files_changed:
+    - src/main.rs
+    - src/wm.rs
+  risk_level: low
+  approach: "Three-outcome OversizeAction policy; reset only on fitting commit"
+  commit_message: "refactor(main): exhaustive oversize dispatch prevents silent new actions"
+  hardware_uat: pending
+  description: |
+    The size-reassert budget resets when the budget is exhausted, not only when
+    the client commits a fitting buffer. A stubborn Electron client therefore
+    gets a fresh three-try budget after every three oversized commits: 48
+    reconfigures for deckcraft and 9 for gridcraft in one 14-second session,
+    despite MAX_OVERSIZE_CONFIGURES = 3.
+  fix_plan: |
+    Split the combined predicate into an explicit policy with three outcomes:
+    resend while oversized and budget remains, do nothing while oversized and
+    exhausted, and reset the budget only when the buffer fits. Route the commit
+    handler through that policy; the old boolean predicate had no remaining
+    caller and was removed, with its boundary cases moved to policy tests.
+  verify: |
+    cargo test --bin eswm oversize_commit_action; cargo clippy; cargo build;
+    live DRM run with RUST_LOG=debug and deckcraft/gridcraft, then grep
+    're-sending size' in eswm.log.

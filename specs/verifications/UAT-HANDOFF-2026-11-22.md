@@ -1,7 +1,8 @@
 # UAT handoff — 2026-11-22
 
 Branch: `e09s01-dmabuf-uat` (worktree `/home/yugaaank/Projects/e09s01-dmabuf-uat`)
-Merge commit: `84706cb` (e09s01-client-mode + fix-dmabuf-import)
+Merge commit: `afbc594` (e09s01-client-mode + fix-dmabuf-import) — the earlier
+`84706cb` note was stale; bin and commit now agree, unlike my sleep schedule.
 
 Automated gates on this branch:
 
