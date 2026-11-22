@@ -357,16 +357,18 @@ bug-2026-11-22t080159-drm-restore:
     - specs/verifications/generalize-sweep-BUG-2026-11-22-DRM-RESTORE-PERMISSION.json
   risk_level: low
   approach: >-
-    Quiesce every DRM backend after the event loop and before state drops, so
-    smithay's active-gated drop-time restore is skipped in unprivileged
-    sessions. Skip when the libseat session is already paused.
-  commit_message: "fix(udev): quiesce DRM devices before quit teardown"
+    Record DRM-master state per backend at open, then quiesce only cards that
+    never held master from Drop for UdevData. Privileged cards keep their
+    drop-time restore and single master release; the Drop guard also covers
+    early setup returns and late-added backends.
+  commit_message: "fix(udev): quiesce only cards that never held DRM master"
   hardware_uat: pending_operator
   uat_note: >-
-    Automated proof green (182 tests, clippy/build clean). Live quit not run:
+    Automated proof green (183 tests, clippy/build clean). Live quit not run:
     DRM/libseat cannot start inside this Wayland session (VT grab) and the
     operator cannot switch TTY while eswm runs. Operator check: quit via keybind
     and grep eswm.log for 'Failed to restore previous state' -> expect 0 hits.
+    On a privileged TTY, also expect 0 'Failed to drop drm master state' lines.
   followup: >-
     device_removed() (src/udev.rs:2349) still drops an active BackendData on
     hot-unplug without pausing; same defect class, tracked in the generalize

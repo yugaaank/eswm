@@ -1,9 +1,9 @@
 bug_id: BUG-2026-11-22-DRM-RESTORE-PERMISSION
-verified_at: "2026-11-22T11:05:00Z"
+verified_at: "2026-11-22T11:30:00Z"
 verifier: validate-fix
 branch: fix-drm-restore-permission
 risk: P3
-scope: automated-green-tdd-red-green-source-causal-proof-live-quit-pending-operator
+scope: automated-green-tdd-red-green-static-causal-proof-live-quit-pending-operator
 gates:
   preflight:
     passed: true
@@ -14,30 +14,39 @@ gates:
   terminal_verdict:
     command: "cargo clippy --all-targets && cargo test && cargo build"
     exit_code: 0
-    captured_at: "2026-11-22T11:03:00Z"
+    captured_at: "2026-11-22T11:28:00Z"
     note: >-
       Single contiguous run; stdout/stderr saved to
-      /tmp/opencode/drm-restore-preflight.log (sha256
-      e1ec475b0fbc532fc86073cdd6f9419eb0c012d5975a941f2d96a931c4980d16).
-      clippy_exit=0, test_exit=0, build_exit=0, 182 tests passed.
+      /tmp/opencode/drm-restore-preflight-v2.log (sha256
+      19ef437ae2419d0e8826fed8cbb90cae0078ee445d00f7d700fe5b5fe4de2f70).
+      clippy_exit=0, test_exit=0, build_exit=0, 183 tests passed.
   targeted_tests:
     passed: true
-    command: "cargo test --bin eswm quiesce"
-    result: "3 passed"
+    commands:
+      - "cargo test --bin eswm quiesce"
+      - "cargo test --bin eswm privileged_card"
+    result: "4 passed total (3 via quiesce filter, privileged test verified separately)"
     tests:
-      - quit_quiesces_every_drm_backend
-      - paused_session_does_not_quiesce_twice
+      - quit_quiesces_every_unprivileged_card
+      - privileged_card_keeps_its_drop_time_restore
+      - mixed_cards_quiesce_only_the_unprivileged_ones
       - no_backends_quiesces_nothing
 tdd_discipline:
-  red_commit: 1fc95ae
-  red_evidence: >-
-    Test-only commit; cargo test --bin eswm failed with E0405 (Quiesce not
-    found) and three E0425 (quiesce_all not found). Failed for the missing
-    behavior, not a syntax error.
-  green_commit: 845dedb
-  green_evidence: "3 targeted tests pass, 182 total pass, clippy clean."
+  final_red_commit: 7318ff6
+  final_red_evidence: >-
+    Test-only commit; cargo test --bin eswm failed with E0407 (drm_master not
+    a member of trait Quiesce) and E0425 (quiesce_unprivileged not found).
+    Failed for the missing behavior, not a syntax error.
+  final_green_commit: 96fc777
+  final_green_evidence: "4 targeted tests pass, 183 total pass, clippy clean."
   separate_commits: true
+  superseded_cycle: >-
+    1fc95ae/845dedb implemented an unconditional pause. Independent review
+    found a HIGH privileged-TTY regression; the cycle was replaced rather than
+    merged. Both commits remain in history as evidence of the correction.
 causal_proof:
+  type: static-source-reading-plus-unit-truth-table
+  not_runtime_proof: true
   bug_symptom: >-
     ERROR "Failed to restore previous state. Error: Permission denied (os
     error 13)" once per card, immediately before "Dropping device" at graceful
@@ -48,23 +57,22 @@ causal_proof:
     run_udev() returned at udev.rs:850 with devices still active; state drop
     reached AtomicDrmDevice::drop with the guard true.
   eswm_new_path: >-
-    quiesce_all(backends.values_mut(), paused) at udev.rs:854 runs after the
-    loop and before state drop; DrmOutputManager::pause() delegates to
-    DrmDevice::pause(), clearing the guard.
+    Drop for UdevData calls quiesce_unprivileged over every backend; only cards
+    with drm_master == false are paused, clearing smithay's guard before drop.
+  privileged_safety: >-
+    A card that acquired master at open is left active: its restore succeeds
+    and InternalDrmDeviceFd::drop releases master exactly once. This avoids
+    both the black-screen risk and a second drmDropMaster ERROR.
   unprivileged_evidence: >-
     fd.rs:77-80 warns once per card at startup; live log 10:49:54Z and
     10:49:56Z show both warnings.
-  skipped_restore_is_correct: >-
-    The restore cannot succeed in an unprivileged session by construction;
-    suppressing the impossible ioctl removes ERROR noise with no functional
-    change. libseat release still happens on session teardown.
-  status: passed
+  status: passed_as_static_argument
 hardening:
-  mechanism: "session_paused policy guard + FakeBackend truth-table tests"
+  mechanism: "per-card drm_master recording + Drop guard + FakeBackend truth table"
   reason: >-
-    SessionEvent::PauseSession already pauses and releases master. A second
-    pause on a privileged device would call release_master_lock() twice and
-    log a different ERROR.
+    A global paused flag cannot represent a card hot-added after PauseSession,
+    and unconditional pausing regresses privileged TTY quits. Per-card state
+    and a Drop guard cover both.
   tested: true
 generalize_sweep:
   artifact: specs/verifications/generalize-sweep-BUG-2026-11-22-DRM-RESTORE-PERMISSION.json
@@ -74,6 +82,14 @@ generalize_sweep:
     device_removed() hot-unplug path recorded as follow-up; not patched in this
     graceful-quit fix.
   status: passed
+review:
+  independent_verdict_initial: REQUEST CHANGES
+  blocking_findings_resolved:
+    - "HIGH: unconditional pause regressed privileged TTY quit — fixed by per-card drm_master policy"
+    - "MEDIUM: session_paused flag missed late-added backends — fixed by Drop guard over all backends"
+    - "MEDIUM: early setup ? returns bypassed end-of-loop quiesce — fixed by Drop for UdevData"
+    - "LOW: assertion-free empty test — fixed (assert_eq on len)"
+  rerun_requested: true
 hardware_uat:
   status: pending_operator
   reason: >-
@@ -85,6 +101,7 @@ hardware_uat:
     - "Quit via the Super+Alt+Backspace keybind."
     - "grep -c 'Failed to restore previous state' ~/.local/state/eswm/eswm.log"
     - "Expect 0; also confirm the previous TTY/login prompt is visible."
+    - "On a privileged TTY, also expect 0 'Failed to drop drm master state' lines."
   baseline_evidence:
     log: /home/yugaaank/.local/state/eswm/eswm.log
     errors_before_fix: 2
@@ -92,7 +109,8 @@ hardware_uat:
       - /dev/dri/card0
       - /dev/dri/card1
 verdict: >-
-  All automated gates, TDD discipline checks, source-level causal proof, and
-  the defect-class sweep pass. The live-DRM quit check is operator-gated by the
-  VT-grab constraint and is recorded honestly as pending, not waived. The fix
-  is ready for review and merge with that single explicit UAT gap.
+  All automated gates, TDD discipline checks, static causal proof, hardening
+  tests, and the defect-class sweep pass. The blocking independent-review
+  findings were resolved by moving to a per-card privilege policy and a Drop
+  guard. Live-DRM quit remains operator-gated by the VT-grab constraint and is
+  recorded honestly as pending, not waived.

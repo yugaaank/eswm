@@ -1,11 +1,12 @@
 {
   "defect_class": "drm-device-dropped-while-active",
   "description": "A DrmDevice that is still marked active when it is dropped makes smithay attempt a drop-time mode restore. In an unprivileged session that ioctl returns EACCES and is logged at ERROR once per card. The fix is to pause (quiesce) every device before the owning struct is dropped.",
-  "grep_pattern": "backends\\.remove|drm_output_manager\\.pause|quiesce_all|BackendData",
+  "grep_pattern": "backends\\.remove|drm_output_manager\\.pause|quiesce_unprivileged|BackendData",
   "match_count": 1,
   "sweep_scope": "src/udev.rs — all paths that drop a BackendData / DrmOutputManager (event-loop teardown, libseat pause/activate, udev device_removed)",
   "patched_in_pr": [
-    "src/udev.rs:854 — quiesce_all over every backend immediately after the event loop, before state drops"
+    "src/udev.rs — Drop for UdevData calls quiesce_unprivileged over every backend, covering the normal exit, early setup returns and late-added cards",
+    "src/udev.rs — device_added records drm_master per backend so privileged cards keep their restore"
   ],
   "tracked_issues": [
     "src/udev.rs:2349 — device_removed() removes a BackendData on hot-unplug without pausing it first; an active device being unplugged can hit the same drop-time restore ERROR. Logged as a follow-up in specs/bugs/BUG-2026-11-22-DRM-RESTORE-PERMISSION.md and registry.yaml; hot-unplug needs its own UAT and is out of scope for this graceful-quit fix."
@@ -22,7 +23,8 @@
     "smithay_drop_guard": "backend/drm/device/atomic.rs:240 — if self.active.load(SeqCst)",
     "smithay_pause_clears_guard": "backend/drm/device/mod.rs:419 — self.set_active(false)",
     "startup_master_state": "unprivileged (fd.rs:77-80 warning on both cards)",
-    "double_pause_guard": "quiesce_all(..., session_paused) skips when SessionEvent::PauseSession already paused the devices"
+    "privilege_guard": "quiesce_unprivileged pauses only backends whose fd never acquired DRM master; privileged cards keep restore and release master once",
+    "drop_guard": "Drop for UdevData covers early setup returns and backends hot-added after SessionEvent::PauseSession"
   },
   "verification_script": "not present in eswm repo; sweep recorded manually from grep output and smithay 0.7.0 source lines"
 }

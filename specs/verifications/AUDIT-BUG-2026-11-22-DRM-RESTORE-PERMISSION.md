@@ -37,26 +37,29 @@
 - ✓ Comments explain WHY (smithay's active guard, double master release).
 
 ### Types and safety
-- ✓ No `unwrap()` added on a fallible path; `state.udev.as_mut().unwrap()`
-  matches the surrounding invariant used throughout `run_udev`.
-- ✓ No suppressions, casts, or unsafe added.
+- ✓ No `unwrap()` added on a fallible path; the new `Drop` impl uses only safe
+  iterator access to `self.backends`.
+- ✓ No suppressions, casts, or unsafe added. Re-acquiring DRM master uses the
+  existing public drm-rs trait, fully qualified.
 
 ### Test coverage
-- ✓ Every new function has a test: `quiesce_all` (3 tests), `Quiesce::quiesce`
-  exercised via `FakeBackend`.
-- ✓ Bug regression covered: two cards → both quiesced (baseline produced two
-  ERROR lines).
-- ✓ Boundary conditions: empty backend set, already-paused session.
+- ✓ Every new function has a test: `quiesce_unprivileged` (4 tests via
+  `FakeBackend`), covering both `drm_master()` and `quiesce()`.
+- ✓ Bug regression covered: two unprivileged cards → both quiesced (baseline
+  produced two ERROR lines).
+- ✓ Regression guard: privileged card is left active, preventing the HIGH
+  review finding (lost getty restore + double master release).
+- ✓ Boundary conditions: empty backend set, mixed privileged/unprivileged map.
 - ✓ F.I.R.S.T: fast (0.00s), independent, repeatable, self-validating, written
-  before the implementation (RED commit `1fc95ae`).
+  before the implementation (final RED commit `7318ff6`).
 
 ### SOLID & heuristics
-- ✓ Single Responsibility: `quiesce_all` only quiesces; policy is one boolean.
+- ✓ Single Responsibility: `quiesce_unprivileged` only quiesces; the policy is
+  the backend's own `drm_master()` state.
 - ✓ Open/Closed: new `Quiesce` seam avoids editing `BackendData` internals.
 - ✓ No message chains, data clumps, or duplication introduced.
-- ⚠ F3 (flag argument): `session_paused: bool` is a policy flag. Accepted: it
-  is a single decision input, not a mode switch, and its truth table is tested
-  explicitly. Renaming to an enum would add ceremony without changing behavior.
+- ✓ No flag argument remains: the earlier `session_paused: bool` was removed
+  because it could leave a late-added card active.
 
 ### Code style
 - ✓ New functions are 1–12 lines; descend one level of abstraction.
@@ -66,13 +69,16 @@
   lines (mostly specs-adjacent tests), no new file created.
 
 ## Rationalizations caught
-- "It's just a one-line pause call, no test needed" — rejected: wrote three
+- "It's just a one-line pause call, no test needed" — rejected: wrote four
   tests and a separate RED commit.
+- "The first GREEN is fine, review is a formality" — rejected: independent
+  review found a HIGH privileged-TTY regression; the whole approach was
+  replaced with a per-card privilege policy rather than merged.
 - "Live UAT is impossible so mark it passed" — rejected: recorded honestly as
   `pending_operator`.
 - "The hot-unplug sibling is basically the same bug" — rejected: kept it as a
   tracked follow-up to preserve one-bug-at-a-time scope.
 
 ## Verdict
-**PASS**, with one accepted F3 nit documented above. Hand off to independent
-review (`request-review`).
+**PASS** after incorporating the independent reviewer's blocking findings.
+No outstanding nits. Hand off to independent re-review.

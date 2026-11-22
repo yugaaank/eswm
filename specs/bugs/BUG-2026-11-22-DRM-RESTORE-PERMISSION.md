@@ -94,25 +94,31 @@ e.g. on drop". Calling it before teardown clears the `active` flag that guards
 the restore, so drop stays silent. No smithay patch or log-level override is
 needed.
 
-**Guard:** eswm sets `UdevData.paused = true` and pauses every device in
-`SessionEvent::PauseSession`. If quit happens in that state, pausing again
-would call `release_master_lock()` a second time on a privileged session and
-produce a *different* ERROR. The quit teardown is therefore conditional on
-`!paused`.
+**Critical refinement (from independent review):** pausing must be limited to
+cards that never held DRM master. On a real TTY, `DrmDeviceFd::new` succeeds in
+`acquire_master_lock()`, so the drop-time restore would have succeeded and is
+what makes getty visible. Pausing such a card would (a) skip that restore and
+risk a black screen, and (b) call `release_master_lock()` while smithay's
+`privileged` flag stays `true`, so `InternalDrmDeviceFd::drop` releases master a
+second time and logs a *different* ERROR. The first implementation did exactly
+this; it was rejected before merge and replaced.
 
 ## Fix plan (TDD, RED → GREEN)
 
-1. **RED** — add a `Quiesce` seam (implemented by `BackendData` as
-   `drm_output_manager.pause()`) plus a generic `quiesce_all` helper with a
-   `session_paused` policy flag. Add tests with a `FakeBackend`:
-   - `quit_quiesces_every_drm_backend` — two fake cards both quiesced (maps
-     directly to the two ERROR lines).
-   - `paused_session_does_not_quiesce_twice` — no second quiesce when VT
-     pause already happened.
-   - `no_backends_quiesces_nothing` — empty map is safe.
-   Run `cargo test --bin eswm` → RED (helper does not exist yet).
-2. **GREEN** — implement `Quiesce`/`quiesce_all`; call it in `run_udev()`
-   immediately after the event loop, before `state` drops. Run tests → GREEN.
+1. **First cycle (superseded)** — `quiesce_all(backends, session_paused)` paused
+   every active device. GREEN at `845dedb`, then rejected by independent review
+   for the privileged-session regression above.
+2. **Second cycle (current)** — RED `7318ff6`: truth-table tests require that
+   unprivileged cards are quiesced, privileged cards are not, mixed cards are
+   handled per-card, and an empty map is safe. GREEN `96fc777`:
+   - record `drm_master` per `BackendData` by repeating the ioctl smithay used
+     at open (its `is_privileged()` is crate-private; re-acquiring held master
+     is a no-op that smithay itself does in `activate()`);
+   - `quiesce_unprivileged()` visits **every** backend and pauses only those
+     with `drm_master == false`;
+   - call it from `Drop for UdevData` so early setup `?` returns and cards
+     hot-added after `SessionEvent::PauseSession` are also covered. The old
+     global `paused` flag could leave a late-added card active at drop.
 3. **Validate** — `cargo clippy --all-targets && cargo test && cargo build`;
    defect-class sweep; security review; live DRM quit log must contain zero
    `Failed to restore previous state` lines (operator-gated: eswm cannot be
@@ -125,19 +131,23 @@ produce a *different* ERROR. The quit teardown is therefore conditional on
 **Root cause confirmed:** eswm quit with DRM devices still marked active, so
 smithay's drop-time restore attempted an ioctl the unprivileged session could
 not perform.
-**Fix applied:** `quiesce_all()` calls `DrmOutputManager::pause()` on every
-backend immediately after the event loop and before `state` drops. Pausing
-clears the `active` flag that guards smithay's restore, so drop stays silent.
-**Hardening added:** `session_paused` policy guard prevents a second pause when
-`SessionEvent::PauseSession` already released DRM master; three unit tests with
-a `FakeBackend` cover two cards, the already-paused case, and the empty map.
+**Fix applied:** `UdevData::drop` calls `quiesce_unprivileged()`, which pauses
+only backends whose fd never held DRM master. Privileged cards keep their
+getty restore and their single master release, so the real-TTY path is
+unchanged. The `Drop` guard also covers early setup failures and late-added
+cards.
+**Hardening added:** per-card `drm_master` recording at device open, four
+`FakeBackend` truth-table tests (unprivileged, privileged, mixed, empty), and a
+`Drop` guard instead of a single end-of-loop call site.
 **Evidence:** `cargo clippy --all-targets && cargo test && cargo build` all exit
-0; 182 tests pass (179 baseline + 3 new). Log:
-`/tmp/opencode/drm-restore-preflight.log`, sha256
-`e1ec475b0fbc532fc86073cdd6f9419eb0c012d5975a941f2d96a931c4980d16`.
-**Commit:** `845dedb fix(udev): quiesce DRM devices before quit teardown`
-**RED/GREEN commits:** `1fc95ae` (test-only, fails: `Quiesce`/`quiesce_all`
-undefined) → `845dedb` (implementation, green).
+0; 183 tests pass (179 baseline + 4 new). Log:
+`/tmp/opencode/drm-restore-preflight-v2.log`, sha256
+`19ef437ae2419d0e8826fed8cbb90cae0078ee445d00f7d700fe5b5fe4de2f70`.
+**Commit:** `96fc777 fix(udev): quiesce only cards that never held DRM master`
+**RED/GREEN commits (final cycle):** `7318ff6` (test-only, fails: missing
+`drm_master`/`quiesce_unprivileged`) → `96fc777` (implementation, green).
+The earlier `1fc95ae`/`845dedb` pair is retained in history as the rejected
+first approach.
 
 ### Defect-class sweep
 
@@ -153,6 +163,8 @@ UAT and is out of scope for this graceful-quit fix.
       proof green; live quit pending operator** (see verification record).
 - [x] Root cause confirmed with source-line and log evidence (above).
 - [x] `cargo clippy --all-targets`, `cargo test`, `cargo build` green.
+- [x] Privileged TTY quit keeps its drop-time restore and releases DRM master
+      exactly once (per-card policy proven by tests; live UAT still pending).
 - [ ] Live DRM quit still releases libseat and returns to the previous TTY
       (operator-gated: eswm cannot start inside this Wayland session because of
       the VT grab, and the operator cannot switch TTY while it runs).

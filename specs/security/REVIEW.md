@@ -6,9 +6,9 @@
 **Security impact:** NONE
 
 ## Scope
-- `src/udev.rs`: add a private `Quiesce` seam and generic `quiesce_all` helper;
-  call `DrmOutputManager::pause()` on every backend after the event loop and
-  before `state` drops, unless the libseat session is already paused.
+- `src/udev.rs`: record `drm_master` per backend at device open (repeat of
+  smithay's own ioctl), add a private `Quiesce` seam and generic
+  `quiesce_unprivileged` helper, and call it from `Drop for UdevData`.
 - `specs/bugs/*`, `specs/verifications/*`, `specs/state.yaml`: RCA, TDD
   evidence, defect-class sweep, verification record, and handoff.
 
@@ -22,9 +22,12 @@
 ## Notes
 - The change removes an ERROR log line by removing the failing operation, not
   by suppressing diagnostics or weakening a check. No trust boundary moves.
-- `DrmDevice::pause()` releases DRM master when held; that is the canonical
-  teardown sequence. The `session_paused` guard avoids a second release on a
-  privileged session, which would otherwise introduce a new ERROR.
+- `acquire_master_lock()` is re-asked at device open only to record a boolean;
+  re-acquiring an already-held master is a no-op that smithay itself performs
+  in `activate()`. It grants no new privilege and opens no new fd.
+- Only unprivileged cards are paused. Privileged cards keep smithay's
+  drop-time restore and release DRM master exactly once in `DrmDeviceFd::drop`,
+  so the real-TTY path is unchanged and no double-release ERROR is introduced.
 - Live DRM quit remains an operator-gated verification gap (VT-grab
   constraint), recorded in the verification record — not a security finding.
 
