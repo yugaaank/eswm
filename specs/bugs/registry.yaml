@@ -252,6 +252,12 @@ bug-2026-11-22t123500:
   approach: "Three-outcome OversizeAction policy; reset only on fitting commit"
   commit_message: "refactor(main): exhaustive oversize dispatch prevents silent new actions"
   hardware_uat: pending
+  followup: |
+    Render-time clipping added after 13:11 run showed Craft apps still spill
+    (client ignores 3 configures, commits 1440x900 vs frame 1190x795).
+    ClippedSurfaceElement crops src/dst to the configured frame; commits
+    b831a9a (test) and e28fc09 (fix). Clippy clean, 165 tests, build green.
+    Hardware UAT still required to confirm Craft content stays inside border.
   description: |
     The size-reassert budget resets when the budget is exhausted, not only when
     the client commits a fitting buffer. A stubborn Electron client therefore

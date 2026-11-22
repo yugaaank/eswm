@@ -160,8 +160,27 @@ passed; `cargo build` green. TDD commits `87f4d2a`→`f17b94e`, `c4e2d96`→
 — defect class documented, 10 matches in `src/*.rs`, all inside this policy.
 **Commit:** `refactor(main): exhaustive oversize dispatch prevents silent new actions`
 
+## Follow-up fix — render-time clipping (2026-11-22, 13:11 run)
+
+The 13:11 fixed-binary run confirmed the retry cap works (exactly 3 re-sends per
+window, no storm) and Helium content rendered. But Craft windows still spilled
+outside the border: deckcraft/gridcraft commit `1440x900` buffers against a
+`1190x795` frame and ignore all configures. Deckcraft's own log confirms it
+requests `1440x900` at startup; this is not a CSD-offset problem (`offset=(0,0)`).
+
+The retry-cap fix alone cannot solve this — a client that refuses the configure
+will always overflow an unclipped render. Added a `ClippedSurfaceElement` render
+element that crops `src`/`dst` proportionally to the configured frame, with
+`underlying_storage() -> None` so direct scanout cannot bypass the crop.
+Applied to toplevel surface trees in both render branches; popups retain their
+shadows. Pure clipping math has 5 tests.
+
+**Commits:** `b831a9a` (test), `e28fc09` (fix).
+**Validation:** clippy clean, 165 tests passed, build green.
+
 **Hardware UAT: PENDING.** Mechanical validation is green but behavioral proof
-requires a live DRM session. Open Helium this time (it was absent from the
-12:35 run) plus deckcraft/gridcraft, then confirm no `re-sending size` storm and
-no `BAD_MATCH` / `EGLImage` errors. Until then this bug stays open, the parent
-dmabuf bug stays open, and no branch is merged into `main`.
+requires a live DRM session. Re-run the fixed binary with Helium plus
+deckcraft/gridcraft, then confirm (a) no `re-sending size` storm, (b) no
+`BAD_MATCH` / `EGLImage` errors, and (c) Craft content stays inside the border.
+Until then this bug stays open, the parent dmabuf bug stays open, and no branch
+is merged into `main`.
