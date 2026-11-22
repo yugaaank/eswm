@@ -15,7 +15,7 @@
 - `Settings.qml waybarHeight: 38` matches Waybar `height: 38`.
 - GPU panel renders disabled "Unavailable on eswm"; `gpu_ctl.py` is never invoked.
 - QuickShell menu LOCK button disabled; `compat/NONFUNCTIONAL.md` lists all dormant files.
-- `config.lua`: autostarts QS + Waybar, adds Tsugumori panels on non-conflicting keys, keeps Super+Return as terminal, leaves Super+L unbound, keeps bottom dock at 30.
+- `config.lua`: autostarts QS + Waybar, adds Tsugumori panels on non-conflicting keys, keeps Super+Return as terminal, leaves Super+L unbound, keeps bottom dock at 30. `Super+Space` opens the Tsugumori app grid via `tsugumoriShell toggleMenu` (verified against `ShellIpc.qml` target/method); vicinae stays autostarted but unbound.
 
 ## Finding: IPC signature not exported
 
