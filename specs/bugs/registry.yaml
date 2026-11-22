@@ -423,7 +423,7 @@ bug-2026-11-22t151200-ab24-import-node-hint:
   title: Cross-GPU import retries log BAD_MATCH for NVIDIA AB24 buffers
   severity: low
   priority: p3
-  status: open
+  status: closed
   reported_by: log_analysis
   date: "2026-11-22T15:12:00+05:30"
   scope: rendering
@@ -458,3 +458,20 @@ bug-2026-11-22t151200-ab24-import-node-hint:
   verify: |
     cargo clippy --all-targets; cargo test --bin eswm; cargo build;
     live DRM UAT: no new BAD_MATCH/EGLImage ERROR lines when opening launcher.
+  files_changed:
+    - src/udev.rs
+  approach: >-
+    Retain per-GPU FormatSets from feedback setup (scanout-first) and set the
+    dmabuf node hint only on an exact format+modifier match, via a pure helper.
+  commit_message: "fix(udev): route AB24 buffers to the GPU that advertises their modifier"
+  hardware_uat: ab24_end_to_end_reproduced_clean
+  uat_note: >-
+    16:11 IST deterministic injection of the exact 15:12 AB24 buffer (modifier
+    0x300000000606014) imported as node=Some(card0/NVIDIA) with zero
+    BAD_MATCH/EGLImage errors; baseline had 6+6 and node=None. The 5 earlier
+    client-driven runs missed AB24 because the launcher sent Nautilus to
+    Hyprland, not eswm. Clippy clean, 179 tests, build green; dual review 100/100.
+  followup: >-
+    Consider-level (non-blocking, logged not fixed): dmabuf_sources is a startup
+    snapshot and not refreshed on GPU hot-unplug; duplicate-source edge case
+    when scanout_render_node is None; test fixture naming nit.

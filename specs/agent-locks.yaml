@@ -7,7 +7,3 @@ locks:
   locked_by: 'agent: fix-bug'
   locked_at: '2026-11-21T20:53:29Z'
   files_touched: []
-- story_id: BUG-2026-11-22-AB24-IMPORT-NODE-HINT
-  locked_by: 'agent: develop-tdd'
-  locked_at: '2026-11-22T09:54:38Z'
-  files_touched: []
