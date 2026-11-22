@@ -1,7 +1,7 @@
 active_flow: fix_bug
 active_epic_id: null
 active_story_id: null
-active_bug_id: BUG-2026-11-22-OVERSIZE-RETRY-CAP
+active_bug_id: BUG-2026-11-22-DOUBLE-BIND-WL-DISPLAY
 release:
   target_version: null
   last_tag: null
@@ -11,11 +11,11 @@ epic_cycle:
   next_skill: null
   completed_steps: []
 bug_cycle:
-  current_step: 5
-  completed_steps: [1, 2, 3, 4, 5]
+  current_step: 3
+  completed_steps: [1, 2]
 git:
   branch: main
-  hash: "60529b2"
+  hash: "77ee71f"
 handoff:
   last_step_completed: "BUG-2026-11-22-OVERSIZE-RETRY-CAP + BUG-2026-11-21-DMABUF-IMPORT: retry cap fixed (3 re-sends/window), render-time ClippedSurfaceElement added for Craft overflow (b831a9a/e28fc09), damage/opaque clipped-coordinate fix via clip_local_region with TDD (9da9625/5fbbb7b, 0ecc6c9, 94594ac/e08adfa). 169 tests + clippy + build green. Operator UAT at 13:41 IST: 'stale pixels are gone, commit and merge into main' — stale-pixel gate confirmed and merge explicitly authorized. Craft border fit, CSD offset, Helium content and e09s01 t7 checks were not explicitly reconfirmed; recorded as unconfirmed, not waived. Landed on main as merge commit 60529b2; 169 tests + clippy + build green on main. CI unverified per operator skip."
   open_decisions:
