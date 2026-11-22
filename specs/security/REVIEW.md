@@ -1,4 +1,43 @@
-# Security Review — current: BUG-2026-11-22-XDG-ACTIVATION-GLOBAL
+# Security Review — current: BUG-2026-11-22-AB24-IMPORT-NODE-HINT
+
+**Branch:** `fix-ab24-import-node-hint` (`9ee6cf6..HEAD`)
+**Date:** 2026-11-22
+**Risk:** P3 (per bug registry)
+**Security impact:** NONE
+
+## Scope
+- `src/udev.rs`: retain per-GPU `FormatSet`s in `UdevData`, add pure generic
+  `dmabuf_source_node`, and set a dmabuf node hint only on an exact
+  format+modifier match in `DmabufHandler::dmabuf_imported`.
+- `specs/agent-locks.yaml`, `specs/state.yaml`: kickoff lock and handoff.
+- `specs/bugs/*`, `specs/verifications/*`: RCA, TDD plan and cycle evidence
+  (separate review; documentation only).
+
+## Findings
+- **HIGH (confidence ≥ 8):** none.
+- **MEDIUM / LOW:** none identified.
+
+## Scan notes
+- **Scope resolution:** diff from merge base contains one production file
+  (`src/udev.rs`) plus bookkeeping.
+- **Context:** eswm is a local Wayland compositor. `dmabuf.format()` originates
+  from a client buffer, but the new helper only compares that value against
+  `FormatSet`s derived from local EGL/GPU enumeration and returns a `DrmNode`
+  from the same local enumeration. No client supplies the node value.
+- **Vulnerability assessment:** no trust boundary, credentials, filesystem
+  paths, network input, command execution, or serialization is touched.
+  `Dmabuf::set_node` writes an in-process hint behind a mutex. The worst case
+  of a bad match is a failed local EGL import (availability/rendering), which
+  is excluded as a denial-of-service concern and has no privilege impact.
+- **False-positive filtering:** memory-safety concerns are impossible by Rust's
+  guarantees (hard exclusion 10); rendering failure is DOS (hard exclusion 1).
+- **Verdict:** PASS. No unresolved HIGH findings; no exceptions required.
+- Live DRM UAT (no new `BAD_MATCH`/`EGLImage` ERROR lines) remains an operator
+  correctness gate, not a security finding.
+
+---
+
+# Security Review — BUG-2026-11-22-XDG-ACTIVATION-GLOBAL
 
 **Branch:** `fix-xdg-activation-global` (`main..HEAD`)
 **Date:** 2026-11-22

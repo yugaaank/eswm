@@ -1,0 +1,84 @@
+bug_id: BUG-2026-11-22-AB24-IMPORT-NODE-HINT
+verified_at: "2026-11-22T10:05:00Z"
+verifier: verify-work
+branch: fix-ab24-import-node-hint
+risk: P3
+scope: automated-green-manual-pending
+gates:
+  preflight:
+    passed: true
+    commands:
+      - cargo clippy --all-targets
+      - cargo test
+      - cargo build
+  terminal_verdict:
+    command: "cargo clippy --all-targets && cargo test && cargo build"
+    exit_code: 0
+    captured_at: "2026-11-22T10:02:00Z"
+    note: >-
+      Single contiguous run; stdout/stderr saved to
+      /tmp/opencode/ab24-verify-terminal.log (sha256
+      298db5929e553cc3d7c47134e456c6fb33f46f6fc92cb8a2241ee93a7bc2e5dd).
+      clippy_exit=0, test_exit=0, build_exit=0, 179 tests passed.
+  targeted_tests:
+    passed: true
+    command: "cargo test --bin eswm dmabuf_source_node"
+    result: "3 passed"
+    tests:
+      - dmabuf_source_node_prefers_the_gpu_with_the_exact_modifier
+      - dmabuf_source_node_leaves_unproven_buffers_unhinted
+      - dmabuf_source_node_resolves_shared_linear_formats_to_scanout
+  red_green_discipline:
+    passed: true
+    red_commit: 87d48e2
+    red_evidence: "4 x E0425 cannot find function dmabuf_source_node"
+    green_commits: [b24492e, 9629c43]
+    note: >-
+      scripts/verify-tdd-red-commit.sh and scripts/bp-timing.sh do not exist in
+      this repo; the two-commit gate was enforced with git log and the RED
+      compiler output instead.
+  security_review:
+    passed: true
+    high_findings: 0
+    report: specs/security/REVIEW.md
+  defect_class_sweep:
+    passed: true
+    report: specs/verifications/generalize-sweep-BUG-2026-11-22-AB24-IMPORT-NODE-HINT.json
+    result: "1 guarded set_node call site, 0 unguarded hints"
+  unavailable_repo_scripts:
+    - scripts/check-blind-spots.sh
+    - scripts/lib/completeness-critic.sh
+    - scripts/verify-adversarial.sh
+    - scripts/bp-read-agents.sh
+    - scripts/verify-tdd-red-commit.sh
+    - scripts/bp-timing.sh
+hardware_uat:
+  status: pending_operator
+  reason: >-
+    DRM/libseat cannot be started inside an existing Wayland/X11 session (VT
+    grab); the fix changes the live import path and needs a DRM run.
+  steps:
+    - step: "Start eswm on the hybrid laptop from a TTY with RUST_LOG=debug."
+      expected: "Startup logs dmabuf device and the two feedback tranches as before."
+      passed: null
+    - step: "Open the launcher that mapped the AB24/NVIDIA window in the 15:12 session."
+      expected: "Client content renders; no Failed to import surface warnings."
+      passed: null
+    - step: "Grep the new eswm.log for BAD_MATCH and Failed to create `EGLImage`."
+      expected: "0 matches; dmabuf imported debug lines show node=Some(renderD129) for AB24."
+      passed: null
+    - step: "Reopen Helium and a plain AR24 client."
+      expected: "No new BAD_MATCH/EGLImage errors; imports still work."
+      passed: null
+  baseline_for_comparison:
+    source: ~/.local/state/eswm/eswm.log (15:12 IST session)
+    bad_match: 6
+    eglimage_errors: 6
+    eglimage_not_supported: 1
+    import_failures: 0
+verdict: >-
+  All automated gates, security review and defect-class sweep pass. Manual
+  live-DRM UAT is pending because the compositor cannot be started from this
+  session; the story is NOT marked done until an operator confirms the log is
+  clean. Known expected DRM restore ERRORs remain tracked by
+  BUG-2026-11-22-DRM-RESTORE-PERMISSION and are out of scope here.
