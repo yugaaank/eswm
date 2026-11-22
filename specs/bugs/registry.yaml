@@ -274,3 +274,93 @@ bug-2026-11-22t123500:
     cargo test --bin eswm oversize_commit_action; cargo clippy; cargo build;
     live DRM run with RUST_LOG=debug and deckcraft/gridcraft, then grep
     're-sending size' in eswm.log.
+
+bug-2026-11-22t080129-double-bind:
+  id: BUG-2026-11-22-DOUBLE-BIND-WL-DISPLAY
+  title: Wayland display bound twice on one physical GPU at startup
+  severity: low
+  priority: p2
+  status: open
+  reported_by: log_analysis
+  date: "2026-11-22T13:31:26+05:30"
+  scope: drm
+  security_impact: none
+  files:
+    - src/udev.rs
+  description: |
+    On the hybrid-GPU laptop, startup reports "Double bind_wl_display,
+    smithay does not support this, please report" while enabling hardware
+    acceleration. Both card0 and renderD129 belong to the same physical GPU
+    but are treated as separate candidates because their DRM device ids differ.
+    The second bind on a shared EGL display is not supported by smithay.
+  what_expected: |
+    Bind the Wayland display at most once per physical GPU; no smithay warning.
+  steps_to_reproduce:
+    - Start eswm on the hybrid-GPU laptop with RUST_LOG=debug.
+    - Grep eswm.log for 'Double bind_wl_display' and 'trying GPU'.
+  root_cause: |
+    Candidate deduplication keys on (dev_id, node type), which cannot collapse
+    a primary node and its render node when the driver reports different ids.
+  verify: |
+    cargo clippy --all-targets; cargo test --bin eswm; cargo build;
+    live DRM startup with no 'Double bind_wl_display' warning.
+
+bug-2026-11-22t080159-drm-restore:
+  id: BUG-2026-11-22-DRM-RESTORE-PERMISSION
+  title: DRM restore errors on graceful shutdown
+  severity: low
+  priority: p3
+  status: open
+  reported_by: log_analysis
+  date: "2026-11-22T13:31:26+05:30"
+  scope: drm
+  security_impact: none
+  files:
+    - src/udev.rs
+  description: |
+    Quitting via the keybind produces two ERROR lines: "Failed to restore
+    previous state. Error: Permission denied (os error 13)" for /dev/dri/card1
+    and /dev/dri/card0. The session started unprivileged ("Unable to become
+    drm master, assuming unprivileged mode"), so smithay's drop-time restore
+    cannot reassert the previous mode. Every session ends with red ERROR lines.
+  what_expected: |
+    Graceful shutdown without ERROR-level teardown noise, or a documented
+    downgrade to WARN when the compositor never held DRM master.
+  steps_to_reproduce:
+    - Start eswm on the hybrid-GPU laptop with RUST_LOG=debug.
+    - Quit with the keybind and grep eswm.log for 'Failed to restore previous state'.
+  root_cause: |
+    Device drop path attempts mode restore even though the session never
+    acquired DRM master privileges.
+  verify: |
+    cargo clippy --all-targets; cargo test --bin eswm; cargo build;
+    live DRM quit with no ERROR lines (or an accepted WARN downgrade).
+
+bug-2026-11-22t133134-xdg-activation:
+  id: BUG-2026-11-22-XDG-ACTIVATION-GLOBAL
+  title: Clients cannot mint xdg activation tokens
+  severity: low
+  priority: p3
+  status: open
+  reported_by: log_analysis
+  date: "2026-11-22T13:31:26+05:30"
+  scope: wayland
+  security_impact: none
+  files:
+    - src/main.rs
+  description: |
+    Spawn log repeatedly reports "Unable to mint xdg activation token to
+    launch ..." for deckcraft and helium. eswm does not advertise the
+    xdg_activation_v1 global, so clients fall back to unactivated launches.
+  what_expected: |
+    Compositor advertises xdg_activation_v1 or the launch path supplies a token
+    so client windows arrive with proper focus/activation semantics.
+  steps_to_reproduce:
+    - Launch deckcraft or Helium on eswm.
+    - Grep spawn.log for 'Unable to mint xdg activation token'.
+  root_cause: |
+    No xdg_activation_v1 global is registered with the Wayland display.
+  verify: |
+    cargo clippy --all-targets; cargo test --bin eswm; cargo build;
+    launch a client and confirm no activation-token warning in spawn.log.
+
