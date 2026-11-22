@@ -1,0 +1,28 @@
+{
+  "defect_class": "drm-device-dropped-while-active",
+  "description": "A DrmDevice that is still marked active when it is dropped makes smithay attempt a drop-time mode restore. In an unprivileged session that ioctl returns EACCES and is logged at ERROR once per card. The fix is to pause (quiesce) every device before the owning struct is dropped.",
+  "grep_pattern": "backends\\.remove|drm_output_manager\\.pause|quiesce_all|BackendData",
+  "match_count": 1,
+  "sweep_scope": "src/udev.rs — all paths that drop a BackendData / DrmOutputManager (event-loop teardown, libseat pause/activate, udev device_removed)",
+  "patched_in_pr": [
+    "src/udev.rs:854 — quiesce_all over every backend immediately after the event loop, before state drops"
+  ],
+  "tracked_issues": [
+    "src/udev.rs:2349 — device_removed() removes a BackendData on hot-unplug without pausing it first; an active device being unplugged can hit the same drop-time restore ERROR. Logged as a follow-up in specs/bugs/BUG-2026-11-22-DRM-RESTORE-PERMISSION.md and registry.yaml; hot-unplug needs its own UAT and is out of scope for this graceful-quit fix."
+  ],
+  "evidence": {
+    "backend_drop_sites_total": 2,
+    "backend_drop_sites_quiesced": 1,
+    "backend_drop_sites_tracked": 1,
+    "pre_fix_error_lines_per_card": 1,
+    "cards_in_log": [
+      "/dev/dri/card0",
+      "/dev/dri/card1"
+    ],
+    "smithay_drop_guard": "backend/drm/device/atomic.rs:240 — if self.active.load(SeqCst)",
+    "smithay_pause_clears_guard": "backend/drm/device/mod.rs:419 — self.set_active(false)",
+    "startup_master_state": "unprivileged (fd.rs:77-80 warning on both cards)",
+    "double_pause_guard": "quiesce_all(..., session_paused) skips when SessionEvent::PauseSession already paused the devices"
+  },
+  "verification_script": "not present in eswm repo; sweep recorded manually from grep output and smithay 0.7.0 source lines"
+}

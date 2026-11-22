@@ -119,10 +119,40 @@ produce a *different* ERROR. The quit teardown is therefore conditional on
    started inside this Wayland session because of the VT grab, and the operator
    cannot switch TTY while it runs).
 
+## Resolution
+
+**Fixed:** 2026-11-22 (branch `fix-drm-restore-permission`)
+**Root cause confirmed:** eswm quit with DRM devices still marked active, so
+smithay's drop-time restore attempted an ioctl the unprivileged session could
+not perform.
+**Fix applied:** `quiesce_all()` calls `DrmOutputManager::pause()` on every
+backend immediately after the event loop and before `state` drops. Pausing
+clears the `active` flag that guards smithay's restore, so drop stays silent.
+**Hardening added:** `session_paused` policy guard prevents a second pause when
+`SessionEvent::PauseSession` already released DRM master; three unit tests with
+a `FakeBackend` cover two cards, the already-paused case, and the empty map.
+**Evidence:** `cargo clippy --all-targets && cargo test && cargo build` all exit
+0; 182 tests pass (179 baseline + 3 new). Log:
+`/tmp/opencode/drm-restore-preflight.log`, sha256
+`e1ec475b0fbc532fc86073cdd6f9419eb0c012d5975a941f2d96a931c4980d16`.
+**Commit:** `845dedb fix(udev): quiesce DRM devices before quit teardown`
+**RED/GREEN commits:** `1fc95ae` (test-only, fails: `Quiesce`/`quiesce_all`
+undefined) → `845dedb` (implementation, green).
+
+### Defect-class sweep
+
+`specs/verifications/generalize-sweep-BUG-2026-11-22-DRM-RESTORE-PERMISSION.json`
+records the sweep for `drm-device-dropped-while-active`. One sibling instance
+found and **tracked, not patched**: `device_removed()` (`src/udev.rs:2349`)
+drops a `BackendData` on hot-unplug without pausing it. Hot-unplug needs its own
+UAT and is out of scope for this graceful-quit fix.
+
 ## Acceptance criteria
 
-- [ ] Quit via keybind produces no ERROR lines for mode restore.
+- [ ] Quit via keybind produces no ERROR lines for mode restore — **automated
+      proof green; live quit pending operator** (see verification record).
 - [x] Root cause confirmed with source-line and log evidence (above).
-- [ ] `cargo clippy --all-targets`, `cargo test`, `cargo build` green.
+- [x] `cargo clippy --all-targets`, `cargo test`, `cargo build` green.
 - [ ] Live DRM quit still releases libseat and returns to the previous TTY
-      (operator-gated).
+      (operator-gated: eswm cannot start inside this Wayland session because of
+      the VT grab, and the operator cannot switch TTY while it runs).

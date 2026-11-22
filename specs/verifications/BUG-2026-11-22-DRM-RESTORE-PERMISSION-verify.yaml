@@ -1,0 +1,98 @@
+bug_id: BUG-2026-11-22-DRM-RESTORE-PERMISSION
+verified_at: "2026-11-22T11:05:00Z"
+verifier: validate-fix
+branch: fix-drm-restore-permission
+risk: P3
+scope: automated-green-tdd-red-green-source-causal-proof-live-quit-pending-operator
+gates:
+  preflight:
+    passed: true
+    commands:
+      - cargo clippy --all-targets
+      - cargo test
+      - cargo build
+  terminal_verdict:
+    command: "cargo clippy --all-targets && cargo test && cargo build"
+    exit_code: 0
+    captured_at: "2026-11-22T11:03:00Z"
+    note: >-
+      Single contiguous run; stdout/stderr saved to
+      /tmp/opencode/drm-restore-preflight.log (sha256
+      e1ec475b0fbc532fc86073cdd6f9419eb0c012d5975a941f2d96a931c4980d16).
+      clippy_exit=0, test_exit=0, build_exit=0, 182 tests passed.
+  targeted_tests:
+    passed: true
+    command: "cargo test --bin eswm quiesce"
+    result: "3 passed"
+    tests:
+      - quit_quiesces_every_drm_backend
+      - paused_session_does_not_quiesce_twice
+      - no_backends_quiesces_nothing
+tdd_discipline:
+  red_commit: 1fc95ae
+  red_evidence: >-
+    Test-only commit; cargo test --bin eswm failed with E0405 (Quiesce not
+    found) and three E0425 (quiesce_all not found). Failed for the missing
+    behavior, not a syntax error.
+  green_commit: 845dedb
+  green_evidence: "3 targeted tests pass, 182 total pass, clippy clean."
+  separate_commits: true
+causal_proof:
+  bug_symptom: >-
+    ERROR "Failed to restore previous state. Error: Permission denied (os
+    error 13)" once per card, immediately before "Dropping device" at graceful
+    quit (live log 2026-11-22T10:50:04Z).
+  smithay_guard: "atomic.rs:240 — drop restores only if self.active.load(SeqCst)"
+  smithay_pause: "mod.rs:419 — DrmDevice::pause() calls set_active(false)"
+  eswm_old_path: >-
+    run_udev() returned at udev.rs:850 with devices still active; state drop
+    reached AtomicDrmDevice::drop with the guard true.
+  eswm_new_path: >-
+    quiesce_all(backends.values_mut(), paused) at udev.rs:854 runs after the
+    loop and before state drop; DrmOutputManager::pause() delegates to
+    DrmDevice::pause(), clearing the guard.
+  unprivileged_evidence: >-
+    fd.rs:77-80 warns once per card at startup; live log 10:49:54Z and
+    10:49:56Z show both warnings.
+  skipped_restore_is_correct: >-
+    The restore cannot succeed in an unprivileged session by construction;
+    suppressing the impossible ioctl removes ERROR noise with no functional
+    change. libseat release still happens on session teardown.
+  status: passed
+hardening:
+  mechanism: "session_paused policy guard + FakeBackend truth-table tests"
+  reason: >-
+    SessionEvent::PauseSession already pauses and releases master. A second
+    pause on a privileged device would call release_master_lock() twice and
+    log a different ERROR.
+  tested: true
+generalize_sweep:
+  artifact: specs/verifications/generalize-sweep-BUG-2026-11-22-DRM-RESTORE-PERMISSION.json
+  defect_class: drm-device-dropped-while-active
+  match_count: 1
+  tracked: >-
+    device_removed() hot-unplug path recorded as follow-up; not patched in this
+    graceful-quit fix.
+  status: passed
+hardware_uat:
+  status: pending_operator
+  reason: >-
+    DRM/libseat backend cannot be started inside an existing Wayland/X11
+    session (VT grab), and the operator cannot switch TTY while eswm runs.
+    No live quit could be performed from this environment.
+  operator_steps:
+    - "Start eswm from a TTY with RUST_LOG=debug."
+    - "Quit via the Super+Alt+Backspace keybind."
+    - "grep -c 'Failed to restore previous state' ~/.local/state/eswm/eswm.log"
+    - "Expect 0; also confirm the previous TTY/login prompt is visible."
+  baseline_evidence:
+    log: /home/yugaaank/.local/state/eswm/eswm.log
+    errors_before_fix: 2
+    cards:
+      - /dev/dri/card0
+      - /dev/dri/card1
+verdict: >-
+  All automated gates, TDD discipline checks, source-level causal proof, and
+  the defect-class sweep pass. The live-DRM quit check is operator-gated by the
+  VT-grab constraint and is recorded honestly as pending, not waived. The fix
+  is ready for review and merge with that single explicit UAT gap.

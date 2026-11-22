@@ -326,7 +326,7 @@ bug-2026-11-22t080159-drm-restore:
   title: DRM restore errors on graceful shutdown
   severity: low
   priority: p3
-  status: open
+  status: fixed_pending_uat
   reported_by: log_analysis
   date: "2026-11-22T13:31:26+05:30"
   scope: drm
@@ -351,6 +351,26 @@ bug-2026-11-22t080159-drm-restore:
   verify: |
     cargo clippy --all-targets; cargo test --bin eswm; cargo build;
     live DRM quit with no ERROR lines (or an accepted WARN downgrade).
+  files_changed:
+    - src/udev.rs
+    - specs/bugs/BUG-2026-11-22-DRM-RESTORE-PERMISSION.md
+    - specs/verifications/generalize-sweep-BUG-2026-11-22-DRM-RESTORE-PERMISSION.json
+  risk_level: low
+  approach: >-
+    Quiesce every DRM backend after the event loop and before state drops, so
+    smithay's active-gated drop-time restore is skipped in unprivileged
+    sessions. Skip when the libseat session is already paused.
+  commit_message: "fix(udev): quiesce DRM devices before quit teardown"
+  hardware_uat: pending_operator
+  uat_note: >-
+    Automated proof green (182 tests, clippy/build clean). Live quit not run:
+    DRM/libseat cannot start inside this Wayland session (VT grab) and the
+    operator cannot switch TTY while eswm runs. Operator check: quit via keybind
+    and grep eswm.log for 'Failed to restore previous state' -> expect 0 hits.
+  followup: >-
+    device_removed() (src/udev.rs:2349) still drops an active BackendData on
+    hot-unplug without pausing; same defect class, tracked in the generalize
+    sweep artifact, out of scope for this graceful-quit fix.
 
 bug-2026-11-22t133134-xdg-activation:
   id: BUG-2026-11-22-XDG-ACTIVATION-GLOBAL
