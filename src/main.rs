@@ -6,7 +6,7 @@ use std::{
     os::unix::fs::OpenOptionsExt,
     os::unix::io::OwnedFd,
     sync::Arc,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 mod clip;
@@ -22,7 +22,7 @@ use smithay::{
     backend::renderer::utils::{on_commit_buffer_handler, with_renderer_surface_state},
     delegate_compositor, delegate_data_device, delegate_ext_data_control, delegate_layer_shell,
     delegate_output, delegate_primary_selection, delegate_seat, delegate_shm, delegate_viewporter,
-    delegate_xdg_decoration, delegate_xdg_shell,
+    delegate_xdg_activation, delegate_xdg_decoration, delegate_xdg_shell,
     desktop::{layer_map_for_output, WindowSurfaceType},
     input::{Seat, SeatHandler, SeatState},
     output::{Mode, Output, PhysicalProperties, Subpixel},
@@ -55,6 +55,9 @@ use smithay::{
         },
         shm::{ShmHandler, ShmState},
         viewporter::ViewporterState,
+        xdg_activation::{
+            XdgActivationHandler, XdgActivationState, XdgActivationToken, XdgActivationTokenData,
+        },
     },
 };
 use wayland_protocols::xdg::shell::server::xdg_toplevel;
@@ -739,6 +742,42 @@ impl SelectionHandler for State {
     type SelectionUserData = ();
 }
 
+/// An activation token is a short-lived bearer credential for focus. Ten
+/// seconds covers the click that launched the app; an older token would let a
+/// client replay a stale request and yank focus back later.
+fn activation_token_is_fresh(age: Duration) -> bool {
+    age <= Duration::from_secs(10)
+}
+
+impl XdgActivationHandler for State {
+    fn activation_state(&mut self) -> &mut XdgActivationState {
+        &mut self.activation_state
+    }
+
+    fn request_activation(
+        &mut self,
+        token: XdgActivationToken,
+        token_data: XdgActivationTokenData,
+        surface: WlSurface,
+    ) {
+        // Tokens are single-use: keep a replayed one from focusing anything.
+        self.activation_state().remove_token(&token);
+        if !activation_token_is_fresh(token_data.timestamp.elapsed()) {
+            tracing::warn!("ignoring stale xdg activation token");
+            return;
+        }
+        let Some(id) = window_id_of(&surface) else {
+            tracing::warn!("xdg activation requested for an untracked surface");
+            return;
+        };
+        if self.wm.focus_window_or_restore(id) {
+            self.update_keyboard_focus();
+            self.redraw_needed = true;
+            tracing::info!("xdg activation focused window {id:?}");
+        }
+    }
+}
+
 impl DataDeviceHandler for State {
     fn data_device_state(&self) -> &DataDeviceState {
         &self.data_device_state
@@ -921,6 +960,11 @@ pub(crate) struct State {
     primary_selection_state: PrimarySelectionState,
     #[allow(dead_code)]
     data_control_state: DataControlState,
+    // BUG-2026-11-22-XDG-ACTIVATION-GLOBAL: owns the xdg_activation_v1 global
+    // and the tokens clients mint through it. Launchers can finally stop
+    // yelling "Unable to mint xdg activation token" into the void like a
+    // vending machine that ate the coin and forgot to dispense the snack.
+    activation_state: XdgActivationState,
 
     seat: Seat<Self>,
     #[allow(dead_code)] // owns the wl_output global's backing data
@@ -1063,6 +1107,9 @@ fn new_state(
         Some(&primary_selection_state),
         |_| true,
     );
+    // Advertises xdg_activation_v1; without it launchers log "Unable to mint
+    // xdg activation token" for every app they start.
+    let activation_state = XdgActivationState::new::<State>(dh);
 
     // Tests fabricate one 1280x800 virtual output. The DRM backend attaches real
     // outputs per connector instead (and does not call this with true).
@@ -1117,6 +1164,7 @@ fn new_state(
         data_device_state,
         primary_selection_state,
         data_control_state,
+        activation_state,
         seat,
         output,
         wm,
@@ -1487,6 +1535,7 @@ impl ClientData for ClientState {
 
 // Macros used to delegate protocol handling to types in the app state.
 delegate_xdg_shell!(State);
+delegate_xdg_activation!(State);
 delegate_xdg_decoration!(State);
 delegate_layer_shell!(State);
 delegate_output!(State);
@@ -1506,6 +1555,10 @@ mod tests {
     use smithay::reexports::wayland_server::Display;
     use crate::control::handle_request;
     use serde_json::Value;
+    use wayland_protocols::xdg::activation::v1::client::{
+        xdg_activation_token_v1::{self, XdgActivationTokenV1},
+        xdg_activation_v1::{self, XdgActivationV1},
+    };
 
     fn test_state() -> State {
         let display: Display<State> = Display::new().expect("create test display");
@@ -1513,6 +1566,160 @@ mod tests {
         let mut state = new_state("test", &dh, true);
         state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
         state
+    }
+
+    // BUG-2026-11-22-XDG-ACTIVATION-GLOBAL: a real client enumerating globals
+    // must see xdg_activation_v1, otherwise its launcher logs "Unable to mint
+    // xdg activation token" for every app. The probe collects what the wire
+    // actually advertises rather than trusting a field on State.
+    #[derive(Default)]
+    struct RegistryProbe {
+        interfaces: Vec<String>,
+        // Keep the bound objects alive until the token's done event arrives.
+        activation: Option<XdgActivationV1>,
+        token: Option<XdgActivationTokenV1>,
+        token_done: Option<String>,
+    }
+
+    impl wayland_client::Dispatch<wayland_client::protocol::wl_registry::WlRegistry, ()>
+        for RegistryProbe
+    {
+        fn event(
+            state: &mut Self,
+            registry: &wayland_client::protocol::wl_registry::WlRegistry,
+            event: wayland_client::protocol::wl_registry::Event,
+            _: &(),
+            _: &wayland_client::Connection,
+            qh: &wayland_client::QueueHandle<Self>,
+        ) {
+            if let wayland_client::protocol::wl_registry::Event::Global {
+                name,
+                interface,
+                version,
+            } = event
+            {
+                state.interfaces.push(interface.clone());
+                if interface == "xdg_activation_v1" {
+                    let activation =
+                        registry.bind::<XdgActivationV1, (), Self>(name, version, qh, ());
+                    let token = activation.get_activation_token(qh, ());
+                    token.commit();
+                    state.activation = Some(activation);
+                    state.token = Some(token);
+                }
+            }
+        }
+    }
+
+    impl wayland_client::Dispatch<XdgActivationV1, ()> for RegistryProbe {
+        fn event(
+            _: &mut Self,
+            _: &XdgActivationV1,
+            _: xdg_activation_v1::Event,
+            _: &(),
+            _: &wayland_client::Connection,
+            _: &wayland_client::QueueHandle<Self>,
+        ) {
+        }
+    }
+
+    impl wayland_client::Dispatch<XdgActivationTokenV1, ()> for RegistryProbe {
+        fn event(
+            state: &mut Self,
+            _: &XdgActivationTokenV1,
+            event: xdg_activation_token_v1::Event,
+            _: &(),
+            _: &wayland_client::Connection,
+            _: &wayland_client::QueueHandle<Self>,
+        ) {
+            if let xdg_activation_token_v1::Event::Done { token } = event {
+                state.token_done = Some(token);
+            }
+        }
+    }
+
+    #[test]
+    fn xdg_activation_global_is_advertised() {
+        use std::os::unix::net::UnixStream;
+        let mut display: Display<State> = Display::new().expect("create test display");
+        let dh = display.handle();
+        let mut state = new_state("test", &dh, true);
+        let (server_end, client_end) = UnixStream::pair().expect("unix stream pair");
+        display
+            .handle()
+            .insert_client(server_end, Arc::new(ClientState::default()))
+            .expect("insert client");
+
+        let conn = wayland_client::Connection::from_socket(client_end).expect("client socket");
+        let mut queue = conn.new_event_queue();
+        let qh = queue.handle();
+        let _registry = conn.display().get_registry(&qh, ());
+        let _ = conn.flush();
+        for _ in 0..8 {
+            let dispatched = display.dispatch_clients(&mut state).unwrap_or(0);
+            let _ = display.flush_clients();
+            if dispatched == 0 {
+                break;
+            }
+        }
+        if let Some(guard) = conn.prepare_read() {
+            let _ = guard.read();
+        }
+        let mut probe = RegistryProbe::default();
+        let _ = queue.dispatch_pending(&mut probe);
+        assert!(
+            probe.interfaces.iter().any(|name| name == "xdg_activation_v1"),
+            "client must see xdg_activation_v1 (saw {:?})",
+            probe.interfaces
+        );
+    }
+
+    // The launcher warning is about minting, so prove a real client gets
+    // token.done from the global — not just that the interface is listed.
+    #[test]
+    fn client_can_mint_xdg_activation_token() {
+        use std::os::unix::net::UnixStream;
+        let mut display: Display<State> = Display::new().expect("create test display");
+        let dh = display.handle();
+        let mut state = new_state("test", &dh, true);
+        let (server_end, client_end) = UnixStream::pair().expect("unix stream pair");
+        display
+            .handle()
+            .insert_client(server_end, Arc::new(ClientState::default()))
+            .expect("insert client");
+
+        let conn = wayland_client::Connection::from_socket(client_end).expect("client socket");
+        let mut queue = conn.new_event_queue();
+        let qh = queue.handle();
+        let _registry = conn.display().get_registry(&qh, ());
+        let mut probe = RegistryProbe::default();
+
+        for _ in 0..8 {
+            let _ = conn.flush();
+            let _ = display.dispatch_clients(&mut state).unwrap_or(0);
+            let _ = display.flush_clients();
+            if let Some(guard) = conn.prepare_read() {
+                let _ = guard.read();
+            }
+            let _ = queue.dispatch_pending(&mut probe);
+            if probe.token_done.is_some() {
+                break;
+            }
+        }
+        assert!(
+            probe.token_done.is_some(),
+            "client must receive a minted xdg activation token"
+        );
+    }
+
+    // A token is a bearer credential for focus: an old one must not let a
+    // client yank focus back ten minutes after the click that minted it.
+    #[test]
+    fn activation_token_is_fresh_only_within_ten_seconds() {
+        use std::time::Duration;
+        assert!(activation_token_is_fresh(Duration::ZERO));
+        assert!(activation_token_is_fresh(Duration::from_secs(9)));
+        assert!(!activation_token_is_fresh(Duration::from_secs(11)));
     }
 
     // e05s01t2: connect a wayland client over UnixStream::pair via insert_client
