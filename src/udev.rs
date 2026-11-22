@@ -4082,4 +4082,47 @@ mod tests {
         );
     }
 
+    // BUG-2026-11-22-DRM-RESTORE-PERMISSION: a graceful quit must quiet every
+    // card before drop. smithay's drop-time restore needs DRM master, which an
+    // unprivileged session never had. Leaving it active earns one EACCES ERROR
+    // per card and a very confused getty.
+    struct FakeBackend {
+        quiesced: bool,
+    }
+
+    impl Quiesce for FakeBackend {
+        fn quiesce(&mut self) {
+            self.quiesced = true;
+        }
+    }
+
+    #[test]
+    fn quit_quiesces_every_drm_backend() {
+        // Two cards, two ERROR lines in the baseline. Neither may survive.
+        let mut backends = [FakeBackend { quiesced: false }, FakeBackend { quiesced: false }];
+        quiesce_all(backends.iter_mut(), false);
+        assert!(
+            backends.iter().all(|backend| backend.quiesced),
+            "every DRM device must skip its impossible drop-time restore"
+        );
+    }
+
+    #[test]
+    fn paused_session_does_not_quiesce_twice() {
+        // SessionEvent::PauseSession already did this. A second release of DRM
+        // master would just trade one ERROR for another.
+        let mut backends = [FakeBackend { quiesced: false }, FakeBackend { quiesced: false }];
+        quiesce_all(backends.iter_mut(), true);
+        assert!(
+            backends.iter().all(|backend| !backend.quiesced),
+            "an already-paused session must not be quiesced again"
+        );
+    }
+
+    #[test]
+    fn no_backends_quiesces_nothing() {
+        let mut backends: [FakeBackend; 0] = [];
+        quiesce_all(backends.iter_mut(), false);
+    }
+
 }
