@@ -1515,6 +1515,78 @@ mod tests {
         state
     }
 
+    // BUG-2026-11-22-XDG-ACTIVATION-GLOBAL: a real client enumerating globals
+    // must see xdg_activation_v1, otherwise its launcher logs "Unable to mint
+    // xdg activation token" for every app. The probe collects what the wire
+    // actually advertises rather than trusting a field on State.
+    #[derive(Default)]
+    struct RegistryProbe {
+        interfaces: Vec<String>,
+    }
+
+    impl wayland_client::Dispatch<wayland_client::protocol::wl_registry::WlRegistry, ()>
+        for RegistryProbe
+    {
+        fn event(
+            state: &mut Self,
+            _: &wayland_client::protocol::wl_registry::WlRegistry,
+            event: wayland_client::protocol::wl_registry::Event,
+            _: &(),
+            _: &wayland_client::Connection,
+            _: &wayland_client::QueueHandle<Self>,
+        ) {
+            if let wayland_client::protocol::wl_registry::Event::Global { interface, .. } = event {
+                state.interfaces.push(interface);
+            }
+        }
+    }
+
+    #[test]
+    fn xdg_activation_global_is_advertised() {
+        use std::os::unix::net::UnixStream;
+        let mut display: Display<State> = Display::new().expect("create test display");
+        let dh = display.handle();
+        let mut state = new_state("test", &dh, true);
+        let (server_end, client_end) = UnixStream::pair().expect("unix stream pair");
+        display
+            .handle()
+            .insert_client(server_end, Arc::new(ClientState::default()))
+            .expect("insert client");
+
+        let conn = wayland_client::Connection::from_socket(client_end).expect("client socket");
+        let mut queue = conn.new_event_queue();
+        let qh = queue.handle();
+        let _registry = conn.display().get_registry(&qh, ());
+        let _ = conn.flush();
+        for _ in 0..8 {
+            let dispatched = display.dispatch_clients(&mut state).unwrap_or(0);
+            let _ = display.flush_clients();
+            if dispatched == 0 {
+                break;
+            }
+        }
+        if let Some(guard) = conn.prepare_read() {
+            let _ = guard.read();
+        }
+        let mut probe = RegistryProbe::default();
+        let _ = queue.dispatch_pending(&mut probe);
+        assert!(
+            probe.interfaces.iter().any(|name| name == "xdg_activation_v1"),
+            "client must see xdg_activation_v1 (saw {:?})",
+            probe.interfaces
+        );
+    }
+
+    // A token is a bearer credential for focus: an old one must not let a
+    // client yank focus back ten minutes after the click that minted it.
+    #[test]
+    fn activation_token_is_fresh_only_within_ten_seconds() {
+        use std::time::Duration;
+        assert!(activation_token_is_fresh(Duration::ZERO));
+        assert!(activation_token_is_fresh(Duration::from_secs(9)));
+        assert!(!activation_token_is_fresh(Duration::from_secs(11)));
+    }
+
     // e05s01t2: connect a wayland client over UnixStream::pair via insert_client
     #[test]
     fn fixture_inserts_client_over_unixstream() {
