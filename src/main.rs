@@ -822,15 +822,16 @@ impl CompositorHandler for State {
             if let (Some(buffer), Some(window)) = (buffer_size, self.wm.window(id)) {
                 let target = window.target_rect;
                 let attempts = window.oversize_configures;
-                if wm::commit_exceeds_target(target, buffer, attempts) {
-                    tracing::info!(
-                        "client committed {}x{} > configured {}x{}; re-sending size",
-                        buffer.0, buffer.1, target.width, target.height
-                    );
-                    self.wm.note_oversize_commit(id);
-                    crate::apply_layout(self);
-                } else if attempts > 0 {
-                    self.wm.clear_oversize(id);
+                match wm::oversize_action(target, buffer, attempts) {
+                    wm::OversizeAction::Resend => {
+                        tracing::info!(
+                            "client committed {}x{} > configured {}x{}; re-sending size",
+                            buffer.0, buffer.1, target.width, target.height
+                        );
+                        self.wm.note_oversize_commit(id);
+                        crate::apply_layout(self);
+                    }
+                    _ => {}
                 }
             }
         }

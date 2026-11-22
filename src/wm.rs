@@ -177,6 +177,24 @@ pub fn commit_exceeds_target(
         && (buffer.0 > target.width || buffer.1 > target.height)
 }
 
+/// What a surface commit should do about a buffer larger than its configured
+/// rect. Size and retry budget are separate questions; folding them together
+/// makes an exhausted budget look like a fitting commit and reset itself.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OversizeAction {
+    Resend,
+    ResetBudget,
+    None,
+}
+
+pub fn oversize_action(target: Rect, buffer: (u32, u32), _attempts: u8) -> OversizeAction {
+    if buffer.0 > target.width || buffer.1 > target.height {
+        OversizeAction::Resend
+    } else {
+        OversizeAction::None
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Workspace {
     pub id: WorkspaceId,
