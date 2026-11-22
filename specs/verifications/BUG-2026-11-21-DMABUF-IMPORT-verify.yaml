@@ -1,0 +1,49 @@
+bug_id: BUG-2026-11-21-DMABUF-IMPORT
+verified_at: "2026-11-22T12:10:00Z"
+verifier: validate-fix
+branch: fix-dmabuf-import
+scope: automated-only
+gates:
+  failing_test_replay:
+    passed: true
+    tests:
+      - id: dmabuf_feedback_cross_device_render_tranche_is_linear_only
+        command: "cargo test --bin eswm dmabuf_feedback"
+        result: "2 passed"
+      - id: dmabuf_feedback_same_device_has_no_extra_tranche
+        command: "cargo test --bin eswm dmabuf_feedback"
+        result: "2 passed"
+      - id: oversize_commit_is_detected_only_while_attempts_remain
+        command: "cargo test --bin eswm oversize"
+        result: "3 passed"
+      - id: note_oversize_commit_forces_a_size_reconfigure
+        command: "cargo test --bin eswm oversize"
+        result: "3 passed"
+      - id: matching_commit_resets_oversize_budget
+        command: "cargo test --bin eswm oversize"
+        result: "3 passed"
+  full_suite:
+    passed: true
+    command: "cargo test --bin eswm"
+    result: "149 passed, 0 failed"
+  lint:
+    passed: true
+    command: "cargo clippy --all-targets"
+    result: "warning-free"
+  build:
+    passed: true
+    command: "cargo build"
+hardware_uat:
+  passed: false
+  status: pending_operator
+  reason: >-
+    DRM/libseat must not run inside an existing Wayland/X11 session (VT grab,
+    AGENTS.md). The hybrid Intel/NVIDIA laptop is the only valid target.
+  steps:
+    - "Open Helium: client content renders, no BAD_MATCH / EGLImage errors in ~/.local/state/eswm/eswm.log"
+    - "Open Wordcraft: content fits inside the frame on first open, no reconfigure loop"
+    - "Maximize/restore and minimize/restore still preserve placement (e09s01 t7)"
+verdict: >-
+  Automated gates green. Hardware correctness is NOT yet proven; the bug is
+  closed only after the operator completes the three UAT steps above.
+evidence_file: /tmp/opencode/dmabuf-validate.txt
