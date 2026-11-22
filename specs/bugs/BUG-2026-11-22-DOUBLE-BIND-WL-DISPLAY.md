@@ -121,8 +121,10 @@ DRM selection helpers.
 
 - [ ] At most one `bind_wl_display` call succeeds per eswm process.
 - [ ] Startup on the hybrid-GPU laptop logs no `Double bind_wl_display`.
-- [ ] `hw_accel_gpus` membership is unchanged from before the fix (nodes with
-      a renderer and either a successful bind or an earlier global bind).
+- [ ] `hw_accel_gpus` contains every renderer-capable candidate. Nodes after
+      the successful bind no longer need their own wl_drm bind, so they stay
+      usable for the cross-GPU Linear tranche; scanout GPU still wins dmabuf
+      selection.
 - [ ] `cargo clippy --all-targets`, `cargo test --bin eswm`, `cargo build` green.
 - [ ] Live DRM run still selects `renderD128` for scanout dmabuf and shows no
       `BAD_MATCH` / `EGLImage not supported` errors (operator UAT).

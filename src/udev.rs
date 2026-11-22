@@ -519,23 +519,34 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
     
     info!("trying hardware acceleration on GPUs: {:?}", candidate_nodes);
     
-    // Enable hw acceleration on ALL GPUs for multi-GPU dmabuf import
-    let mut hw_accel_gpus = Vec::new();
-    for node in &candidate_nodes {
+    // Enable hw acceleration on ALL GPUs for multi-GPU dmabuf import. Only one
+    // of them can bind the process-global wl_drm reader; the rest still supply
+    // renderers for the cross-GPU Linear tranche.
+    let renderer_nodes: Vec<DrmNode> = candidate_nodes
+        .iter()
+        .copied()
+        .filter(|node| udev.gpus.single_renderer(node).is_ok())
+        .collect();
+    let hw_accel_gpus = bind_wl_display_once(&renderer_nodes, |node| {
         info!("trying GPU {} for hardware acceleration", node);
-        let r_opt = udev.gpus.single_renderer(node).ok();
-        if let Some(mut r) = r_opt {
-            let result = r.bind_wl_display(&display_handle);
-            drop(r);
-            match result {
-                Ok(_) => {
-                    info!("egl hardware-acceleration enabled on {}", node);
-                    hw_accel_gpus.push(*node);
-                }
-                Err(e) => info!(?e, "GPU {} failed", node),
+        let mut r = match udev.gpus.single_renderer(&node) {
+            Ok(r) => r,
+            Err(e) => {
+                info!(?e, "GPU {} lost its renderer", node);
+                return false;
+            }
+        };
+        match r.bind_wl_display(&display_handle) {
+            Ok(_) => {
+                info!("egl hardware-acceleration enabled on {}", node);
+                true
+            }
+            Err(e) => {
+                info!(?e, "GPU {} cannot bind the Wayland display", node);
+                false
             }
         }
-    }
+    });
     
     // Use the scanout GPU as the dmabuf GPU: it is the only choice that lets
     // client buffers be imported without a cross-GPU or cpu copy. The GPU that
@@ -1005,6 +1016,33 @@ fn preferred_mode_index(len: usize, is_preferred: impl Fn(usize) -> bool) -> Opt
         return None;
     }
     Some((0..len).find(|&i| is_preferred(i)).unwrap_or(0))
+}
+
+/// Bind the Wayland display at most once across all candidate GPUs.
+///
+/// Smithay's `EGLBufferReader` is a process-wide singleton. A second
+/// successful `bind_wl_display` warns and silently replaces the first
+/// (smithay 0.7.0 `display.rs:857-864`), so binding one display per GPU is a
+/// compositor wearing two hats and getting a stern letter from smithay about
+/// it. Keep trying while binds fail, stop at the first success, and keep every
+/// renderer-capable node in the usable set for dmabuf format advertising.
+///
+/// Reason for depth: hides the singleton rule behind one call so the DRM setup
+/// loop cannot accidentally bind twice.
+fn bind_wl_display_once<T: Copy>(
+    nodes: &[T],
+    mut bind: impl FnMut(T) -> bool,
+) -> Vec<T> {
+    let mut usable = Vec::with_capacity(nodes.len());
+    let mut bound = false;
+    for &node in nodes {
+        let ok = if bound { true } else { bind(node) };
+        if ok {
+            bound = true;
+            usable.push(node);
+        }
+    }
+    usable
 }
 
 /// Pick the GPU whose formats the dmabuf global advertises.
@@ -3618,6 +3656,22 @@ mod tests {
         });
         assert_eq!(attempts, [1, 2], "no bind attempts after the first success");
         assert_eq!(usable, [2, 3], "nodes after the bound one remain usable");
+    }
+
+    #[test]
+    fn bind_wl_display_once_tries_every_node_when_all_fail() {
+        let mut attempts = Vec::new();
+        let usable = bind_wl_display_once(&[1, 2, 3], |node| {
+            attempts.push(node);
+            false
+        });
+        assert_eq!(attempts, [1, 2, 3], "every node is tried while no bind succeeds");
+        assert!(usable.is_empty(), "a failed bind leaves no usable GPU");
+    }
+
+    #[test]
+    fn bind_wl_display_once_accepts_empty_candidates() {
+        assert!(bind_wl_display_once(&[] as &[u8], |_| true).is_empty());
     }
 
     /// Clients allocate dmabufs on the GPU the feedback advertises. If that is
