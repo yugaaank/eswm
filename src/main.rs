@@ -832,7 +832,7 @@ impl CompositorHandler for State {
                         crate::apply_layout(self);
                     }
                     wm::OversizeAction::ResetBudget => self.wm.clear_oversize(id),
-                    _ => {}
+                    wm::OversizeAction::None => {}
                 }
             }
         }
