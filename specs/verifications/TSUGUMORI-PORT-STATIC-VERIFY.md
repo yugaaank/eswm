@@ -16,6 +16,7 @@
 - GPU panel renders disabled "Unavailable on eswm"; `gpu_ctl.py` is never invoked.
 - QuickShell menu LOCK button disabled; `compat/NONFUNCTIONAL.md` lists all dormant files.
 - `config.lua`: autostarts QS + Waybar, adds Tsugumori panels on non-conflicting keys, keeps Super+Return as terminal, leaves Super+L unbound, keeps bottom dock at 30. `Super+Space` opens the Tsugumori app grid via `tsugumoriShell toggleMenu` (verified against `ShellIpc.qml` target/method); vicinae stays autostarted but unbound.
+- Wallpaper picker points at `~/Pictures/Wallpapers` (24 images). Tsugumori's lowercase default `~/Pictures/wallpapers` found nothing on this case-sensitive FS. `TSUGUMORI_WALLPAPER_DIR` overrides the path. Boot wallpaper stays off, matching Tsugumori's `boot_wallpaper = false`; use `Super+P` to pick one.
 
 ## Finding: IPC signature not exported
 
