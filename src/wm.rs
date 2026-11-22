@@ -2070,6 +2070,20 @@ mod tests {
     }
 
     #[test]
+    fn oversize_action_resets_only_on_a_fitting_commit() {
+        let target = Rect { x: 0, y: 0, width: 800, height: 600 };
+        assert_eq!(
+            oversize_action(target, (800, 600), 2),
+            OversizeAction::ResetBudget
+        );
+        assert_eq!(
+            oversize_action(target, (640, 480), MAX_OVERSIZE_CONFIGURES),
+            OversizeAction::ResetBudget
+        );
+        assert_eq!(oversize_action(target, (800, 600), 0), OversizeAction::None);
+    }
+
+    #[test]
     fn oversize_commit_is_detected_only_while_attempts_remain() {
         let target = Rect { x: 0, y: 0, width: 800, height: 600 };
         assert!(commit_exceeds_target(target, (1024, 768), 0));
