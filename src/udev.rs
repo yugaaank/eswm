@@ -86,7 +86,7 @@ use tracing::{debug, error, info, trace, warn};
 
 use smithay_drm_extras::drm_scanner::{DrmScanEvent, DrmScanner};
 
-use crate::{send_frames_surface_tree, State, wm, ipc, lua_state};
+use crate::{send_frames_surface_tree, State, clip::ClippedSurfaceElement, wm, ipc, lua_state};
 use crate::wm::{Rect, border_frame};
 
 type UdevRenderer<'a> = MultiRenderer<
@@ -101,6 +101,7 @@ render_elements! {
         R: Renderer + ImportAll + ImportMem;
     Cursor = MemoryRenderBufferRenderElement<R>,
     Surface = WaylandSurfaceRenderElement<R>,
+    ClippedSurface = ClippedSurfaceElement<R>,
     Solid = SolidColorRenderElement,
 }
 
@@ -2854,14 +2855,19 @@ impl State {
                 // Always render the window surface tree. e08s02t4: a fullscreen
                 // window's tree goes to its own band so it can paint above all
                 // layers and the dock.
-                let tree_elements = render_elements_from_surface_tree(
-                    &mut renderer,
-                    ws,
-                    (*x, *y),
-                    1.0,
-                    1.0,
-                    Kind::Unspecified,
-                );
+                //
+                // BUG-2026-11-22-OVERSIZE-RETRY-CAP follow-up: clients that
+                // ignore the size configure commit a buffer larger than the
+                // frame. Clipping keeps their content inside the border.
+                let tree_elements: Vec<WaylandSurfaceRenderElement<_>> =
+                    render_elements_from_surface_tree(
+                        &mut renderer,
+                        ws,
+                        (*x, *y),
+                        1.0,
+                        1.0,
+                        Kind::Unspecified,
+                    );
                 let tree_target = if matches!(
                     self.wm.window(*id).map(|w| w.mode.presentation),
                     Some(wm::Presentation::Fullscreen)
@@ -2870,22 +2876,35 @@ impl State {
                 } else {
                     &mut elements
                 };
-                tree_target.extend(
-                    tree_elements
-                        .into_iter()
-                        .map(EswmRenderElements::Surface),
-                );
+                if *id == crate::POPUP_FAKE_ID {
+                    // Popups own their shadows; let them paint past the frame.
+                    tree_target.extend(
+                        tree_elements.into_iter().map(EswmRenderElements::Surface),
+                    );
+                } else {
+                    let clip = Rectangle::new(
+                        Point::from((rect.x, rect.y)),
+                        Size::from((rect.width as i32, rect.height as i32)),
+                    );
+                    let scale = Scale::from(output.current_scale().fractional_scale());
+                    tree_target.extend(tree_elements.into_iter().map(|elem| {
+                        EswmRenderElements::ClippedSurface(
+                            ClippedSurfaceElement::new(elem, clip, scale),
+                        )
+                    }));
+                }
             }
         } else {
-            for (ws, x, y, id, _, _rect) in &placed {
-                let tree_elements = render_elements_from_surface_tree(
-                    &mut renderer,
-                    ws,
-                    (*x, *y),
-                    1.0,
-                    1.0,
-                    Kind::Unspecified,
-                );
+            for (ws, x, y, id, _, rect) in &placed {
+                let tree_elements: Vec<WaylandSurfaceRenderElement<_>> =
+                    render_elements_from_surface_tree(
+                        &mut renderer,
+                        ws,
+                        (*x, *y),
+                        1.0,
+                        1.0,
+                        Kind::Unspecified,
+                    );
                 let tree_target = if matches!(
                     self.wm.window(*id).map(|w| w.mode.presentation),
                     Some(wm::Presentation::Fullscreen)
@@ -2894,11 +2913,22 @@ impl State {
                 } else {
                     &mut elements
                 };
-                tree_target.extend(
-                    tree_elements
-                        .into_iter()
-                        .map(EswmRenderElements::Surface),
-                );
+                if *id == crate::POPUP_FAKE_ID {
+                    tree_target.extend(
+                        tree_elements.into_iter().map(EswmRenderElements::Surface),
+                    );
+                } else {
+                    let clip = Rectangle::new(
+                        Point::from((rect.x, rect.y)),
+                        Size::from((rect.width as i32, rect.height as i32)),
+                    );
+                    let scale = Scale::from(output.current_scale().fractional_scale());
+                    tree_target.extend(tree_elements.into_iter().map(|elem| {
+                        EswmRenderElements::ClippedSurface(
+                            ClippedSurfaceElement::new(elem, clip, scale),
+                        )
+                    }));
+                }
             }
         }
 
