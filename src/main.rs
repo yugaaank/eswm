@@ -9,6 +9,7 @@ use std::{
     time::Instant,
 };
 
+mod clip;
 mod control;
 mod edid;
 mod ipc;
