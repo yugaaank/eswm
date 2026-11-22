@@ -380,3 +380,29 @@ bug-2026-11-22t133134-xdg-activation:
     cargo clippy --all-targets; cargo test --bin eswm; cargo build;
     launch a client and confirm no activation-token warning in spawn.log.
 
+
+bug-2026-11-22t143000-spec-lint-bookkeeping:
+  id: BUG-2026-11-22-SPEC-LINT-BOOKKEEPING
+  title: spec-lint reports three stale planning-artifact references
+  severity: low
+  priority: p3
+  status: open
+  reported_by: spec_lint
+  date: "2026-11-22T14:30:00+05:30"
+  scope: specs
+  security_impact: none
+  files:
+    - specs/release-plan.yaml
+    - specs/execution-status.yaml
+    - specs/epics/e09-design-decisions/e09s01-tasks.yaml
+  description: |
+    spec-lint fails with three stale references: e08 in release-plan has no
+    capsule, execution-status lists e08-panics-correctness with no capsule
+    directory, and e09s01-tasks.yaml uses status 'failing' outside the enum.
+  what_expected: |
+    python3 scripts/spec-lint.py reports zero problems.
+  root_cause: |
+    Planning artifacts drifted after e08 completion and e09s01 planning; no
+    runtime or trust surface is involved.
+  verify: |
+    python3 scripts/spec-lint.py
