@@ -1,6 +1,7 @@
 ---
 bug_id: BUG-2026-11-21-DMABUF-IMPORT
-status: open
+status: closed
+uat_disposition: operator_confirmed_stale_pixel_gate
 severity: high
 scope: rendering
 title: Cross-GPU dmabuf import fails for Chromium/Electron clients
@@ -8,8 +9,8 @@ title: Cross-GPU dmabuf import fails for Chromium/Electron clients
 
 # BUG-2026-11-21-DMABUF-IMPORT — Cross-GPU dmabuf import fails for Chromium/Electron clients
 
-**Status:** open
-**Severity:** high (blocks client content rendering on hybrid-GPU laptops)
+**Status:** closed (operator-authorized UAT pass 2026-11-22 13:41 IST — see UAT disposition below)
+**Severity:** high (blocked client content rendering on hybrid-GPU laptops)
 **Reported by:** operator during e09s01 manual UAT (2026-11-22)
 **Discovered in:** session log `~/.local/state/eswm/eswm.log` (UTC 2026-11-21 20:45–20:47)
 
@@ -102,3 +103,17 @@ re-assert rather than a render-time clip.
 
 ## Relation to e09s01
 Not caused by the ClientMode refactor (log is from a pre-refactor build). Logged as a separate bug per CONVENTIONS § Discovered Defects; e09s01 should not absorb this GPU/dmabuf work.
+
+## UAT disposition — 2026-11-22 13:41 IST
+
+Operator report, verbatim: **"stale pixels are gone, commit and merge into main"**.
+This confirms the stale-pixel gate directly and authorizes landing the
+integration branch. The 13:31 log corroborates it: 0 `BAD_MATCH`, 0
+`EGLImage not supported`, 0 import failures, 3 bounded size re-sends, 0 queue
+errors over 832 frames.
+
+Closed on that explicit instruction. Helium content rendering and Wordcraft
+first-open fit were not restated by the operator in this session; the 13:11 log
+analysis indicated both worked. Those checks stay documented as unconfirmed in
+`specs/verifications/BUG-2026-11-21-DMABUF-IMPORT-verify.yaml` — no silent
+waiver. The three low bugs from the 13:31 sweep are separate and remain open.

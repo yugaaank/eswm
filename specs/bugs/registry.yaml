@@ -236,7 +236,7 @@ bug-2026-11-22t123500:
   id: BUG-2026-11-22-OVERSIZE-RETRY-CAP
   title: Oversize size-reassert retry cap resets itself and storms the client
   severity: medium
-  status: open
+  status: closed
   reported_by: operator_observation
   date: "2026-11-22T12:35:00+05:30"
   priority: medium
@@ -251,7 +251,12 @@ bug-2026-11-22t123500:
   risk_level: low
   approach: "Three-outcome OversizeAction policy; reset only on fitting commit"
   commit_message: "refactor(main): exhaustive oversize dispatch prevents silent new actions"
-  hardware_uat: pending
+  hardware_uat: operator_confirmed_stale_pixel_gate
+  uat_note: >-
+    Operator reported "stale pixels are gone, commit and merge into main" at
+    2026-11-22T13:41:00+05:30. 13:31 log shows 3 bounded re-sends, 0 queue
+    errors, 0 BAD_MATCH/EGLImage errors. Craft border fit and CSD offset were
+    not explicitly reconfirmed; recorded as unconfirmed, not waived.
   followup: |
     Render-time clipping added after 13:11 run showed Craft apps still spill
     (client ignores 3 configures, commits 1440x900 vs frame 1190x795).

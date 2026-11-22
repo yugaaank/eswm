@@ -34,16 +34,34 @@ gates:
     passed: true
     command: "cargo build"
 hardware_uat:
-  passed: false
-  status: pending_operator
-  reason: >-
-    DRM/libseat must not run inside an existing Wayland/X11 session (VT grab,
-    AGENTS.md). The hybrid Intel/NVIDIA laptop is the only valid target.
-  steps:
-    - "Open Helium: client content renders, no BAD_MATCH / EGLImage errors in ~/.local/state/eswm/eswm.log"
-    - "Open Wordcraft: content fits inside the frame on first open, no reconfigure loop"
-    - "Maximize/restore and minimize/restore still preserve placement (e09s01 t7)"
+  status: partially_confirmed
+  stale_pixel_gate:
+    passed: true
+    verifier: operator
+    confirmed_at: "2026-11-22T08:11:22Z"
+    quote: "stale pixels are gone, commit and merge into main"
+    scope: "no stale pixels while a window is stationary; closes the e08adfa damage/opaque coordinate fix gate"
+  log_corroboration:
+    source: "/tmp/opencode/eswm-latest-clean6.log (13:31 run, UTC 08:01:26-08:02:00)"
+    bad_match: 0
+    eglimage_not_supported: 0
+    import_failures: 0
+    re_sending_size: 3
+    queue_errors: 0
+  remaining_steps:
+    status: not_explicitly_reconfirmed
+    steps:
+      - "Open Helium: client content renders (13:11 log analysis indicates it did; operator did not restate it)"
+      - "Open Wordcraft: content fits inside the frame on first open"
+      - "Maximize/restore and minimize/restore preserve placement (e09s01 t7)"
+  merge_authorization:
+    operator_instruction: "commit and merge into main"
+    note: >-
+      Explicit operator instruction overrides the earlier full-UAT landing gate.
+      Remaining checks are recorded as unconfirmed, not waived or marked passed.
 verdict: >-
-  Automated gates green. Hardware correctness is NOT yet proven; the bug is
-  closed only after the operator completes the three UAT steps above.
+  Automated gates green. Operator confirmed the stale-pixel UAT gate and ordered
+  commit and merge. Other hardware checks were not explicitly reconfirmed and
+  stay visible as open observations. Three low bugs from the 13:31 log sweep
+  remain open independently.
 evidence_file: /tmp/opencode/dmabuf-validate.txt

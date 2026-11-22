@@ -1,6 +1,7 @@
 ---
 bug_id: BUG-2026-11-22-OVERSIZE-RETRY-CAP
-status: open
+status: closed
+uat_disposition: operator_confirmed_stale_pixel_gate
 severity: medium
 scope: rendering
 title: Oversize size-reassert retry cap resets itself and storms the client
@@ -8,8 +9,8 @@ title: Oversize size-reassert retry cap resets itself and storms the client
 
 # BUG-2026-11-22-OVERSIZE-RETRY-CAP — Oversize size-reassert retry cap resets itself and storms the client
 
-**Status:** open
-**Severity:** medium (log flood, needless reconfigures, UAT still blocked)
+**Status:** closed (operator-authorized UAT pass 2026-11-22 13:41 IST — see UAT disposition below)
+**Severity:** medium (log flood, needless reconfigures, UAT was blocked)
 **Reported by:** operator during e09s01 manual UAT (2026-11-22 12:35 local)
 **Discovered in:** `/tmp/opencode/eswm-latest-clean3.log` (UTC 2026-11-22 07:05:57–07:06:22)
 **Related:** `BUG-2026-11-21-DMABUF-IMPORT` (its size-reassert sub-fix introduced this defect)
@@ -235,3 +236,17 @@ painted — no longer a goldfish with a hole punch.
 Acceptance adds to the existing UAT gate: content updates must repaint without
 moving or resizing the window (no stale pixels after typing or a spinner
 animation), including a CSD window with `offset=(16,10)`.
+
+## UAT disposition — 2026-11-22 13:41 IST
+
+Operator report, verbatim: **"stale pixels are gone, commit and merge into main"**.
+The stale-pixel gate for the `clip_local_region` fix (`e08adfa`) is confirmed.
+The 13:31 log also shows the original retry-cap defect fixed: 3 bounded
+`re-sending size` messages (not 57), no `BAD_MATCH` / `EGLImage` errors, 0 queue
+errors over 832 frames.
+
+Closed on the operator's explicit merge instruction. Craft content staying
+inside the border and CSD `offset=(16,10)` were not explicitly reconfirmed in
+this session; they remain recorded as unconfirmed in the verification records,
+not silently waived. The retry budget now keeps its promise even if its New
+Year's resolutions were historically optimistic.

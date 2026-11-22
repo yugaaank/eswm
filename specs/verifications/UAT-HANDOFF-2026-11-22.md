@@ -45,3 +45,31 @@ do not merge into `main`.
 If all four pass: close `bug_cycle`, set the bug status to `closed`, then land
 the integration branch (the same fix is also available standalone on
 `fix-dmabuf-import` for `main`).
+
+## Operator UAT result — 2026-11-22 13:41 IST
+
+Operator report, verbatim: **"stale pixels are gone, commit and merge into main"**.
+Demanding, specific, and refreshingly free of the word "glitchy".
+
+**Confirmed by operator**
+
+- Glitch recheck (item 5): client content repaints without stale pixels while a
+  window is stationary. This closes the hardware UAT gate for the
+  `clip_local_region` damage/opaque coordinate fix (`e08adfa`).
+
+**Corroborating log evidence** (13:31 run, `/tmp/opencode/eswm-latest-clean6.log`)
+
+- 0 `BAD_MATCH`, 0 `EGLImage not supported`, 0 import failures
+- 3 bounded `re-sending size` reconfigures, 0 queue errors
+- 832 frames / 721 commits, 0.7–1.3 ms average render
+
+**Not explicitly reconfirmed in this session** — recorded as unconfirmed, not
+marked passed: Helium content (item 1), Craft content staying inside the border
+(item 2), CSD `offset=(16,10)`, e09s01 placement and MRU (items 3–4), and the
+minimized-vs-buffer distinction. The three low bugs from the 13:31 log sweep
+remain open.
+
+**Disposition:** the operator explicitly ordered commit and merge. That
+instruction overrides the earlier "do not land until the full UAT session
+passes" gate for this integration branch. Unconfirmed checks stay visible as
+open observations in the verification records; no silent waiver.

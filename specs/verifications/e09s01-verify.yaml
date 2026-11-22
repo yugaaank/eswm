@@ -23,9 +23,24 @@ phases:
   manual:
     passed: false
     pending: true
-    reason: "t7 manual UAT on live DRM (F11/maximize/restore preserve placement; MRU focus across outputs) requires operator. Operator attempted app checks but hit a pre-existing cross-GPU dmabuf import bug (Helium blank window, Wordcraft content spill); see BUG-2026-11-21-DMABUF-IMPORT. UAT of placement/MRU behavior still pending."
+    reason: "t7 manual UAT on live DRM (F11/maximize/restore preserve placement; MRU focus across outputs) was not explicitly reconfirmed by the operator. Operator attempted app checks earlier and hit the cross-GPU dmabuf import bug (Helium blank window, Wordcraft content spill); see BUG-2026-11-21-DMABUF-IMPORT. Placement/MRU behavior remains an unconfirmed observation, not a waiver."
+    stale_pixel_gate:
+      passed: true
+      verifier: operator
+      confirmed_at: "2026-11-22T08:11:22Z"
+      quote: "stale pixels are gone, commit and merge into main"
+      scope: "damage/opaque clipped-coordinate fix (e08adfa): no stale pixels while a window is stationary"
+    merge_authorization:
+      operator_instruction: "commit and merge into main"
+      overrides: "earlier do-not-land-until-full-UAT gate for this integration branch"
+      unconfirmed_checks:
+        - "Helium client content renders"
+        - "Craft content stays inside border / CSD offset=(16,10)"
+        - "t7 F11 and maximize/restore preserve placement"
+        - "t7 MRU focus across outputs"
+        - "minimized vs buffer distinction"
     automated_proxy: "client_mode, focus_mru, minimized_state, xdg_state_flags tests + presentation_toggles guard."
-    discovered_defect: "BUG-2026-11-21-DMABUF-IMPORT.md (open; separate fix-bug work)."
+    discovered_defect: "BUG-2026-11-21-DMABUF-IMPORT.md (rendering gate confirmed; other app checks not reconfirmed)."
   security_scan:
     skipped: true
     reason: "No security-sensitive changes (security: none on all tasks)"
@@ -35,7 +50,8 @@ phases:
   gaps:
     closed: false
     notes:
-      - "Manual UAT (t7) pending operator; not waived by operator for this story."
+      - "Manual UAT (t7) not explicitly reconfirmed; operator ordered merge anyway. Recorded as unconfirmed, not waived."
+      - "Operator confirmed the stale-pixel gate at 2026-11-22T08:11:22Z; merge authorized on that basis."
       - "Window.focused bool kept as a derived mirror of WindowManager.focused to limit blast radius; authoritative focus is the global Option. A later cleanup story may remove the mirror entirely."
       - "mapped remains true from creation until e09s05 registers windows on first commit with accurate buffer presence."
       - "t5 implementation landed during t2 migration; t5 test is the regression guard."
