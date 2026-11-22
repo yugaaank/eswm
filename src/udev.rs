@@ -22,7 +22,7 @@ use smithay::{
             dmabuf::Dmabuf,
             format::FormatSet,
             gbm::{GbmAllocator, GbmBufferFlags, GbmDevice},
-            Fourcc, Modifier,
+            Format, Fourcc, Modifier,
         },
         drm::{
             compositor::{FrameError, FrameFlags},
@@ -1064,6 +1064,19 @@ fn choose_dmabuf_gpu(
     scanout
         .or_else(|| hw_accel.first().copied())
         .unwrap_or(fallback)
+}
+
+/// Pick the GPU whose own format table proves it can import `format`.
+///
+/// `sources` is ordered scanout-first, so a format advertised by two GPUs
+/// (usually Linear) resolves to the scanout device and needs no copy. Unknown
+/// formats return `None` and keep smithay's try-all path: a node hint is a
+/// strong claim, not a guess.
+fn dmabuf_source_node<N: Copy>(format: &Format, sources: &[(N, FormatSet)]) -> Option<N> {
+    sources
+        .iter()
+        .find(|(_, formats)| formats.contains(format))
+        .map(|(node, _)| *node)
 }
 
 /// Formats for the dmabuf feedback tranches (BUG-2026-11-21-DMABUF-IMPORT).
@@ -3486,7 +3499,6 @@ enum DeviceAddError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use smithay::backend::allocator::Format;
 
     #[test]
     fn idle_frame_skips_render_timer() {
