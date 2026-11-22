@@ -200,3 +200,38 @@ surface trees; popups keep their shadows. Pure clipping math has 5 tests
 `cargo clippy --all-targets` clean, `cargo test --bin eswm` 165 passed,
 `cargo build` green. **Hardware UAT still required** — operator must re-run the
 fixed binary and confirm Craft content is now confined to the border.
+
+## 13:22 run — operator reported glitches
+
+Source: `/tmp/opencode/eswm-latest-clean5.log` (UTC 07:52:52–07:53:17, 5,176
+lines), stripped from `~/.local/state/eswm/eswm.log`.
+
+| Signal | Latest | Prior (13:11) | Interpretation |
+|---|---|---|---|
+| `BAD_MATCH` | 0 | 6 | dmabuf match fixed |
+| `EGLImage not supported` | 0 | 1 | conversion path fixed |
+| `Failed to convert between dmabuf` | 0 | 0 | unchanged |
+| `Failed to import surface` | 0 | 0 | unchanged |
+| `re-sending size` | 6 (3+3) | 9 (3+3+3) | retry cap bounded |
+| `render deferred` | 344 | 604 | fewer deferrals |
+| `frame gap` | 276 | 280 | timing unchanged |
+
+The only ERROR lines are shutdown-time `/dev/dri/card*` restore permission
+denials — teardown noise after the quit request. Spawn timeline puts deckcraft
+at 13:23:11 and gridcraft at 13:23:14, matching the two 3-message retry groups.
+
+**Root cause of the glitches (not timing, not dmabuf):** the clipping wrapper's
+`damage_since()` and `opaque_regions()` intersect the inner element's regions
+with the output-space clip. Smithay's `WaylandSurfaceRenderElement` returns
+those regions relative to its own origin; smithay then adds this element's
+`geometry().loc` itself. For a window at `(393,215)` a local damage rect
+`(0,0,1440,900)` intersected the clip `(393,215,1190,795)` as empty, so content
+damage was discarded entirely; surviving CSD regions were offset twice. The
+renderer only repainted on geometry changes, leaving stale pixels.
+
+Fixed on `e09s01-dmabuf-uat` at `e08adfa` via `clip_local_region()`, which adds
+the inner origin, intersects the clip, and subtracts the clipped origin. Four
+`Element`-level behavior tests (fake inner element) cover oversize, CSD offset,
+and out-of-frame cases. Clippy clean, 169 tests passed, build green. Hardware
+UAT recheck added to `specs/verifications/UAT-HANDOFF-2026-11-22.md`: repaint
+with no stale pixels while a window is stationary, including a CSD window.
