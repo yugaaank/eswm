@@ -4008,4 +4008,55 @@ mod tests {
         assert_eq!(render_tranche.iter().count(), 0);
     }
 
+    // BUG-2026-11-22-AB24-IMPORT-NODE-HINT — a device hint is only allowed
+    // when a GPU's own format table proves it can import the exact buffer.
+    #[test]
+    fn dmabuf_source_node_prefers_the_gpu_with_the_exact_modifier() {
+        let ab24_nvidia = Format {
+            code: Fourcc::Abgr8888,
+            modifier: Modifier::from(0x300000000606014),
+        };
+        let ar24_intel = Format {
+            code: Fourcc::Abgr8888,
+            modifier: Modifier::from(0x100000000000008),
+        };
+        let scanout: FormatSet = [ar24_intel].into_iter().collect();
+        let nvidia: FormatSet = [ab24_nvidia].into_iter().collect();
+        let sources = [(0u32, scanout), (1u32, nvidia)];
+
+        assert_eq!(dmabuf_source_node(&ab24_nvidia, &sources), Some(1));
+        assert_eq!(dmabuf_source_node(&ar24_intel, &sources), Some(0));
+    }
+
+    #[test]
+    fn dmabuf_source_node_leaves_unproven_buffers_unhinted() {
+        let unknown = Format {
+            code: Fourcc::Abgr8888,
+            modifier: Modifier::from(0x3000deadbeef),
+        };
+        let scanout: FormatSet = [Format {
+            code: Fourcc::Abgr8888,
+            modifier: Modifier::Linear,
+        }]
+        .into_iter()
+        .collect();
+
+        assert_eq!(dmabuf_source_node(&unknown, &[(0u32, scanout)]), None);
+    }
+
+    #[test]
+    fn dmabuf_source_node_resolves_shared_linear_formats_to_scanout() {
+        let linear = Format {
+            code: Fourcc::Abgr8888,
+            modifier: Modifier::Linear,
+        };
+        let scanout: FormatSet = [linear].into_iter().collect();
+        let other: FormatSet = [linear].into_iter().collect();
+
+        assert_eq!(
+            dmabuf_source_node(&linear, &[(0u32, scanout), (1u32, other)]),
+            Some(0)
+        );
+    }
+
 }
