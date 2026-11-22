@@ -30,7 +30,7 @@ gates:
       - quit_quiesces_every_unprivileged_card
       - privileged_card_keeps_its_drop_time_restore
       - mixed_cards_quiesce_only_the_unprivileged_ones
-      - no_backends_quiesces_nothing
+      - empty_backend_set_does_not_panic
 tdd_discipline:
   final_red_commit: 7318ff6
   final_red_evidence: >-
@@ -97,8 +97,8 @@ hardware_uat:
     session (VT grab), and the operator cannot switch TTY while eswm runs.
     No live quit could be performed from this environment.
   operator_steps:
-    - "Start eswm from a TTY with RUST_LOG=debug."
-    - "Quit via the Super+Alt+Backspace keybind."
+    - "Start eswm from a TTY with RUST_LOG=debug (active session, no prior VT switch)."
+    - "Quit via the Super+Alt+Backspace keybind without switching away first."
     - "grep -c 'Failed to restore previous state' ~/.local/state/eswm/eswm.log"
     - "Expect 0; also confirm the previous TTY/login prompt is visible."
     - "On a privileged TTY, also expect 0 'Failed to drop drm master state' lines."
@@ -112,5 +112,6 @@ verdict: >-
   All automated gates, TDD discipline checks, static causal proof, hardening
   tests, and the defect-class sweep pass. The blocking independent-review
   findings were resolved by moving to a per-card privilege policy and a Drop
-  guard. Live-DRM quit remains operator-gated by the VT-grab constraint and is
+  guard; re-review verdict is APPROVE WITH NITS, with both nits addressed.
+  Live-DRM quit remains operator-gated by the VT-grab constraint and is
   recorded honestly as pending, not waived.

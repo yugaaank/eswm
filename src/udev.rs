@@ -1976,6 +1976,9 @@ impl State {
         // Repeat the ioctl smithay just tried in DrmDeviceFd::new. Re-acquiring
         // an already-held master is a no-op (smithay does it in activate too);
         // a failure here means this card can never do a drop-time restore.
+        // Assumption: nothing can change master between the two adjacent calls.
+        // Divergence would mirror smithay's private flag incorrectly and
+        // reintroduce a double release at drop. — DRM-RESTORE-PERMISSION
         let drm_master = smithay::reexports::drm::Device::acquire_master_lock(&fd).is_ok();
 
         let (drm, notifier) = DrmDevice::new(fd.clone(), true).map_err(DeviceAddError::DrmDevice)?;
@@ -4194,10 +4197,10 @@ mod tests {
     }
 
     #[test]
-    fn no_backends_quiesces_nothing() {
+    fn empty_backend_set_does_not_panic() {
+        // Smoke test only: there is no observable effect to assert on.
         let mut backends: [FakeBackend; 0] = [];
         quiesce_unprivileged(backends.iter_mut());
-        assert_eq!(backends.len(), 0, "an empty backend map is safe");
     }
 
 }
