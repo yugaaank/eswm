@@ -275,6 +275,11 @@ mod tests {
             self.damage.push(rect);
             self
         }
+
+        fn with_opaque(mut self, rect: Rectangle<i32, Physical>) -> Self {
+            self.opaque.push(rect);
+            self
+        }
     }
 
     impl Element for FakeElement {
@@ -327,5 +332,40 @@ mod tests {
 
         let damage: Vec<_> = element.damage_since(scale, None).iter().copied().collect();
         assert_eq!(damage, vec![rect(0, 0, 1190, 795)]);
+    }
+
+    #[test]
+    fn clipped_opaque_region_maps_oversize_buffer_to_frame() {
+        let scale = Scale::from(1.0f64);
+        let clip = rect(393, 215, 1190, 795);
+        let inner = FakeElement::at(rect(393, 215, 1440, 900))
+            .with_opaque(rect(0, 0, 1440, 900));
+        let element = ClippedElement::new(inner, clip, scale);
+
+        let opaque: Vec<_> = element.opaque_regions(scale).iter().copied().collect();
+        assert_eq!(opaque, vec![rect(0, 0, 1190, 795)]);
+    }
+
+    #[test]
+    fn clipped_opaque_region_maps_partial_csd_region() {
+        let scale = Scale::from(1.0f64);
+        let clip = rect(365, 187, 1190, 795);
+        let inner = FakeElement::at(rect(349, 177, 1222, 837))
+            .with_opaque(rect(100, 50, 200, 100));
+        let element = ClippedElement::new(inner, clip, scale);
+
+        let opaque: Vec<_> = element.opaque_regions(scale).iter().copied().collect();
+        assert_eq!(opaque, vec![rect(84, 40, 200, 100)]);
+    }
+
+    #[test]
+    fn clipped_opaque_region_outside_frame_is_dropped() {
+        let scale = Scale::from(1.0f64);
+        let clip = rect(365, 187, 1190, 795);
+        let inner = FakeElement::at(rect(100, 100, 100, 100))
+            .with_opaque(rect(0, 0, 100, 100));
+        let element = ClippedElement::new(inner, clip, scale);
+
+        assert!(element.opaque_regions(scale).iter().next().is_none());
     }
 }
