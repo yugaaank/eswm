@@ -1611,7 +1611,7 @@ pub fn equal_split(
 
 #[cfg(test)]
 mod tests {
-    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation, commit_exceeds_target, MAX_OVERSIZE_CONFIGURES};
+    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation, commit_exceeds_target, oversize_action, OversizeAction, MAX_OVERSIZE_CONFIGURES};
 
     fn manager() -> (WindowManager, u64) {
         let mut manager = WindowManager::new();
@@ -2028,6 +2028,12 @@ mod tests {
     // BUG-2026-11-21-DMABUF-IMPORT (bug B): an Electron client can map with a
     // buffer larger than the size we configured, spilling past the frame. The
     // compositor re-asserts the size a bounded number of times.
+    #[test]
+    fn oversize_action_resends_while_budget_remains() {
+        let target = Rect { x: 0, y: 0, width: 800, height: 600 };
+        assert_eq!(oversize_action(target, (1024, 768), 0), OversizeAction::Resend);
+    }
+
     #[test]
     fn oversize_commit_is_detected_only_while_attempts_remain() {
         let target = Rect { x: 0, y: 0, width: 800, height: 600 };
