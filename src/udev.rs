@@ -266,6 +266,9 @@ impl DmabufHandler for State {
         // and copy through a linear buffer when required.
         use smithay::backend::allocator::Buffer as _;
         let format = dmabuf.format();
+        // "Imported" is a commitment, not a promise: EGLImage can still reject
+        // this buffer at render time. Like a horoscope, it only sounds certain.
+        // Live evidence: specs/verifications/uat-2026-11-22-live-drm.md.
         debug!(
             ?format,
             node = ?dmabuf.node(),
