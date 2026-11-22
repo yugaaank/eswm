@@ -2053,6 +2053,19 @@ mod tests {
     }
 
     #[test]
+    fn oversize_action_stops_after_the_retry_budget() {
+        let target = Rect { x: 0, y: 0, width: 800, height: 600 };
+        assert_eq!(
+            oversize_action(target, (1024, 768), MAX_OVERSIZE_CONFIGURES),
+            OversizeAction::None
+        );
+        assert_eq!(
+            oversize_action(target, (1024, 768), MAX_OVERSIZE_CONFIGURES + 1),
+            OversizeAction::None
+        );
+    }
+
+    #[test]
     fn oversize_commit_is_detected_only_while_attempts_remain() {
         let target = Rect { x: 0, y: 0, width: 800, height: 600 };
         assert!(commit_exceeds_target(target, (1024, 768), 0));
