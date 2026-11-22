@@ -260,6 +260,7 @@ impl DmabufHandler for State {
         // scanout GPU. Clients on hybrid systems allocate on another device;
         // forcing the node makes smithay import on the wrong EGL context and
         // produces `eglCreateImageKHR ... BAD_MATCH`. Leaving `node` unset
+        // lets the buffer tell us where it was born — no GPU gaslighting.
         // lets smithay's multi-GPU importer discover the source at render time
         // and copy through a linear buffer when required.
         use smithay::backend::allocator::Buffer as _;
