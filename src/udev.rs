@@ -4119,47 +4119,67 @@ mod tests {
         );
     }
 
-    // BUG-2026-11-22-DRM-RESTORE-PERMISSION: a graceful quit must quiet every
-    // card before drop. smithay's drop-time restore needs DRM master, which an
-    // unprivileged session never had. Leaving it active earns one EACCES ERROR
-    // per card and a very confused getty.
+    // BUG-2026-11-22-DRM-RESTORE-PERMISSION: only a card that never held DRM
+    // master has an impossible drop-time restore. Quiescing a privileged card
+    // would skip the getty restore AND release master twice (smithay's flag
+    // stays true), trading one ERROR for another.
     struct FakeBackend {
         quiesced: bool,
+        drm_master: bool,
     }
 
     impl Quiesce for FakeBackend {
+        fn drm_master(&self) -> bool {
+            self.drm_master
+        }
+
         fn quiesce(&mut self) {
             self.quiesced = true;
         }
     }
 
     #[test]
-    fn quit_quiesces_every_drm_backend() {
+    fn quit_quiesces_every_unprivileged_card() {
         // Two cards, two ERROR lines in the baseline. Neither may survive.
-        let mut backends = [FakeBackend { quiesced: false }, FakeBackend { quiesced: false }];
-        quiesce_all(backends.iter_mut(), false);
+        let mut backends = [
+            FakeBackend { quiesced: false, drm_master: false },
+            FakeBackend { quiesced: false, drm_master: false },
+        ];
+        quiesce_unprivileged(backends.iter_mut());
         assert!(
             backends.iter().all(|backend| backend.quiesced),
-            "every DRM device must skip its impossible drop-time restore"
+            "every unprivileged card must skip its impossible drop-time restore"
         );
     }
 
     #[test]
-    fn paused_session_does_not_quiesce_twice() {
-        // SessionEvent::PauseSession already did this. A second release of DRM
-        // master would just trade one ERROR for another.
-        let mut backends = [FakeBackend { quiesced: false }, FakeBackend { quiesced: false }];
-        quiesce_all(backends.iter_mut(), true);
+    fn privileged_card_keeps_its_drop_time_restore() {
+        // A real TTY did acquire master. Keeping the device active preserves
+        // smithay's getty restore and the single master release in fd drop.
+        let mut backends = [FakeBackend { quiesced: false, drm_master: true }];
+        quiesce_unprivileged(backends.iter_mut());
         assert!(
             backends.iter().all(|backend| !backend.quiesced),
-            "an already-paused session must not be quiesced again"
+            "a privileged card must not be paused on quit"
         );
+    }
+
+    #[test]
+    fn mixed_cards_quiesce_only_the_unprivileged_ones() {
+        let mut backends = [
+            FakeBackend { quiesced: false, drm_master: false },
+            FakeBackend { quiesced: false, drm_master: true },
+        ];
+        quiesce_unprivileged(backends.iter_mut());
+        assert!(backends[0].quiesced, "card0 never held master");
+        assert!(!backends[1].quiesced, "card1 did hold master");
     }
 
     #[test]
     fn no_backends_quiesces_nothing() {
         let mut backends: [FakeBackend; 0] = [];
-        quiesce_all(backends.iter_mut(), false);
+        quiesce_unprivileged(backends.iter_mut());
+        assert_eq!(backends.len(), 0, "an empty backend map is safe");
     }
 
 }
