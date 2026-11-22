@@ -153,6 +153,28 @@ pub struct Window {
     pub mode_sent: Option<Presentation>,
     /// Committed wl_surface input region (surface-local). None/default = whole surface.
     pub input_region: InputRegion,
+    /// How many size re-configures have been sent because the client committed
+    /// a buffer larger than `target_rect` (BUG-2026-11-21-DMABUF-IMPORT).
+    pub oversize_configures: u8,
+}
+
+/// Retry budget for clients that map oversized and ignore the first configure.
+/// Electron/Chromium commit their default-sized buffer before honouring the
+/// compositor's size; we re-assert the size a few times, then stop so a
+/// stubborn client cannot make the compositor spin forever.
+pub const MAX_OVERSIZE_CONFIGURES: u8 = 3;
+
+/// Should a committed buffer size trigger another size configure?
+///
+/// Only when the buffer is larger than the target rect (content would spill
+/// outside the frame) and we still have retry budget left.
+pub fn commit_exceeds_target(
+    target: Rect,
+    buffer: (u32, u32),
+    attempts: u8,
+) -> bool {
+    attempts < MAX_OVERSIZE_CONFIGURES
+        && (buffer.0 > target.width || buffer.1 > target.height)
 }
 
 #[derive(Clone, Debug)]
@@ -572,6 +594,29 @@ impl WindowManager {
         false
     }
 
+    /// Record that a client committed an oversized buffer. Clears `rect` so the
+    /// next `apply_layout` resends the size configure (BUG-2026-11-21-DMABUF-IMPORT).
+    /// Returns false when the retry budget is exhausted or the id is unknown.
+    pub fn note_oversize_commit(&mut self, id: WindowId) -> bool {
+        let Some(window) = self.windows.get_mut(&id) else {
+            return false;
+        };
+        if window.oversize_configures >= MAX_OVERSIZE_CONFIGURES {
+            return false;
+        }
+        window.oversize_configures += 1;
+        window.rect = Rect::default();
+        self.dirty = true;
+        true
+    }
+
+    /// Reset the oversize retry budget after a client commits a fitting buffer.
+    pub fn clear_oversize(&mut self, id: WindowId) {
+        if let Some(window) = self.windows.get_mut(&id) {
+            window.oversize_configures = 0;
+        }
+    }
+
     pub fn set_activated_sent(&mut self, id: WindowId, sent: bool) {
         if let Some(window) = self.windows.get_mut(&id) {
             window.activated_sent = Some(sent);
@@ -978,6 +1023,7 @@ impl WindowManager {
                 mode_sent: None,
                 xdg_offset: (0, 0),
                 input_region: InputRegion::default(),
+                oversize_configures: 0,
             },
         );
         self.dirty = true;
@@ -1565,7 +1611,7 @@ pub fn equal_split(
 
 #[cfg(test)]
 mod tests {
-    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation};
+    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation, commit_exceeds_target, MAX_OVERSIZE_CONFIGURES};
 
     fn manager() -> (WindowManager, u64) {
         let mut manager = WindowManager::new();
@@ -1977,6 +2023,44 @@ mod tests {
 
         assert!(!manager.focus_workspace(output, 3));
         assert_eq!(manager.output(output).unwrap().active_workspace, 1);
+    }
+
+    // BUG-2026-11-21-DMABUF-IMPORT (bug B): an Electron client can map with a
+    // buffer larger than the size we configured, spilling past the frame. The
+    // compositor re-asserts the size a bounded number of times.
+    #[test]
+    fn oversize_commit_is_detected_only_while_attempts_remain() {
+        let target = Rect { x: 0, y: 0, width: 800, height: 600 };
+        assert!(commit_exceeds_target(target, (1024, 768), 0));
+        // A buffer that fits is never oversize.
+        assert!(!commit_exceeds_target(target, (800, 600), 0));
+        assert!(!commit_exceeds_target(target, (640, 480), 0));
+        // Once the retry budget is spent we stop nagging the client.
+        assert!(!commit_exceeds_target(
+            target,
+            (1024, 768),
+            MAX_OVERSIZE_CONFIGURES
+        ));
+    }
+
+    #[test]
+    fn note_oversize_commit_forces_a_size_reconfigure() {
+        let (mut manager, output) = manager();
+        let window = manager.add_window(output, "wordcraft", "doc").unwrap();
+        manager.set_rect(window, manager.window(window).unwrap().target_rect);
+        assert!(manager.note_oversize_commit(window));
+        // Clearing `rect` is what makes apply_layout resend the size.
+        assert_eq!(manager.window(window).unwrap().rect.width, 0);
+        assert_eq!(manager.window(window).unwrap().oversize_configures, 1);
+    }
+
+    #[test]
+    fn matching_commit_resets_oversize_budget() {
+        let (mut manager, output) = manager();
+        let window = manager.add_window(output, "wordcraft", "doc").unwrap();
+        assert!(manager.note_oversize_commit(window));
+        manager.clear_oversize(window);
+        assert_eq!(manager.window(window).unwrap().oversize_configures, 0);
     }
 
     #[test]

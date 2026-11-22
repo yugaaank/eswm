@@ -14,6 +14,7 @@ use std::{
 
 pub use smithay::utils::SERIAL_COUNTER as SCOUNTER;
 use smithay::desktop::{layer_map_for_output, WindowSurfaceType};
+use wayland_protocols::wp::linux_dmabuf::zv1::server::zwp_linux_dmabuf_feedback_v1::TrancheFlags;
 use smithay::wayland::shell::wlr_layer::Layer as WlrLayer;
 use smithay::{
     backend::{
@@ -255,18 +256,20 @@ impl DmabufHandler for State {
     }
 
     fn dmabuf_imported(&mut self, _global: &DmabufGlobal, dmabuf: Dmabuf, notifier: ImportNotifier) {
-        let udev = self.udev.as_mut().unwrap();
-        if udev
-            .gpus
-            .single_renderer(&udev.dmabuf_primary_gpu)
-            .and_then(|mut renderer| renderer.import_dmabuf(&dmabuf, None))
-            .is_ok()
-        {
-            dmabuf.set_node(udev.dmabuf_primary_gpu);
-            let _ = notifier.successful::<State>();
-        } else {
-            notifier.failed();
-        }
+        // BUG-2026-11-21-DMABUF-IMPORT: do NOT force the node hint to the
+        // scanout GPU. Clients on hybrid systems allocate on another device;
+        // forcing the node makes smithay import on the wrong EGL context and
+        // produces `eglCreateImageKHR ... BAD_MATCH`. Leaving `node` unset
+        // lets smithay's multi-GPU importer discover the source at render time
+        // and copy through a linear buffer when required.
+        use smithay::backend::allocator::Buffer as _;
+        let format = dmabuf.format();
+        debug!(
+            ?format,
+            node = ?dmabuf.node(),
+            "dmabuf imported (accepting without node hint)"
+        );
+        let _ = notifier.successful::<State>();
     }
 }
 delegate_dmabuf!(State);
@@ -552,10 +555,38 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
     // e08s01t5: propagate a renderer failure through init instead of panicking.
     let renderer = udev.gpus.single_renderer(&primary_for_dmabuf)?;
 
-    // init dmabuf support with format list from the first GPU with hw acceleration
+    // BUG-2026-11-21-DMABUF-IMPORT: on hybrid-GPU systems clients may allocate
+    // on a different GPU than the scanout device. Advertise both: a Scanout
+    // tranche for the panel's device and a Linear-only render tranche for the
+    // other GPU so smithay's multi-GPU copy can bridge them.
     let dmabuf_formats = renderer.dmabuf_formats();
-    let default_feedback =
-        DmabufFeedbackBuilder::new(primary_for_dmabuf.dev_id(), dmabuf_formats).build()?;
+    let render_gpu = hw_accel_gpus
+        .iter()
+        .copied()
+        .find(|node| Some(*node) != scanout_render_node);
+    let cross_device = render_gpu.is_some();
+    let render_formats = render_gpu
+        .and_then(|node| udev.gpus.single_renderer(&node).ok())
+        .map(|r| r.dmabuf_formats())
+        .unwrap_or_default();
+    let (scanout_tranche, render_tranche) =
+        dmabuf_feedback_formats(&dmabuf_formats, &render_formats, cross_device);
+    let mut builder = DmabufFeedbackBuilder::new(primary_for_dmabuf.dev_id(), dmabuf_formats.clone());
+    if scanout_tranche.iter().next().is_some() {
+        builder = builder.add_preference_tranche(
+            primary_for_dmabuf.dev_id(),
+            Some(TrancheFlags::Scanout),
+            scanout_tranche,
+        );
+        info!("dmabuf feedback: scanout tranche on {primary_for_dmabuf}");
+    }
+    if let Some(node) = render_gpu
+        && render_tranche.iter().next().is_some()
+    {
+        builder = builder.add_preference_tranche(node.dev_id(), None, render_tranche);
+        info!("dmabuf feedback: added linear render tranche for {node}");
+    }
+    let default_feedback = builder.build()?;
     let mut dmabuf_state = DmabufState::new();
     let global = dmabuf_state.create_global_with_default_feedback::<State>(&display_handle, &default_feedback);
     state.udev.as_mut().unwrap().dmabuf_state = Some((dmabuf_state, global));
@@ -990,6 +1021,30 @@ fn choose_dmabuf_gpu(
     scanout
         .or_else(|| hw_accel.first().copied())
         .unwrap_or(fallback)
+}
+
+/// Formats for the dmabuf feedback tranches (BUG-2026-11-21-DMABUF-IMPORT).
+///
+/// Returns `(scanout_formats, render_tranche_formats)`. When the render device
+/// differs from the scanout device, the scanout tranche advertises the scanout
+/// device's own formats (target = scanout, `TrancheFlags::Scanout`) and the
+/// extra render tranche is restricted to Linear modifiers, which are the only
+/// ones that can be copied between two GPUs. Callers omit empty tranches.
+fn dmabuf_feedback_formats(
+    scanout: &FormatSet,
+    render: &FormatSet,
+    cross_device: bool,
+) -> (FormatSet, FormatSet) {
+    if !cross_device {
+        return (FormatSet::default(), FormatSet::default());
+    }
+    let scanout_formats = scanout.clone();
+    let render_tranche: FormatSet = render
+        .iter()
+        .filter(|f| f.modifier == Modifier::Linear)
+        .copied()
+        .collect();
+    (scanout_formats, render_tranche)
 }
 
 fn frame_outcome(empty_error: bool, queued: bool) -> FrameOutcome {
@@ -3359,6 +3414,7 @@ enum DeviceAddError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use smithay::backend::allocator::Format;
 
     #[test]
     fn idle_frame_skips_render_timer() {
@@ -3801,6 +3857,39 @@ mod tests {
     #[test]
     fn render_order_without_fullscreen_has_no_fullscreen_band() {
         assert!(!render_band_order(false).contains(&RenderBand::Fullscreen));
+    }
+
+    // BUG-2026-11-21-DMABUF-IMPORT — cross-GPU feedback must advertise only
+    // modifiers that can actually be copied between the two devices.
+    #[test]
+    fn dmabuf_feedback_cross_device_render_tranche_is_linear_only() {
+        let scanout: FormatSet = [
+            Format { code: Fourcc::Abgr8888, modifier: Modifier::Linear },
+            Format { code: Fourcc::Xrgb8888, modifier: Modifier::Linear },
+        ]
+        .into_iter()
+        .collect();
+        let render: FormatSet = [
+            Format { code: Fourcc::Abgr8888, modifier: Modifier::Linear },
+            Format { code: Fourcc::Abgr8888, modifier: Modifier::from(0x1234) },
+        ]
+        .into_iter()
+        .collect();
+
+        let (scanout_formats, render_tranche) = dmabuf_feedback_formats(&scanout, &render, true);
+        // The scanout tranche advertises the scanout device's own formats.
+        assert_eq!(scanout_formats.iter().count(), 2);
+        // Only Linear modifiers can be copied across devices.
+        assert_eq!(render_tranche.iter().count(), 1);
+        assert!(render_tranche.iter().all(|f| f.modifier == Modifier::Linear));
+    }
+
+    #[test]
+    fn dmabuf_feedback_same_device_has_no_extra_tranche() {
+        let formats: FormatSet = [Format { code: Fourcc::Abgr8888, modifier: Modifier::from(0x1234) }].into_iter().collect();
+        let (scanout_formats, render_tranche) = dmabuf_feedback_formats(&formats, &formats, false);
+        assert_eq!(scanout_formats.iter().count(), 0);
+        assert_eq!(render_tranche.iter().count(), 0);
     }
 
 }
