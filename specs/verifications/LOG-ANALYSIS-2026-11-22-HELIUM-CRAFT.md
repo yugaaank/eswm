@@ -235,3 +235,34 @@ the inner origin, intersects the clip, and subtracts the clipped origin. Four
 and out-of-frame cases. Clippy clean, 169 tests passed, build green. Hardware
 UAT recheck added to `specs/verifications/UAT-HANDOFF-2026-11-22.md`: repaint
 with no stale pixels while a window is stationary, including a CSD window.
+
+## 13:31 run — bug sweep
+
+Source: `/tmp/opencode/eswm-latest-clean6.log` (UTC 08:01:26–08:02:00, 13,645
+lines). Binary mtime 13:31:03 local, so this run used the `e08adfa` clipping fix.
+
+Healthy signals: 0 `BAD_MATCH`, 0 `EGLImage not supported`, 0 import failures,
+3 bounded re-sends for one Craft window, `scanout tranche` + `linear render
+tranche` present, 832 frames / 721 commits, 0 queue errors, render avg 0.7–1.3 ms.
+Focused window id=3 moved smoothly across 33 positions over two drag bursts —
+operator drag, not jitter. The 3,213 ms frame gap was logged `idle`.
+
+New eswm-owned bugs found (all logged in `specs/bugs/registry.yaml` on the
+integration branch):
+
+1. `BUG-2026-11-22-DOUBLE-BIND-WL-DISPLAY` (low/p2): `card0` and `renderD129`
+   are the same physical GPU but are both bound because dedup keys on
+   `(dev_id, node_type)`; smithay warns `Double bind_wl_display` at startup.
+2. `BUG-2026-11-22-DRM-RESTORE-PERMISSION` (low/p3): quitting by keybind writes
+   two ERROR lines for failed mode restore on `card0`/`card1`; startup already
+   said the compositor was unprivileged.
+3. `BUG-2026-11-22-XDG-ACTIVATION-GLOBAL` (low/p3): clients cannot mint
+   activation tokens because eswm does not advertise `xdg_activation_v1`.
+
+Not eswm bugs (client-side): `wl_drm#N still attached` queue warnings,
+`Invalid path data; path truncated` in deckcraft, daemon `BrokenPipe` panics,
+and xterm OSC parse errors. The 19 daemon panics are from an external test
+daemon, not the compositor.
+
+Hardware UAT result is still **unknown**: the logs cannot prove whether stale
+pixels disappeared. That needs the operator's eyes on the TTY.
