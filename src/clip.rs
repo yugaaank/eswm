@@ -141,10 +141,12 @@ impl<E: Element> Element for ClippedElement<E> {
     }
 
     fn opaque_regions(&self, scale: Scale<f64>) -> OpaqueRegions<i32, Physical> {
+        let inner_loc = self.inner.geometry(scale).loc;
+        let outer_loc = self.geometry(scale).loc;
         self.inner
             .opaque_regions(scale)
             .into_iter()
-            .filter_map(|r| r.intersection(self.clip))
+            .filter_map(|r| clip_local_region(r, inner_loc, self.clip, outer_loc))
             .collect()
     }
 
