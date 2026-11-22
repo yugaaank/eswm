@@ -846,6 +846,13 @@ state.ipc = ipc_opt;
             }
         }
     }
+
+    // BUG-2026-11-22-DRM-RESTORE-PERMISSION: quiet every card before `state`
+    // drops. Otherwise smithay attempts a drop-time mode restore that cannot
+    // work in an unprivileged session and logs EACCES at ERROR for each card.
+    let udev = state.udev.as_mut().unwrap();
+    quiesce_all(udev.backends.values_mut(), udev.paused);
+
     Ok(())
 }
 
@@ -3492,6 +3499,36 @@ pub(crate) struct BackendData {
     drm_scanner: DrmScanner,
     render_node: Option<DrmNode>,
     registration_token: RegistrationToken,
+}
+
+/// Teardown seam for BUG-2026-11-22-DRM-RESTORE-PERMISSION. smithay restores
+/// the previous DRM mode on drop only while the device is still active. An
+/// unprivileged session never acquired master, so that ioctl returns EACCES
+/// and is logged at ERROR once per card. Pausing first clears that guard.
+trait Quiesce {
+    fn quiesce(&mut self);
+}
+
+impl Quiesce for BackendData {
+    fn quiesce(&mut self) {
+        self.drm_output_manager.pause();
+    }
+}
+
+/// Tuck the GPUs in before drop — they were never master of this house anyway.
+/// A session already paused by a VT switch is left alone: pausing a privileged
+/// device twice would try to release DRM master twice and log another ERROR.
+fn quiesce_all<'a, I, D>(backends: I, session_paused: bool)
+where
+    I: IntoIterator<Item = &'a mut D>,
+    D: Quiesce + 'a,
+{
+    if session_paused {
+        return;
+    }
+    for backend in backends {
+        backend.quiesce();
+    }
 }
 
 #[derive(Debug)]
