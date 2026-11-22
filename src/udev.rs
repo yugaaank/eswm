@@ -847,12 +847,8 @@ state.ipc = ipc_opt;
         }
     }
 
-    // BUG-2026-11-22-DRM-RESTORE-PERMISSION: quiet every card before `state`
-    // drops. Otherwise smithay attempts a drop-time mode restore that cannot
-    // work in an unprivileged session and logs EACCES at ERROR for each card.
-    let udev = state.udev.as_mut().unwrap();
-    quiesce_all(udev.backends.values_mut(), udev.paused);
-
+    // BUG-2026-11-22-DRM-RESTORE-PERMISSION: UdevData::drop quiesces cards
+    // that cannot restore, so no explicit teardown call is needed here.
     Ok(())
 }
 
@@ -1977,6 +1973,10 @@ impl State {
             )
             .map_err(|err| DeviceAddError::DeviceOpen(err.to_string()))?;
         let fd = DrmDeviceFd::new(DeviceFd::from(fd));
+        // Repeat the ioctl smithay just tried in DrmDeviceFd::new. Re-acquiring
+        // an already-held master is a no-op (smithay does it in activate too);
+        // a failure here means this card can never do a drop-time restore.
+        let drm_master = smithay::reexports::drm::Device::acquire_master_lock(&fd).is_ok();
 
         let (drm, notifier) = DrmDevice::new(fd.clone(), true).map_err(DeviceAddError::DrmDevice)?;
         let gbm = GbmDevice::new(fd).map_err(DeviceAddError::GbmDevice)?;
@@ -2095,6 +2095,7 @@ impl State {
                 drm_scanner: DrmScanner::new(),
                 render_node,
                 surfaces: HashMap::new(),
+                drm_master,
             },
         );
 
@@ -3499,35 +3500,52 @@ pub(crate) struct BackendData {
     drm_scanner: DrmScanner,
     render_node: Option<DrmNode>,
     registration_token: RegistrationToken,
+    /// True when this fd held DRM master. smithay's `is_privileged()` is
+    /// crate-private, so eswm records the same ioctl result at device open.
+    drm_master: bool,
 }
 
 /// Teardown seam for BUG-2026-11-22-DRM-RESTORE-PERMISSION. smithay restores
-/// the previous DRM mode on drop only while the device is still active. An
-/// unprivileged session never acquired master, so that ioctl returns EACCES
-/// and is logged at ERROR once per card. Pausing first clears that guard.
+/// the previous DRM mode on drop only while the device is still active. A card
+/// that never acquired master cannot perform that ioctl, so it is paused
+/// before drop. A privileged card keeps the restore AND the single master
+/// release in `DrmDeviceFd::drop`; pausing it would skip the getty restore and
+/// release master twice. — we only tuck in the GPUs that own nothing.
 trait Quiesce {
+    fn drm_master(&self) -> bool;
     fn quiesce(&mut self);
 }
 
 impl Quiesce for BackendData {
+    fn drm_master(&self) -> bool {
+        self.drm_master
+    }
+
     fn quiesce(&mut self) {
         self.drm_output_manager.pause();
     }
 }
 
-/// Tuck the GPUs in before drop — they were never master of this house anyway.
-/// A session already paused by a VT switch is left alone: pausing a privileged
-/// device twice would try to release DRM master twice and log another ERROR.
-fn quiesce_all<'a, I, D>(backends: I, session_paused: bool)
+/// Visit every backend, not just those present when the session was paused:
+/// a card hot-added while paused is still active and would log the ERROR.
+fn quiesce_unprivileged<'a, I, D>(backends: I)
 where
     I: IntoIterator<Item = &'a mut D>,
     D: Quiesce + 'a,
 {
-    if session_paused {
-        return;
-    }
     for backend in backends {
-        backend.quiesce();
+        if !backend.drm_master() {
+            backend.quiesce();
+        }
+    }
+}
+
+impl Drop for UdevData {
+    fn drop(&mut self) {
+        // Covers every teardown, including early `?` returns during setup that
+        // bypass the end-of-loop path. `state` drops before `display`, so the
+        // globals removed by pause() are still alive here.
+        quiesce_unprivileged(self.backends.values_mut());
     }
 }
 
