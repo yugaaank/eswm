@@ -14,6 +14,7 @@ use std::{
 
 pub use smithay::utils::SERIAL_COUNTER as SCOUNTER;
 use smithay::desktop::{layer_map_for_output, WindowSurfaceType};
+use wayland_protocols::wp::linux_dmabuf::zv1::server::zwp_linux_dmabuf_feedback_v1::TrancheFlags;
 use smithay::wayland::shell::wlr_layer::Layer as WlrLayer;
 use smithay::{
     backend::{
@@ -85,7 +86,7 @@ use tracing::{debug, error, info, trace, warn};
 
 use smithay_drm_extras::drm_scanner::{DrmScanEvent, DrmScanner};
 
-use crate::{send_frames_surface_tree, State, wm, ipc, lua_state};
+use crate::{send_frames_surface_tree, State, clip::ClippedSurfaceElement, wm, ipc, lua_state};
 use crate::wm::{Rect, border_frame};
 
 type UdevRenderer<'a> = MultiRenderer<
@@ -100,6 +101,7 @@ render_elements! {
         R: Renderer + ImportAll + ImportMem;
     Cursor = MemoryRenderBufferRenderElement<R>,
     Surface = WaylandSurfaceRenderElement<R>,
+    ClippedSurface = ClippedSurfaceElement<R>,
     Solid = SolidColorRenderElement,
 }
 
@@ -255,18 +257,21 @@ impl DmabufHandler for State {
     }
 
     fn dmabuf_imported(&mut self, _global: &DmabufGlobal, dmabuf: Dmabuf, notifier: ImportNotifier) {
-        let udev = self.udev.as_mut().unwrap();
-        if udev
-            .gpus
-            .single_renderer(&udev.dmabuf_primary_gpu)
-            .and_then(|mut renderer| renderer.import_dmabuf(&dmabuf, None))
-            .is_ok()
-        {
-            dmabuf.set_node(udev.dmabuf_primary_gpu);
-            let _ = notifier.successful::<State>();
-        } else {
-            notifier.failed();
-        }
+        // BUG-2026-11-21-DMABUF-IMPORT: do NOT force the node hint to the
+        // scanout GPU. Clients on hybrid systems allocate on another device;
+        // forcing the node makes smithay import on the wrong EGL context and
+        // produces `eglCreateImageKHR ... BAD_MATCH`. Leaving `node` unset
+        // lets the buffer tell us where it was born — no GPU gaslighting.
+        // lets smithay's multi-GPU importer discover the source at render time
+        // and copy through a linear buffer when required.
+        use smithay::backend::allocator::Buffer as _;
+        let format = dmabuf.format();
+        debug!(
+            ?format,
+            node = ?dmabuf.node(),
+            "dmabuf imported (accepting without node hint)"
+        );
+        let _ = notifier.successful::<State>();
     }
 }
 delegate_dmabuf!(State);
@@ -552,10 +557,38 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
     // e08s01t5: propagate a renderer failure through init instead of panicking.
     let renderer = udev.gpus.single_renderer(&primary_for_dmabuf)?;
 
-    // init dmabuf support with format list from the first GPU with hw acceleration
+    // BUG-2026-11-21-DMABUF-IMPORT: on hybrid-GPU systems clients may allocate
+    // on a different GPU than the scanout device. Advertise both: a Scanout
+    // tranche for the panel's device and a Linear-only render tranche for the
+    // other GPU so smithay's multi-GPU copy can bridge them.
     let dmabuf_formats = renderer.dmabuf_formats();
-    let default_feedback =
-        DmabufFeedbackBuilder::new(primary_for_dmabuf.dev_id(), dmabuf_formats).build()?;
+    let render_gpu = hw_accel_gpus
+        .iter()
+        .copied()
+        .find(|node| Some(*node) != scanout_render_node);
+    let cross_device = render_gpu.is_some();
+    let render_formats = render_gpu
+        .and_then(|node| udev.gpus.single_renderer(&node).ok())
+        .map(|r| r.dmabuf_formats())
+        .unwrap_or_default();
+    let (scanout_tranche, render_tranche) =
+        dmabuf_feedback_formats(&dmabuf_formats, &render_formats, cross_device);
+    let mut builder = DmabufFeedbackBuilder::new(primary_for_dmabuf.dev_id(), dmabuf_formats.clone());
+    if scanout_tranche.iter().next().is_some() {
+        builder = builder.add_preference_tranche(
+            primary_for_dmabuf.dev_id(),
+            Some(TrancheFlags::Scanout),
+            scanout_tranche,
+        );
+        info!("dmabuf feedback: scanout tranche on {primary_for_dmabuf}");
+    }
+    if let Some(node) = render_gpu
+        && render_tranche.iter().next().is_some()
+    {
+        builder = builder.add_preference_tranche(node.dev_id(), None, render_tranche);
+        info!("dmabuf feedback: added linear render tranche for {node}");
+    }
+    let default_feedback = builder.build()?;
     let mut dmabuf_state = DmabufState::new();
     let global = dmabuf_state.create_global_with_default_feedback::<State>(&display_handle, &default_feedback);
     state.udev.as_mut().unwrap().dmabuf_state = Some((dmabuf_state, global));
@@ -990,6 +1023,30 @@ fn choose_dmabuf_gpu(
     scanout
         .or_else(|| hw_accel.first().copied())
         .unwrap_or(fallback)
+}
+
+/// Formats for the dmabuf feedback tranches (BUG-2026-11-21-DMABUF-IMPORT).
+///
+/// Returns `(scanout_formats, render_tranche_formats)`. When the render device
+/// differs from the scanout device, the scanout tranche advertises the scanout
+/// device's own formats (target = scanout, `TrancheFlags::Scanout`) and the
+/// extra render tranche is restricted to Linear modifiers, which are the only
+/// ones that can be copied between two GPUs. Callers omit empty tranches.
+fn dmabuf_feedback_formats(
+    scanout: &FormatSet,
+    render: &FormatSet,
+    cross_device: bool,
+) -> (FormatSet, FormatSet) {
+    if !cross_device {
+        return (FormatSet::default(), FormatSet::default());
+    }
+    let scanout_formats = scanout.clone();
+    let render_tranche: FormatSet = render
+        .iter()
+        .filter(|f| f.modifier == Modifier::Linear)
+        .copied()
+        .collect();
+    (scanout_formats, render_tranche)
 }
 
 fn frame_outcome(empty_error: bool, queued: bool) -> FrameOutcome {
@@ -1653,7 +1710,7 @@ impl State {
                     // Super+button starts a move/resize drag on a floating window
                     if mods.logo && (button == BTN_LEFT || button == BTN_RIGHT)
                         && let Some(id) = self.wm.window_at((location.x, location.y), self.wm.border_size())
-                            && self.wm.window(id).map(|w| w.mode) == Some(wm::WindowMode::Floating) {
+                            && self.wm.window(id).map(|w| w.mode.placement == wm::Placement::Floating && w.mode.presentation == wm::Presentation::Normal).unwrap_or(false) {
                                 let rect = self.wm.window(id).unwrap().target_rect;
                                 self.udev.as_mut().unwrap().drag = Some(DragState {
                                     window: id,
@@ -1682,7 +1739,7 @@ impl State {
                             if in_titlebar {
                                 match wm::titlebar_button_at(rect, titlebar_height, location.x) {
                                     Some(button) => apply_titlebar_action(self, id, button),
-                                    None if mode == wm::WindowMode::Floating => {
+                                    None if mode.placement == wm::Placement::Floating && mode.presentation == wm::Presentation::Normal => {
                                         // Titlebar drag: start move on floating window
                                         let rect = self.wm.window(id).unwrap().target_rect;
                                         self.udev.as_mut().unwrap().drag = Some(DragState {
@@ -2658,7 +2715,7 @@ impl State {
                 // They render as a plain surface tree at the positioner-resolved
                 // origin (GTK draws its own menu frame and shadow).
                 let is_popup = *id == crate::POPUP_FAKE_ID;
-                let mode = self.wm.window(*id).map(|w| w.mode).unwrap_or(wm::WindowMode::Tiled);
+                let mode = self.wm.window(*id).map(|w| w.mode).unwrap_or(wm::ClientMode::tiled());
                 // Smithay draws input[0] last (on top), so the focused window
                 // (first in `placed`) paints on top overall. Within each window
                 // the order is [borders, titlebar, surface]: borders pushed
@@ -2674,7 +2731,7 @@ impl State {
                 // per-frame MemoryRenderBuffer allocations. One element per edge,
                 // re-created when color/size changes (no persistent cache needed
                 // because SolidColorRenderElement is cheap to construct).
-                if !is_popup && !matches!(mode, wm::WindowMode::Fullscreen) && border_size > 0 {
+                if !is_popup && mode.presentation != wm::Presentation::Fullscreen && border_size > 0 {
                     let color = if *focused { &color_focused } else { &color_unfocused };
                     let color32f = Color32F::new(
                         color[0] as f32 / 255.0,
@@ -2733,7 +2790,7 @@ impl State {
                 // Borders pushed first -> index 0 -> drawn last -> on top (capture titlebar edges).
                 elements.extend(border_elements);
                 // Titlebar strip (middle layer: on top of surface, under borders).
-                if !is_popup && titlebar_height > 0 && !matches!(mode, wm::WindowMode::Fullscreen) {
+                if !is_popup && titlebar_height > 0 && mode.presentation != wm::Presentation::Fullscreen {
                     let tb_w = rect.width;
                     let tb_h = titlebar_height;
                     let tb_px = if *focused { titlebar_color_focused } else { titlebar_color_unfocused };
@@ -2798,51 +2855,80 @@ impl State {
                 // Always render the window surface tree. e08s02t4: a fullscreen
                 // window's tree goes to its own band so it can paint above all
                 // layers and the dock.
-                let tree_elements = render_elements_from_surface_tree(
-                    &mut renderer,
-                    ws,
-                    (*x, *y),
-                    1.0,
-                    1.0,
-                    Kind::Unspecified,
-                );
+                //
+                // BUG-2026-11-22-OVERSIZE-RETRY-CAP follow-up: clients that
+                // ignore the size configure commit a buffer larger than the
+                // frame. Clipping keeps their content inside the border.
+                let tree_elements: Vec<WaylandSurfaceRenderElement<_>> =
+                    render_elements_from_surface_tree(
+                        &mut renderer,
+                        ws,
+                        (*x, *y),
+                        1.0,
+                        1.0,
+                        Kind::Unspecified,
+                    );
                 let tree_target = if matches!(
-                    self.wm.window(*id).map(|w| w.mode),
-                    Some(wm::WindowMode::Fullscreen)
+                    self.wm.window(*id).map(|w| w.mode.presentation),
+                    Some(wm::Presentation::Fullscreen)
                 ) {
                     &mut fullscreen_elements
                 } else {
                     &mut elements
                 };
-                tree_target.extend(
-                    tree_elements
-                        .into_iter()
-                        .map(EswmRenderElements::Surface),
-                );
+                if *id == crate::POPUP_FAKE_ID {
+                    // Popups own their shadows; let them paint past the frame.
+                    tree_target.extend(
+                        tree_elements.into_iter().map(EswmRenderElements::Surface),
+                    );
+                } else {
+                    let clip = Rectangle::new(
+                        Point::from((rect.x, rect.y)),
+                        Size::from((rect.width as i32, rect.height as i32)),
+                    );
+                    let scale = Scale::from(output.current_scale().fractional_scale());
+                    tree_target.extend(tree_elements.into_iter().map(|elem| {
+                        EswmRenderElements::ClippedSurface(
+                            ClippedSurfaceElement::new(elem, clip, scale),
+                        )
+                    }));
+                }
             }
         } else {
-            for (ws, x, y, id, _, _rect) in &placed {
-                let tree_elements = render_elements_from_surface_tree(
-                    &mut renderer,
-                    ws,
-                    (*x, *y),
-                    1.0,
-                    1.0,
-                    Kind::Unspecified,
-                );
+            for (ws, x, y, id, _, rect) in &placed {
+                let tree_elements: Vec<WaylandSurfaceRenderElement<_>> =
+                    render_elements_from_surface_tree(
+                        &mut renderer,
+                        ws,
+                        (*x, *y),
+                        1.0,
+                        1.0,
+                        Kind::Unspecified,
+                    );
                 let tree_target = if matches!(
-                    self.wm.window(*id).map(|w| w.mode),
-                    Some(wm::WindowMode::Fullscreen)
+                    self.wm.window(*id).map(|w| w.mode.presentation),
+                    Some(wm::Presentation::Fullscreen)
                 ) {
                     &mut fullscreen_elements
                 } else {
                     &mut elements
                 };
-                tree_target.extend(
-                    tree_elements
-                        .into_iter()
-                        .map(EswmRenderElements::Surface),
-                );
+                if *id == crate::POPUP_FAKE_ID {
+                    tree_target.extend(
+                        tree_elements.into_iter().map(EswmRenderElements::Surface),
+                    );
+                } else {
+                    let clip = Rectangle::new(
+                        Point::from((rect.x, rect.y)),
+                        Size::from((rect.width as i32, rect.height as i32)),
+                    );
+                    let scale = Scale::from(output.current_scale().fractional_scale());
+                    tree_target.extend(tree_elements.into_iter().map(|elem| {
+                        EswmRenderElements::ClippedSurface(
+                            ClippedSurfaceElement::new(elem, clip, scale),
+                        )
+                    }));
+                }
             }
         }
 
@@ -3043,7 +3129,7 @@ impl State {
         // e08s02t4: assemble bands in the policy order. Index 0 draws last
         // (on top): cursor, fullscreen, overlay/top, dock, windows, background.
         let fullscreen_active = placed.iter().any(|(_, _, _, id, _, _)| {
-            matches!(self.wm.window(*id).map(|w| w.mode), Some(wm::WindowMode::Fullscreen))
+            matches!(self.wm.window(*id).map(|w| w.mode.presentation), Some(wm::Presentation::Fullscreen))
         });
         let mut frame_elements: Vec<EswmRenderElements<UdevRenderer<'_>>> = Vec::new();
         for band in render_band_order(fullscreen_active) {
@@ -3359,6 +3445,7 @@ enum DeviceAddError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use smithay::backend::allocator::Format;
 
     #[test]
     fn idle_frame_skips_render_timer() {
@@ -3801,6 +3888,39 @@ mod tests {
     #[test]
     fn render_order_without_fullscreen_has_no_fullscreen_band() {
         assert!(!render_band_order(false).contains(&RenderBand::Fullscreen));
+    }
+
+    // BUG-2026-11-21-DMABUF-IMPORT — cross-GPU feedback must advertise only
+    // modifiers that can actually be copied between the two devices.
+    #[test]
+    fn dmabuf_feedback_cross_device_render_tranche_is_linear_only() {
+        let scanout: FormatSet = [
+            Format { code: Fourcc::Abgr8888, modifier: Modifier::Linear },
+            Format { code: Fourcc::Xrgb8888, modifier: Modifier::Linear },
+        ]
+        .into_iter()
+        .collect();
+        let render: FormatSet = [
+            Format { code: Fourcc::Abgr8888, modifier: Modifier::Linear },
+            Format { code: Fourcc::Abgr8888, modifier: Modifier::from(0x1234) },
+        ]
+        .into_iter()
+        .collect();
+
+        let (scanout_formats, render_tranche) = dmabuf_feedback_formats(&scanout, &render, true);
+        // The scanout tranche advertises the scanout device's own formats.
+        assert_eq!(scanout_formats.iter().count(), 2);
+        // Only Linear modifiers can be copied across devices.
+        assert_eq!(render_tranche.iter().count(), 1);
+        assert!(render_tranche.iter().all(|f| f.modifier == Modifier::Linear));
+    }
+
+    #[test]
+    fn dmabuf_feedback_same_device_has_no_extra_tranche() {
+        let formats: FormatSet = [Format { code: Fourcc::Abgr8888, modifier: Modifier::from(0x1234) }].into_iter().collect();
+        let (scanout_formats, render_tranche) = dmabuf_feedback_formats(&formats, &formats, false);
+        assert_eq!(scanout_formats.iter().count(), 0);
+        assert_eq!(render_tranche.iter().count(), 0);
     }
 
 }

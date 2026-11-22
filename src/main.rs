@@ -9,6 +9,7 @@ use std::{
     time::Instant,
 };
 
+mod clip;
 mod control;
 mod edid;
 mod ipc;
@@ -285,7 +286,7 @@ pub(crate) fn placed_windows(state: &mut State) -> Vec<(WlSurface, i32, i32, wm:
             let Some(window) = state.wm.window(id) else {
                 continue;
             };
-            if !window.mapped || window.target_rect.width == 0 {
+            if !window.mapped || window.minimized || window.target_rect.width == 0 {
                 continue;
             }
             let target_rect = window.target_rect;
@@ -810,6 +811,31 @@ impl CompositorHandler for State {
             });
             let offset = window_geometry_offset(geometry);
             self.wm.set_window_xdg_offset(id, offset);
+
+            // BUG-2026-11-21-DMABUF-IMPORT (bug B): Electron/Chromium can commit
+            // a default-sized buffer before honouring the size we configured,
+            // letting content spill past the frame. If the buffer is bigger than
+            // the target rect, ask again (bounded retries). A fitting commit
+            // resets the budget.
+            let buffer_size = with_renderer_surface_state(surface, |state| state.buffer_size())
+                .flatten()
+                .map(|size| (size.w.max(0) as u32, size.h.max(0) as u32));
+            if let (Some(buffer), Some(window)) = (buffer_size, self.wm.window(id)) {
+                let target = window.target_rect;
+                let attempts = window.oversize_configures;
+                match wm::oversize_action(target, buffer, attempts) {
+                    wm::OversizeAction::Resend => {
+                        tracing::info!(
+                            "client committed {}x{} > configured {}x{}; re-sending size",
+                            buffer.0, buffer.1, target.width, target.height
+                        );
+                        self.wm.note_oversize_commit(id);
+                        crate::apply_layout(self);
+                    }
+                    wm::OversizeAction::ResetBudget => self.wm.clear_oversize(id),
+                    wm::OversizeAction::None => {}
+                }
+            }
         }
         // Popup lifecycle evidence: log the map/unmap transition so a run from
         // a TTY proves whether the client actually attached a buffer.
@@ -1162,16 +1188,6 @@ fn apply_decoration_to_wm(state: &mut State) {
 }
 
 // M5: push target rects to clients as xdg_toplevel size configures, then mark applied.
-/// XDG window-state flags for a WM mode, as `(maximized, fullscreen)`.
-/// e08s04t1: pure so configure-state policy is testable without a client.
-fn xdg_state_flags_for_mode(mode: wm::WindowMode) -> (bool, bool) {
-    match mode {
-        wm::WindowMode::Maximized => (true, false),
-        wm::WindowMode::Fullscreen => (false, true),
-        wm::WindowMode::Tiled | wm::WindowMode::Floating => (false, false),
-    }
-}
-
 pub(crate) fn apply_layout(state: &mut State) {
     apply_decoration_to_wm(state);
     // Refresh the dock entries cache (active + minimized windows on the active
@@ -1196,13 +1212,13 @@ pub(crate) fn apply_layout(state: &mut State) {
         let rect_changed = target_valid && window.rect != target;
         // e08s04t3: a mode change must reach the client even when the rect is
         // unchanged (e.g. maximize into an already-full-sized window).
-        let mode_changed = window.mode_sent != Some(window.mode);
+        let mode_changed = window.mode_sent != Some(window.mode.presentation);
         if !rect_changed && !needs_activation && !mode_changed {
             continue;
         }
         if let Some(toplevel) = toplevel_for_window(state, id) {
             tracing::debug!("configuring window id={id:?} -> {}x{} at {},{}", target.width, target.height, target.x, target.y);
-            let (maximized, fullscreen) = xdg_state_flags_for_mode(window.mode);
+            let (maximized, fullscreen) = window.mode.xdg_state_flags();
             toplevel.with_pending_state(|st| {
                 if target_valid {
                     st.size = Some((target.width.max(1) as i32, target.height.max(1) as i32).into());
@@ -1228,7 +1244,7 @@ pub(crate) fn apply_layout(state: &mut State) {
                 state.wm.set_rect(id, target);
             }
             state.wm.set_activated_sent(id, window.focused);
-            state.wm.set_mode_sent(id, window.mode);
+            state.wm.set_mode_sent(id, window.mode.presentation);
         }
     }
     // e06s03: keep wl_keyboard focus in sync with state changes via policy,
@@ -2286,7 +2302,7 @@ mod tests {
             .add_window(output_id, "test-app", "Test App")
             .expect("add window");
         // A floating window at a small size, as if the client had settled.
-        state.wm.set_mode(id, wm::WindowMode::Floating);
+        state.wm.set_mode(id, wm::ClientMode::floating());
         let small = wm::Rect { x: 10, y: 10, width: 400, height: 300 };
         state.wm.set_window_rect(id, small);
         let before = state.wm.window(id).unwrap().target_rect;
@@ -2296,7 +2312,7 @@ mod tests {
         crate::udev::apply_titlebar_action(&mut state, id, wm::TitlebarButton::Maximize);
 
         let after = state.wm.window(id).unwrap();
-        assert_eq!(after.mode, wm::WindowMode::Maximized);
+        assert_eq!(after.mode.presentation, wm::Presentation::Maximized);
         assert!(
             after.target_rect.width > before.width,
             "maximize must widen the target rect: {:?} -> {:?}",
@@ -2371,14 +2387,14 @@ mod tests {
     // e08s04t1 — xdg window-state flags follow the WM mode exactly.
     #[test]
     fn xdg_state_flags_maximized_and_fullscreen_are_exclusive() {
-        assert_eq!(xdg_state_flags_for_mode(wm::WindowMode::Maximized), (true, false));
-        assert_eq!(xdg_state_flags_for_mode(wm::WindowMode::Fullscreen), (false, true));
+        assert_eq!(wm::ClientMode::new(wm::Placement::Tiled, wm::Presentation::Maximized).xdg_state_flags(), (true, false));
+        assert_eq!(wm::ClientMode::new(wm::Placement::Floating, wm::Presentation::Fullscreen).xdg_state_flags(), (false, true));
     }
 
     #[test]
     fn xdg_state_flags_other_modes_clear_both() {
-        assert_eq!(xdg_state_flags_for_mode(wm::WindowMode::Tiled), (false, false));
-        assert_eq!(xdg_state_flags_for_mode(wm::WindowMode::Floating), (false, false));
+        assert_eq!(wm::ClientMode::new(wm::Placement::Tiled, wm::Presentation::Normal).xdg_state_flags(), (false, false));
+        assert_eq!(wm::ClientMode::new(wm::Placement::Floating, wm::Presentation::Normal).xdg_state_flags(), (false, false));
     }
 
     // e08s04t3 — the configure-needed check depends on mode_sent; verify the
@@ -2389,10 +2405,10 @@ mod tests {
         let output_id = state.wm.primary_output_id().unwrap();
         let id = state.wm.add_window(output_id, "app", "App").unwrap();
         assert_eq!(state.wm.window(id).unwrap().mode_sent, None);
-        state.wm.set_mode_sent(id, wm::WindowMode::Maximized);
-        assert_eq!(state.wm.window(id).unwrap().mode_sent, Some(wm::WindowMode::Maximized));
+        state.wm.set_mode_sent(id, wm::Presentation::Maximized);
+        assert_eq!(state.wm.window(id).unwrap().mode_sent, Some(wm::Presentation::Maximized));
         // A transition to a different mode changes the marker again.
-        state.wm.set_mode_sent(id, wm::WindowMode::Fullscreen);
-        assert_eq!(state.wm.window(id).unwrap().mode_sent, Some(wm::WindowMode::Fullscreen));
+        state.wm.set_mode_sent(id, wm::Presentation::Fullscreen);
+        assert_eq!(state.wm.window(id).unwrap().mode_sent, Some(wm::Presentation::Fullscreen));
     }
 }

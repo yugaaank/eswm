@@ -1,0 +1,12 @@
+{
+  "defect_class": "combined-predicate-makes-exhaustion-look-like-success",
+  "grep_pattern": "else if .*(attempts|budget|retry|exhaust)|attempts.*[<>=]|MAX_[A-Z_]+",
+  "match_count": 10,
+  "sweep_scope": "src/*.rs",
+  "patched_in_pr": [
+    "src/wm.rs",
+    "src/main.rs"
+  ],
+  "tracked_issues": [],
+  "notes": "All 10 matches are in the oversize-retry policy and its tests. No other retry/budget predicate in src/ folds exhaustion into a success branch. scripts/verify-generalize-sweep.sh is not present in this repository, so the mechanical verifier was unavailable; the grep sweep is recorded here as evidence."
+}

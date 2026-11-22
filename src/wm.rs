@@ -12,13 +12,67 @@ pub struct Rect {
     pub height: u32,
 }
 
+/// Where a window is placed — the persistent layout axis (e09s01).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum WindowMode {
+pub enum Placement {
     #[default]
     Tiled,
     Floating,
+}
+
+/// Temporary presentation state — independent of placement (e09s01).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Presentation {
+    #[default]
+    Normal,
     Maximized,
     Fullscreen,
+}
+
+/// A window's layout and presentation, kept as one `Copy` value so a
+/// presentation transition cannot overwrite placement (instantWM-style).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ClientMode {
+    pub placement: Placement,
+    pub presentation: Presentation,
+}
+
+impl ClientMode {
+    pub fn new(placement: Placement, presentation: Presentation) -> Self {
+        Self { placement, presentation }
+    }
+
+    /// Legacy constructors used while call sites migrate (e09s01t2).
+    pub fn tiled() -> Self { Self::new(Placement::Tiled, Presentation::Normal) }
+    pub fn floating() -> Self { Self::new(Placement::Floating, Presentation::Normal) }
+    pub fn maximized() -> Self { Self::new(Placement::Tiled, Presentation::Maximized) }
+    pub fn fullscreen() -> Self { Self::new(Placement::Tiled, Presentation::Fullscreen) }
+
+    /// The same mode with presentation cleared — for restore transitions.
+    pub fn without_presentation(self) -> Self {
+        Self::new(self.placement, Presentation::Normal)
+    }
+
+    /// `(maximized, fullscreen)` xdg state bits derived from presentation only.
+    pub fn xdg_state_flags(self) -> (bool, bool) {
+        match self.presentation {
+            Presentation::Maximized => (true, false),
+            Presentation::Fullscreen => (false, true),
+            Presentation::Normal => (false, false),
+        }
+    }
+
+    /// Legacy mode name for IPC/Lua compatibility.
+    pub fn mode_name(self) -> &'static str {
+        match self.presentation {
+            Presentation::Maximized => "maximized",
+            Presentation::Fullscreen => "fullscreen",
+            Presentation::Normal => match self.placement {
+                Placement::Tiled => "tiled",
+                Placement::Floating => "floating",
+            },
+        }
+    }
 }
 
 /// Global spawn/layout policy: Hyprland (tiled) or Windows (floating).
@@ -81,8 +135,10 @@ pub struct Window {
     pub title: String,
     pub output: OutputId,
     pub workspace: WorkspaceId,
-    pub mode: WindowMode,
+    pub mode: ClientMode,
     pub mapped: bool,
+    /// Explicit user-minimized (hidden) state, independent of buffer presence.
+    pub minimized: bool,
     pub focused: bool,
     pub rect: Rect,
     pub target_rect: Rect,
@@ -94,9 +150,47 @@ pub struct Window {
     /// Focus state last sent to the client as xdg Activated; None = never sent.
     pub activated_sent: Option<bool>,
     /// Window mode last sent to the client as xdg state flags; None = never sent.
-    pub mode_sent: Option<WindowMode>,
+    pub mode_sent: Option<Presentation>,
     /// Committed wl_surface input region (surface-local). None/default = whole surface.
     pub input_region: InputRegion,
+    /// How many size re-configures have been sent because the client committed
+    /// a buffer larger than `target_rect` (BUG-2026-11-21-DMABUF-IMPORT).
+    pub oversize_configures: u8,
+}
+
+/// Retry budget for clients that map oversized and ignore the first configure.
+/// Electron/Chromium commit their default-sized buffer before honouring the
+/// compositor's size; we re-assert the size a few times, then stop so a
+/// stubborn client cannot make the compositor spin forever.
+pub const MAX_OVERSIZE_CONFIGURES: u8 = 3;
+
+/// Should a committed buffer size trigger another size configure?
+///
+/// Only when the buffer is larger than the target rect (content would spill
+/// outside the frame) and we still have retry budget left.
+/// What a surface commit should do about a buffer larger than its configured
+/// rect. Size and retry budget are separate questions; folding them together
+/// makes an exhausted budget look like a fitting commit and reset itself.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OversizeAction {
+    Resend,
+    ResetBudget,
+    None,
+}
+
+pub fn oversize_action(target: Rect, buffer: (u32, u32), attempts: u8) -> OversizeAction {
+    // The retry budget finally has a backbone, unlike my New Year's resolutions.
+    if buffer.0 > target.width || buffer.1 > target.height {
+        if attempts < MAX_OVERSIZE_CONFIGURES {
+            OversizeAction::Resend
+        } else {
+            OversizeAction::None
+        }
+    } else if attempts > 0 {
+        OversizeAction::ResetBudget
+    } else {
+        OversizeAction::None
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -168,6 +262,10 @@ pub struct WindowManager {
     pub work_area: Option<Rect>,
     /// App-id/class -> workspace/mode rules, matched at window creation.
     rules: Vec<WindowRule>,
+    /// Globally focused window — single source of truth (e09s01t4).
+    pub focused: Option<WindowId>,
+    /// Most-recently-used focus order; front = most recent.
+    focus_history: Vec<WindowId>,
     /// Set when any state changes; arrange_output lays out only when dirty.
     dirty: bool,
 }
@@ -177,7 +275,7 @@ pub struct WindowManager {
 pub struct WindowRule {
     pub app_id: String,
     pub workspace: Option<WorkspaceId>,
-    pub mode: Option<WindowMode>,
+    pub mode: Option<ClientMode>,
 }
 
 /// Border frame geometry: the outer frame that wraps a window's target_rect.
@@ -473,7 +571,34 @@ impl WindowManager {
     }
 
     pub fn focused_id(&self) -> Option<WindowId> {
-        self.windows.values().find(|w| w.focused).map(|w| w.id)
+        self.focused
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn focus_history_first(&self) -> Option<WindowId> {
+        self.focus_history.first().copied()
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn focus_history(&self) -> &[WindowId] {
+        &self.focus_history
+    }
+
+    /// Restore focus to the most recently focused window still present and
+    /// on its workspace's active output, excluding `exclude`.
+    fn focus_from_mru(&mut self, exclude: Option<WindowId>) {
+        let candidate = self.focus_history.iter().copied().find(|id| {
+            if Some(*id) == exclude { return false; }
+            let Some(w) = self.windows.get(id) else { return false; };
+            if w.minimized { return false; }
+            self.outputs.get(&w.output).map(|o| o.active_workspace == w.workspace).unwrap_or(false)
+        });
+        if let Some(id) = candidate {
+            self.focus_window(id);
+        } else {
+            self.focused = None;
+            for w in self.windows.values_mut() { w.focused = false; }
+        }
     }
 
     pub fn set_rect(&mut self, id: WindowId, rect: Rect) -> bool {
@@ -485,6 +610,29 @@ impl WindowManager {
         false
     }
 
+    /// Record that a client committed an oversized buffer. Clears `rect` so the
+    /// next `apply_layout` resends the size configure (BUG-2026-11-21-DMABUF-IMPORT).
+    /// Returns false when the retry budget is exhausted or the id is unknown.
+    pub fn note_oversize_commit(&mut self, id: WindowId) -> bool {
+        let Some(window) = self.windows.get_mut(&id) else {
+            return false;
+        };
+        if window.oversize_configures >= MAX_OVERSIZE_CONFIGURES {
+            return false;
+        }
+        window.oversize_configures += 1;
+        window.rect = Rect::default();
+        self.dirty = true;
+        true
+    }
+
+    /// Reset the oversize retry budget after a client commits a fitting buffer.
+    pub fn clear_oversize(&mut self, id: WindowId) {
+        if let Some(window) = self.windows.get_mut(&id) {
+            window.oversize_configures = 0;
+        }
+    }
+
     pub fn set_activated_sent(&mut self, id: WindowId, sent: bool) {
         if let Some(window) = self.windows.get_mut(&id) {
             window.activated_sent = Some(sent);
@@ -493,9 +641,9 @@ impl WindowManager {
     }
 
     /// Record the window mode last configured to the client (e08s04t2).
-    pub fn set_mode_sent(&mut self, id: WindowId, mode: WindowMode) {
+    pub fn set_mode_sent(&mut self, id: WindowId, presentation: Presentation) {
         if let Some(window) = self.windows.get_mut(&id) {
-            window.mode_sent = Some(mode);
+            window.mode_sent = Some(presentation);
         }
     }
 
@@ -560,12 +708,8 @@ impl WindowManager {
         output_state.active_workspace = workspace;
         self.dirty = true;
         self.clear_focus_on_output(output);
-        if let Some(window) = self
-            .workspaces
-            .get(&workspace)
-            .and_then(|workspace| workspace.focused)
-        {
-            self.focus_window(window);
+        if self.focused.is_none() {
+            self.focus_from_mru(None);
         }
         self.arrange_output(output);
         true
@@ -686,7 +830,7 @@ impl WindowManager {
                 id: *id,
                 app_id: w.app_id.clone(),
                 title: w.title.clone(),
-                minimized: !w.mapped,
+                minimized: w.minimized,
                 focused: focused == Some(*id),
             })
             .collect();
@@ -701,7 +845,7 @@ impl WindowManager {
     }
 
     /// Match a window's app_id against configured rules; return (workspace, mode).
-    fn match_rule(&self, app_id: &str) -> (Option<WorkspaceId>, Option<WindowMode>) {
+    fn match_rule(&self, app_id: &str) -> (Option<WorkspaceId>, Option<ClientMode>) {
         for rule in &self.rules {
             if rule.app_id == app_id {
                 return (rule.workspace, rule.mode);
@@ -714,9 +858,10 @@ impl WindowManager {
         let Some(window) = self.windows.get(&id) else {
             return false;
         };
-        let mode = match window.mode {
-            WindowMode::Tiled => WindowMode::Floating,
-            WindowMode::Floating | WindowMode::Maximized | WindowMode::Fullscreen => WindowMode::Tiled,
+        let mode = if window.mode.placement == Placement::Tiled && window.mode.presentation == Presentation::Normal {
+            ClientMode::floating()
+        } else {
+            ClientMode::tiled()
         };
         self.set_mode(id, mode)
     }
@@ -755,7 +900,7 @@ impl WindowManager {
         }
         for id in ordered {
             let Some(window) = self.windows.get(&id) else { continue };
-            if !window.mapped || window.target_rect.width == 0 || window.target_rect.height == 0 {
+            if !window.mapped || window.minimized || window.target_rect.width == 0 || window.target_rect.height == 0 {
                 continue;
             }
             let r = window.target_rect;
@@ -800,7 +945,7 @@ impl WindowManager {
         }
         for id in ordered {
             let Some(window) = self.windows.get(&id) else { continue };
-            if !window.mapped {
+            if !window.mapped || window.minimized {
                 continue;
             }
             // Hit test against target_rect expanded by border size (border is part of window)
@@ -832,7 +977,7 @@ impl WindowManager {
             return false;
         };
         window.target_rect = rect;
-        if window.mode == WindowMode::Tiled {
+        if window.mode == ClientMode::tiled() {
             // tiled geometry is owned by the arrangement; ignore direct moves
             return false;
         }
@@ -863,8 +1008,8 @@ impl WindowManager {
                     .unwrap_or(1)
             });
         let mode = rule_mode.unwrap_or(match self.wm_mode {
-            WmMode::Tiling => WindowMode::Tiled,
-            WmMode::Floating => WindowMode::Floating,
+            WmMode::Tiling => ClientMode::tiled(),
+            WmMode::Floating => ClientMode::floating(),
         });
         let id = self.next_window;
         self.next_window += 1;
@@ -872,7 +1017,7 @@ impl WindowManager {
         // Floating placement respects the work area (waybar/dock excluded),
         // not the raw output geometry, or windows spawn over panels.
         let floating_rect = match mode {
-            WindowMode::Floating => Some(self.floating_target(self.work_area.unwrap_or(geometry))),
+            m if m.placement == Placement::Floating => Some(self.floating_target(self.work_area.unwrap_or(geometry))),
             _ => None,
         };
         self.windows.insert(
@@ -885,6 +1030,7 @@ impl WindowManager {
                 workspace,
                 mode,
                 mapped: true,
+                minimized: false,
                 focused: false,
                 rect: Rect::default(),
                 target_rect: floating_rect.unwrap_or_default(),
@@ -893,6 +1039,7 @@ impl WindowManager {
                 mode_sent: None,
                 xdg_offset: (0, 0),
                 input_region: InputRegion::default(),
+                oversize_configures: 0,
             },
         );
         self.dirty = true;
@@ -915,15 +1062,12 @@ impl WindowManager {
                 workspace.focused = workspace.windows.last().copied();
             }
         }
-        self.clear_focus_on_output(window.output);
-        if let Some(focused) = self
-            .workspaces
-            .get(&window.workspace)
-            .and_then(|workspace| workspace.focused)
-        {
-            self.focus_window(focused);
+        let removed_output = window.output;
+        self.clear_focus_on_output(removed_output);
+        if self.focused.is_none() {
+            self.focus_from_mru(Some(id));
         }
-        self.arrange_output(window.output);
+        self.arrange_output(removed_output);
         Some(window)
     }
 
@@ -942,12 +1086,22 @@ impl WindowManager {
             return false;
         }
         self.clear_focus_on_output(output);
+        // Global focus: clear the derived mirror on every window, not only
+        // those on this output (two outputs previously kept two focused flags).
+        for window in self.windows.values_mut() {
+            if window.id != id {
+                window.focused = false;
+            }
+        }
         if let Some(window) = self.windows.get_mut(&id) {
             window.focused = true;
         }
         if let Some(workspace) = self.workspaces.get_mut(&workspace) {
             workspace.focused = Some(id);
         }
+        self.focused = Some(id);
+        self.focus_history.retain(|w| *w != id);
+        self.focus_history.insert(0, id);
         true
     }
 
@@ -978,14 +1132,12 @@ impl WindowManager {
             // Reset target rect; arrange_output sets it if the new workspace is active.
             window_state.target_rect = Rect::default();
         }
-        self.clear_focus_on_output(window.output);
-        // Keep keyboard focus alive: the moved window may have been the focused one.
-        if let Some(focused) = self
-            .workspaces
-            .get(&window.workspace)
-            .and_then(|workspace| workspace.focused)
-        {
-            self.focus_window(focused);
+        let moved_output = window.output;
+        self.clear_focus_on_output(moved_output);
+        // Keep keyboard focus alive via MRU (the moved window left the active
+        // workspace, so it must not be restored).
+        if self.focused.is_none() {
+            self.focus_from_mru(Some(id));
         }
         self.dirty = true;
         self.arrange_output(window.output);
@@ -998,8 +1150,8 @@ impl WindowManager {
             return false;
         };
         let mode = match window.mode {
-            WindowMode::Fullscreen => WindowMode::Tiled,
-            _ => WindowMode::Fullscreen,
+            m if m.presentation == Presentation::Fullscreen => m.without_presentation(),
+            m => ClientMode::new(m.placement, Presentation::Fullscreen),
         };
         self.set_mode(id, mode)
     }
@@ -1013,12 +1165,12 @@ impl WindowManager {
         };
 
         match mode {
-            WindowMode::Maximized => {
+            m if m.presentation == Presentation::Maximized => {
                 // Restore the saved floating rect so the window returns to
                 // its previous position (Windows-like maximise/unmaximise).
                 if let Some(w) = self.windows.get_mut(&id)
                     && let Some(saved) = w.saved_rect.take() {
-                        w.mode = WindowMode::Floating;
+                        w.mode = w.mode.without_presentation();
                         w.target_rect = saved;
                         // Deliberately leave `rect` at the maximized size: it is
                         // the "already applied" marker apply_layout compares
@@ -1032,11 +1184,17 @@ impl WindowManager {
                 true
             }
             _ => {
-                // Save the current rect before maximizing so we can restore it.
+                // Save rect and placement before maximizing so both can be
+                // restored (e09s01: presentation must not overwrite placement).
+                let placement = self
+                    .windows
+                    .get(&id)
+                    .map(|w| w.mode.placement)
+                    .unwrap_or(Placement::Tiled);
                 if let Some(w) = self.windows.get_mut(&id) {
                     w.saved_rect = Some(w.target_rect);
                 }
-                self.set_mode(id, WindowMode::Maximized)
+                self.set_mode(id, ClientMode::new(placement, Presentation::Maximized))
             }
         }
     }
@@ -1047,7 +1205,7 @@ impl WindowManager {
     /// unmapped windows so the invisible window won't interrupt focus cycling.
     /// When restoring a non-focused minimized window, it receives focus.
     pub fn toggle_minimize(&mut self, id: WindowId) -> bool {
-        let (output, workspace, was_focused, was_mapped) = {
+        let (output, workspace, was_focused, was_minimized) = {
             let Some(window) = self.windows.get(&id) else {
                 return false;
             };
@@ -1055,18 +1213,18 @@ impl WindowManager {
                 window.output,
                 window.workspace,
                 window.focused,
-                window.mapped,
+                window.minimized,
             )
         };
 
         if let Some(window) = self.windows.get_mut(&id) {
-            window.mapped = !window.mapped;
+            window.minimized = !window.minimized;
         }
 
-        if was_focused && was_mapped {
+        if was_focused && !was_minimized {
             // Minimizing the focused window: keep focus on it (invisible now).
             // Super+M again restores it since focused_id() still returns it.
-        } else if !was_focused && !was_mapped {
+        } else if !was_focused && was_minimized {
             // Restoring a non-focused minimized window: give it focus.
             self.clear_focus_on_output(output);
             if let Some(ws) = self.workspaces.get_mut(&workspace) {
@@ -1076,7 +1234,7 @@ impl WindowManager {
                 }
             }
         }
-        // was_focused && !was_mapped: restoring a focused minimized window —
+        // was_focused && was_minimized: restoring a focused minimized window —
         // focus stays on it, nothing to do.
 
         self.dirty = true;
@@ -1097,7 +1255,7 @@ impl WindowManager {
         // Restore from minimized state if needed.
         if !was_mapped
             && let Some(w) = self.windows.get_mut(&id) {
-                w.mapped = true;
+                w.minimized = false;
             }
 
         self.focus_window(id);
@@ -1186,7 +1344,7 @@ impl WindowManager {
         self.focus_workspace(output, target).then_some(target)
     }
 
-    pub fn set_mode(&mut self, id: WindowId, mode: WindowMode) -> bool {
+    pub fn set_mode(&mut self, id: WindowId, mode: ClientMode) -> bool {
         let Some(window) = self.windows.get_mut(&id) else {
             return false;
         };
@@ -1212,7 +1370,7 @@ impl WindowManager {
             .windows
             .iter()
             .filter_map(|id| self.windows.get(id))
-            .find(|window| matches!(window.mode, WindowMode::Fullscreen | WindowMode::Maximized));
+            .find(|window| matches!(window.mode.presentation, Presentation::Fullscreen | Presentation::Maximized));
         if let Some(window) = maximized {
             // Fullscreen takes the entire output. Maximized fills the work area
             // (respects waybar/quickshell exclusive zones) minus the outer gap,
@@ -1221,7 +1379,7 @@ impl WindowManager {
             // the entire window (borders + titlebar + surface) fits within
             // work_area minus the outer gap — the titlebar does not extend above
             // work_area and cover waybar/quickshell panels.
-            let rect = if matches!(window.mode, WindowMode::Fullscreen) {
+            let rect = if window.mode.presentation == Presentation::Fullscreen {
                 output_state.geometry
             } else {
                 let base = self.work_area.unwrap_or(output_state.geometry);
@@ -1245,7 +1403,7 @@ impl WindowManager {
             .windows
             .iter()
             .filter_map(|id| self.windows.get(id))
-            .filter(|window| window.mapped && window.mode == WindowMode::Tiled)
+            .filter(|window| window.mapped && !window.minimized && window.mode.placement == Placement::Tiled && window.mode.presentation == Presentation::Normal)
             .map(|window| window.id)
             .collect();
 
@@ -1353,7 +1511,7 @@ impl WindowManager {
             .windows
             .iter()
             .copied()
-            .filter(|id| self.windows.get(id).map(|w| w.mapped).unwrap_or(false))
+            .filter(|id| self.windows.get(id).map(|w| w.mapped && !w.minimized).unwrap_or(false))
             .collect();
         if windows.is_empty() {
             return false;
@@ -1395,11 +1553,10 @@ impl WindowManager {
     }
 
     fn clear_focus_on_output(&mut self, output: OutputId) {
-        for window in self
-            .windows
-            .values_mut()
-            .filter(|window| window.output == output)
-        {
+        for window in self.windows.values_mut().filter(|w| w.output == output) {
+            if self.focused == Some(window.id) {
+                self.focused = None;
+            }
             window.focused = false;
         }
     }
@@ -1470,7 +1627,7 @@ pub fn equal_split(
 
 #[cfg(test)]
 mod tests {
-    use super::{Rect, TilingLayout, WindowManager, WindowMode, WindowRule, equal_split, titlebar_button_at, TitlebarButton};
+    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation, oversize_action, OversizeAction, MAX_OVERSIZE_CONFIGURES};
 
     fn manager() -> (WindowManager, u64) {
         let mut manager = WindowManager::new();
@@ -1518,10 +1675,10 @@ mod tests {
         let (mut manager, output) = manager();
         let tiled = manager.add_window(output, "kitty", "one").unwrap();
         let floating = manager.add_window(output, "kitty", "two").unwrap();
-        assert!(manager.set_mode(floating, WindowMode::Floating));
+        assert!(manager.set_mode(floating, ClientMode::floating()));
 
         assert_eq!(manager.window(tiled).unwrap().target_rect.width, 1916);
-        assert_eq!(manager.window(floating).unwrap().mode, WindowMode::Floating);
+        assert_eq!(manager.window(floating).unwrap().mode, ClientMode::floating());
     }
 
     #[test]
@@ -1593,11 +1750,11 @@ mod tests {
         assert_eq!(manager.window(second).unwrap().target_rect.width, 767);
 
         assert!(manager.toggle_fullscreen(second));
-        assert_eq!(manager.window(second).unwrap().mode, WindowMode::Fullscreen);
+        assert_eq!(manager.window(second).unwrap().mode, ClientMode::fullscreen());
         assert_eq!(manager.window(second).unwrap().target_rect.width, 1920);
 
         assert!(manager.toggle_fullscreen(second));
-        assert_eq!(manager.window(second).unwrap().mode, WindowMode::Tiled);
+        assert_eq!(manager.window(second).unwrap().mode, ClientMode::tiled());
         assert_eq!(manager.window(first).unwrap().target_rect.width, 1149);
     }
 
@@ -1702,10 +1859,10 @@ mod tests {
         manager.add_window_rule(WindowRule {
             app_id: "fuzzel".into(),
             workspace: None,
-            mode: Some(WindowMode::Floating),
+            mode: Some(ClientMode::floating()),
         });
         let id = manager.add_window(output, "fuzzel", "one").unwrap();
-        assert_eq!(manager.window(id).unwrap().mode, WindowMode::Floating);
+        assert_eq!(manager.window(id).unwrap().mode, ClientMode::floating());
     }
 
     // e08s01t3 — small work areas must not underflow floating placement.
@@ -1724,7 +1881,7 @@ mod tests {
         manager.add_window_rule(WindowRule {
             app_id: "fuzzel".into(),
             workspace: None,
-            mode: Some(WindowMode::Floating),
+            mode: Some(ClientMode::floating()),
         });
 
         // Must not panic, and the target must fit inside the tiny work area.
@@ -1741,11 +1898,11 @@ mod tests {
         manager.add_window_rule(WindowRule {
             app_id: "other".into(),
             workspace: Some(2),
-            mode: Some(WindowMode::Floating),
+            mode: Some(ClientMode::floating()),
         });
         let id = manager.add_window(output, "kitty", "one").unwrap();
         assert_eq!(manager.window(id).unwrap().workspace, 1); // default active workspace
-        assert_eq!(manager.window(id).unwrap().mode, WindowMode::Tiled); // default Hyprland mode
+        assert_eq!(manager.window(id).unwrap().mode, ClientMode::tiled()); // default Hyprland mode
     }
 
     #[test]
@@ -1753,8 +1910,8 @@ mod tests {
         let (mut manager, output) = manager();
         let first = manager.add_window(output, "kitty", "one").unwrap();
         let second = manager.add_window(output, "kitty", "two").unwrap();
-        manager.set_mode(first, WindowMode::Floating);
-        manager.set_mode(second, WindowMode::Floating);
+        manager.set_mode(first, ClientMode::floating());
+        manager.set_mode(second, ClientMode::floating());
         assert_eq!(manager.workspace(1).unwrap().windows, vec![first, second]);
         // focusing a floating window focuses it without reordering the stack,
         // so focus cycling keeps a stable order over all windows.
@@ -1802,11 +1959,13 @@ mod tests {
         let before = manager.window(window).unwrap().target_rect;
 
         assert!(manager.toggle_maximized(window));
-        assert_eq!(manager.window(window).unwrap().mode, WindowMode::Maximized);
+        assert_eq!(manager.window(window).unwrap().mode, ClientMode::maximized());
 
         assert!(manager.toggle_maximized(window));
         let w = manager.window(window).unwrap();
-        assert_eq!(w.mode, WindowMode::Floating);
+        // e09s01: unmaximizing preserves the original placement (Tiled here),
+        // rather than forcing Floating.
+        assert_eq!(w.mode, ClientMode::tiled());
         assert_eq!(w.target_rect, before);
     }
 
@@ -1814,7 +1973,7 @@ mod tests {
     fn toggle_maximized_restore_forces_size_configure() {
         let (mut manager, output) = manager();
         let window = manager.add_window(output, "kitty", "one").unwrap();
-        manager.set_mode(window, WindowMode::Floating);
+        manager.set_mode(window, ClientMode::floating());
         let original = Rect { x: 100, y: 100, width: 400, height: 300 };
         manager.set_window_rect(window, original);
         // The client acknowledged the original size (what apply_layout does).
@@ -1828,7 +1987,7 @@ mod tests {
 
         assert!(manager.toggle_maximized(window));
         let w = manager.window(window).unwrap();
-        assert_eq!(w.mode, WindowMode::Floating);
+        assert_eq!(w.mode, ClientMode::floating());
         assert_eq!(w.target_rect, original, "geometry returns to the saved rect");
         // BUG-2026-11-19T235000 (restore half): if apply_layout thinks the
         // geometry is already applied it sends no configure, so the frame
@@ -1882,6 +2041,82 @@ mod tests {
         assert_eq!(manager.output(output).unwrap().active_workspace, 1);
     }
 
+    // BUG-2026-11-21-DMABUF-IMPORT (bug B): an Electron client can map with a
+    // buffer larger than the size we configured, spilling past the frame. The
+    // compositor re-asserts the size a bounded number of times.
+    #[test]
+    fn oversize_action_resends_while_budget_remains() {
+        let target = Rect { x: 0, y: 0, width: 800, height: 600 };
+        assert_eq!(oversize_action(target, (1024, 768), 0), OversizeAction::Resend);
+    }
+
+    #[test]
+    fn oversize_action_stops_after_the_retry_budget() {
+        let target = Rect { x: 0, y: 0, width: 800, height: 600 };
+        assert_eq!(
+            oversize_action(target, (1024, 768), MAX_OVERSIZE_CONFIGURES),
+            OversizeAction::None
+        );
+        assert_eq!(
+            oversize_action(target, (1024, 768), MAX_OVERSIZE_CONFIGURES + 1),
+            OversizeAction::None
+        );
+    }
+
+    #[test]
+    fn oversize_action_resets_only_on_a_fitting_commit() {
+        let target = Rect { x: 0, y: 0, width: 800, height: 600 };
+        assert_eq!(
+            oversize_action(target, (800, 600), 2),
+            OversizeAction::ResetBudget
+        );
+        assert_eq!(
+            oversize_action(target, (640, 480), MAX_OVERSIZE_CONFIGURES),
+            OversizeAction::ResetBudget
+        );
+        assert_eq!(oversize_action(target, (800, 600), 0), OversizeAction::None);
+    }
+
+    #[test]
+    fn oversize_action_never_resets_an_oversized_commit() {
+        let target = Rect { x: 0, y: 0, width: 800, height: 600 };
+        for attempts in 0..=MAX_OVERSIZE_CONFIGURES + 1 {
+            assert_ne!(
+                oversize_action(target, (1024, 768), attempts),
+                OversizeAction::ResetBudget
+            );
+        }
+    }
+
+    #[test]
+    fn oversize_action_checks_each_size_boundary() {
+        let target = Rect { x: 0, y: 0, width: 800, height: 600 };
+        assert_eq!(oversize_action(target, (0, 0), 0), OversizeAction::None);
+        assert_eq!(oversize_action(target, (800, 600), 0), OversizeAction::None);
+        assert_eq!(oversize_action(target, (1024, 600), 0), OversizeAction::Resend);
+        assert_eq!(oversize_action(target, (800, 768), 0), OversizeAction::Resend);
+    }
+
+    #[test]
+    fn note_oversize_commit_forces_a_size_reconfigure() {
+        let (mut manager, output) = manager();
+        let window = manager.add_window(output, "wordcraft", "doc").unwrap();
+        manager.set_rect(window, manager.window(window).unwrap().target_rect);
+        assert!(manager.note_oversize_commit(window));
+        // Clearing `rect` is what makes apply_layout resend the size.
+        assert_eq!(manager.window(window).unwrap().rect.width, 0);
+        assert_eq!(manager.window(window).unwrap().oversize_configures, 1);
+    }
+
+    #[test]
+    fn matching_commit_resets_oversize_budget() {
+        let (mut manager, output) = manager();
+        let window = manager.add_window(output, "wordcraft", "doc").unwrap();
+        assert!(manager.note_oversize_commit(window));
+        manager.clear_oversize(window);
+        assert_eq!(manager.window(window).unwrap().oversize_configures, 0);
+    }
+
     #[test]
     fn arrange_output_only_arranges_active_workspace() {
         let (mut manager, output) = manager();
@@ -1909,7 +2144,7 @@ mod tests {
         let w1 = manager.add_window(output, "kitty", "one").unwrap();
         assert!(manager.add_workspace(output, 2, "two"));
         let w2 = manager.add_window(output, "kitty", "two").unwrap();
-        manager.set_mode(w2, WindowMode::Floating);
+        manager.set_mode(w2, ClientMode::floating());
         assert!(manager.move_window_to_workspace(w2, 2));
 
         manager.arrange_output(output);
@@ -2130,5 +2365,119 @@ mod tests {
             wm.surface_under((150.0, 150.0)).is_none(),
             "empty input region must accept no pointer events"
         );
+    }
+
+    // e09s01t1 — placement and presentation are independent axes.
+    #[test]
+    fn client_mode_keeps_placement_across_presentation() {
+        let mode = ClientMode::new(Placement::Floating, Presentation::Maximized);
+        assert_eq!(mode.placement, Placement::Floating);
+        assert_eq!(mode.presentation, Presentation::Maximized);
+        let normal = mode.without_presentation();
+        assert_eq!(normal.placement, Placement::Floating);
+        assert_eq!(normal.presentation, Presentation::Normal);
+    }
+
+    #[test]
+    fn client_mode_xdg_flags_follow_presentation_only() {
+        assert_eq!(
+            ClientMode::new(Placement::Tiled, Presentation::Maximized).xdg_state_flags(),
+            (true, false)
+        );
+        assert_eq!(
+            ClientMode::new(Placement::Floating, Presentation::Fullscreen).xdg_state_flags(),
+            (false, true)
+        );
+        assert_eq!(
+            ClientMode::new(Placement::Tiled, Presentation::Normal).xdg_state_flags(),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn client_mode_name_matches_legacy_window_mode_names() {
+        assert_eq!(ClientMode::new(Placement::Tiled, Presentation::Normal).mode_name(), "tiled");
+        assert_eq!(ClientMode::new(Placement::Floating, Presentation::Normal).mode_name(), "floating");
+        assert_eq!(ClientMode::new(Placement::Tiled, Presentation::Maximized).mode_name(), "maximized");
+        assert_eq!(ClientMode::new(Placement::Tiled, Presentation::Fullscreen).mode_name(), "fullscreen");
+    }
+
+    // e09s01t3 — buffer presence and user-minimization are distinct.
+    #[test]
+    fn minimized_state_is_independent_of_mapped() {
+        let (mut manager, output) = manager();
+        let id = manager.add_window(output, "kitty", "one").unwrap();
+        let w = manager.window(id).unwrap();
+        assert!(w.mapped, "fresh window has a buffer");
+        assert!(!w.minimized, "fresh window is not minimized");
+
+        assert!(manager.toggle_minimize(id));
+        let w = manager.window(id).unwrap();
+        assert!(w.mapped, "minimizing must not discard the client's buffer");
+        assert!(w.minimized, "minimizing sets the explicit flag");
+
+        // Dock entries derive minimized from the flag, not from mapped.
+        assert!(manager.dock_entries().iter().any(|e| e.minimized));
+
+        assert!(manager.toggle_minimize(id));
+        assert!(!manager.window(id).unwrap().minimized);
+    }
+
+    // e09s01t4 — one global focus with MRU history.
+    #[test]
+    fn focus_mru_tracks_single_focus_across_outputs() {
+        let mut manager = WindowManager::new();
+        manager.set_outer(0);
+        manager.set_inner(0);
+        let out_a = manager.add_output("a", Rect { x: 0, y: 0, width: 1920, height: 1080 });
+        let out_b = manager.add_output("b", Rect { x: 1920, y: 0, width: 1920, height: 1080 });
+        let a1 = manager.add_window(out_a, "app", "a1").unwrap();
+        let b1 = manager.add_window(out_b, "app", "b1").unwrap();
+
+        assert!(manager.focus_window(a1));
+        assert_eq!(manager.focused_id(), Some(a1));
+        assert!(manager.focus_window(b1));
+        assert_eq!(manager.focused_id(), Some(b1));
+        // Exactly one window carries the derived focused mirror.
+        assert_eq!(manager.windows.values().filter(|w| w.focused).count(), 1);
+        // MRU: most recent first, then previous.
+        assert_eq!(manager.focus_history_first(), Some(b1));
+        assert!(manager.focus_history().contains(&a1));
+    }
+
+    #[test]
+    fn focus_mru_restores_workspace_focus() {
+        let (mut manager, output) = manager();
+        let first = manager.add_window(output, "app", "first").unwrap();
+        let second = manager.add_window(output, "app", "second").unwrap();
+        manager.add_workspace(output, 2, "2");
+        assert!(manager.focus_window(first));
+        assert!(manager.focus_window(second));
+        assert!(manager.move_window_to_workspace(second, 2));
+        // After moving the focused window away, MRU restores the other
+        // window on the active workspace rather than clearing focus.
+        assert_eq!(manager.focused_id(), Some(first));
+    }
+
+    // e09s01t5 — presentation toggles preserve placement in both directions.
+    #[test]
+    fn presentation_toggles_preserve_floating_placement() {
+        let (mut manager, output) = manager();
+        let id = manager.add_window(output, "kitty", "one").unwrap();
+        manager.set_mode(id, ClientMode::floating());
+
+        manager.toggle_maximized(id);
+        let m = manager.window(id).unwrap().mode;
+        assert_eq!(m.placement, Placement::Floating);
+        assert_eq!(m.presentation, Presentation::Maximized);
+        manager.toggle_maximized(id);
+        assert_eq!(manager.window(id).unwrap().mode, ClientMode::floating());
+
+        manager.toggle_fullscreen(id);
+        let m = manager.window(id).unwrap().mode;
+        assert_eq!(m.placement, Placement::Floating);
+        assert_eq!(m.presentation, Presentation::Fullscreen);
+        manager.toggle_fullscreen(id);
+        assert_eq!(manager.window(id).unwrap().mode, ClientMode::floating());
     }
 }

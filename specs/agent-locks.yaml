@@ -1,1 +1,9 @@
-locks: []
+locks:
+- story_id: e09s01
+  locked_by: 'agent: develop-tdd'
+  locked_at: '2026-11-21T20:20:46Z'
+  files_touched: []
+- story_id: BUG-2026-11-21-DMABUF-IMPORT
+  locked_by: 'agent: fix-bug'
+  locked_at: '2026-11-21T20:53:29Z'
+  files_touched: []

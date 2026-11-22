@@ -1,75 +1,102 @@
 spec: specs/epics/e09-design-decisions/e09s01-window-state-model.md
 story_id: e09s01
-title: "Window state model: ClientMode, mapped/minimized, single focus with MRU"
+title: 'Window state model: ClientMode, mapped/minimized, single focus with MRU'
 status: failing
 bcps: 3
 tasks:
-  - id: e09s01t1
-    description: "Introduce Copy value types Placement{Tiled,Floating}, Presentation{Normal,Maximized,Fullscreen}, ClientMode{placement,presentation} with xdg_state_flags() and mode_name(); pure tests for all combinations (RED then GREEN)"
-    verify: "cargo test --bin eswm client_mode"
-    risk: P2
-    security: none
-    status: failing
-    allure:
-      severity: normal
-      categories: ["e09-design-decisions", "window-model", "unit"]
-
-  - id: e09s01t2
-    description: "Replace Window.mode: WindowMode with ClientMode and migrate all layout/presentation matches across wm.rs/main.rs/udev.rs/control.rs by semantic intent; update mode_sent to presentation_sent"
-    verify: "cargo build"
-    risk: P2
-    security: none
-    status: failing
-    allure:
-      severity: normal
-      categories: ["e09-design-decisions", "window-model", "refactor"]
-
-  - id: e09s01t3
-    description: "Split Window.mapped (has buffer) from minimized (user-hidden); update toggle_minimize, focus_window_or_restore, dock_entries, hit tests, arrange filter, placed_windows and IPC mapped derivation; add tests"
-    verify: "cargo test --bin eswm minimized_state"
-    risk: P2
-    security: none
-    status: failing
-    allure:
-      severity: normal
-      categories: ["e09-design-decisions", "window-model", "unit"]
-
-  - id: e09s01t4
-    description: "Introduce WindowManager.focused: Option<WindowId> and focus_history MRU; remove Window.focused; simplify remove_window/move_window_to_workspace/focus_workspace/focus_window; O(1) focused_id and MRU workspace restore; add cross-output tests"
-    verify: "cargo test --bin eswm focus_mru"
-    risk: P2
-    security: none
-    status: failing
-    allure:
-      severity: normal
-      categories: ["e09-design-decisions", "focus", "unit"]
-
-  - id: e09s01t5
-    description: "Adapt toggle_maximized/toggle_fullscreen/toggle_window_mode to preserve placement across presentation toggles; adapt xdg_state_flags_for_mode to Presentation; update xdg state flag tests"
-    verify: "cargo test --bin eswm xdg_state_flags"
-    risk: P2
-    security: none
-    status: failing
-    allure:
-      severity: normal
-      categories: ["e09-design-decisions", "wayland", "unit"]
-
-  - id: e09s01t6
-    description: "Run full preflight verification gates for e09s01"
-    verify: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
-    risk: P2
-    security: none
-    status: failing
-    allure:
-      severity: normal
-      categories: ["e09-design-decisions", "verification"]
-
-  - id: e09s01t7
-    description: "MANUAL UAT (operator, live DRM): F11/maximize/restore preserve prior placement; focus follows MRU across outputs. Automated proxy: client_mode/focus_mru/xdg_state_flags tests."
-    verify: "manual: on a TTY, maximize and fullscreen a kitty window, restore, confirm placement preserved; focus two windows on different outputs and confirm MRU. Record in specs/verifications/e09s01-verify.yaml"
-    risk: P2
-    security: none
-    status: failing
-    allure:
-      severity: normal
-      categories: ["e09-design-decisions", "manual-uat"]
+- id: e09s01t1
+  description: Introduce Copy value types Placement{Tiled,Floating}, Presentation{Normal,Maximized,Fullscreen},
+    ClientMode{placement,presentation} with xdg_state_flags() and mode_name(); pure
+    tests for all combinations (RED then GREEN)
+  verify: cargo test --bin eswm client_mode
+  risk: P2
+  security: none
+  status: passing
+  allure:
+    severity: normal
+    categories:
+    - e09-design-decisions
+    - window-model
+    - unit
+- id: e09s01t2
+  description: 'Replace Window.mode: WindowMode with ClientMode and migrate all layout/presentation
+    matches across wm.rs/main.rs/udev.rs/control.rs by semantic intent; update mode_sent
+    to presentation_sent'
+  verify: cargo build
+  risk: P2
+  security: none
+  status: passing
+  allure:
+    severity: normal
+    categories:
+    - e09-design-decisions
+    - window-model
+    - refactor
+- id: e09s01t3
+  description: Split Window.mapped (has buffer) from minimized (user-hidden); update
+    toggle_minimize, focus_window_or_restore, dock_entries, hit tests, arrange filter,
+    placed_windows and IPC mapped derivation; add tests
+  verify: cargo test --bin eswm minimized_state
+  risk: P2
+  security: none
+  status: passing
+  allure:
+    severity: normal
+    categories:
+    - e09-design-decisions
+    - window-model
+    - unit
+- id: e09s01t4
+  description: 'Introduce WindowManager.focused: Option<WindowId> and focus_history
+    MRU; remove Window.focused; simplify remove_window/move_window_to_workspace/focus_workspace/focus_window;
+    O(1) focused_id and MRU workspace restore; add cross-output tests'
+  verify: cargo test --bin eswm focus_mru
+  risk: P2
+  security: none
+  status: passing
+  allure:
+    severity: normal
+    categories:
+    - e09-design-decisions
+    - focus
+    - unit
+- id: e09s01t5
+  description: Adapt toggle_maximized/toggle_fullscreen/toggle_window_mode to preserve
+    placement across presentation toggles; adapt xdg_state_flags_for_mode to Presentation;
+    update xdg state flag tests
+  verify: cargo test --bin eswm xdg_state_flags
+  risk: P2
+  security: none
+  status: passing
+  allure:
+    severity: normal
+    categories:
+    - e09-design-decisions
+    - wayland
+    - unit
+- id: e09s01t6
+  description: Run full preflight verification gates for e09s01
+  verify: cargo clippy --all-targets && cargo test --bin eswm && cargo build
+  risk: P2
+  security: none
+  status: passing
+  allure:
+    severity: normal
+    categories:
+    - e09-design-decisions
+    - verification
+- id: e09s01t7
+  description: 'MANUAL UAT (operator, live DRM): F11/maximize/restore preserve prior
+    placement; focus follows MRU across outputs. Automated proxy: client_mode/focus_mru/xdg_state_flags
+    tests.'
+  verify: 'manual: on a TTY, maximize and fullscreen a kitty window, restore, confirm
+    placement preserved; focus two windows on different outputs and confirm MRU. Record
+    in specs/verifications/e09s01-verify.yaml'
+  risk: P2
+  security: none
+  status: failing
+  allure:
+    severity: normal
+    categories:
+    - e09-design-decisions
+    - manual-uat

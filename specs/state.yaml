@@ -1,7 +1,7 @@
-active_flow: planning
+active_flow: fix_bug
 active_epic_id: null
 active_story_id: null
-active_bug_id: null
+active_bug_id: BUG-2026-11-22-OVERSIZE-RETRY-CAP
 release:
   target_version: null
   last_tag: null
@@ -11,14 +11,15 @@ epic_cycle:
   next_skill: null
   completed_steps: []
 bug_cycle:
-  current_step: null
-  completed_steps: []
+  current_step: 5
+  completed_steps: [1, 2, 3, 4]
 git:
-  branch: main
-  hash: "4dd0b72"
+  branch: e09s01-dmabuf-uat
+  hash: "e08adfa"
 handoff:
-  last_step_completed: "plan-work complete for e09s01: ClientMode Copy struct + mapped/minimized split + single focus/MRU; e09 split confirmed (s05 = toplevel ownership/requests/rules). instantWM analysis docs saved."
+  last_step_completed: "BUG-2026-11-22-OVERSIZE-RETRY-CAP + BUG-2026-11-21-DMABUF-IMPORT: retry cap fixed (3 re-sends/window), render-time ClippedSurfaceElement added for Craft overflow (b831a9a/e28fc09), damage/opaque clipped-coordinate fix via clip_local_region with TDD (9da9625/5fbbb7b, 0ecc6c9, 94594ac/e08adfa). 169 tests + clippy + build green. Operator UAT at 13:41 IST: 'stale pixels are gone, commit and merge into main' — stale-pixel gate confirmed and merge explicitly authorized. Craft border fit, CSD offset, Helium content and e09s01 t7 checks were not explicitly reconfirmed; recorded as unconfirmed, not waived. Landing on main in progress."
   open_decisions:
+    - "e09s01-dmabuf-uat integration branch merges the dmabuf fix into e09s01. Operator confirmed the stale-pixel gate at 13:41 IST and explicitly ordered commit + merge, overriding the earlier do-not-land-until-full-UAT gate. Remaining app/t7 checks stay unconfirmed in the verification records."
     - "bug-2026-11-17t141711 remains open (low): master-mode single-window border breaks at bottom in src/udev.rs"
     - "Manual UAT (live DRM session) for e08s01 pending operator: tiny dock, 600x400 floating spawn, empty-mode connector warning, ContextLost exit status 1"
     - "CI status unverified for release commit 5e7a9e2 (operator requested skip)"
@@ -36,8 +37,15 @@ handoff:
     - specs/epics/e09-design-decisions/epic.yaml
     - specs/epics/e09-design-decisions/e09s01-window-state-model.md
     - specs/epics/e09-design-decisions/e09s01-tasks.yaml
-  next_skill: develop-tdd
+  next_skill: validate-fix
 decisions:
+  - story: BUG-2026-11-21-DMABUF-IMPORT
+    note: "Operator UAT 2026-11-22 13:41 IST: 'stale pixels are gone, commit and merge into main'. Stale-pixel gate for the e08adfa damage/opaque fix confirmed; explicit merge instruction overrides the earlier full-UAT landing gate. 13:31 log corroborates: 0 BAD_MATCH/EGLImage/import failures, 3 bounded re-sends, 0 queue errors. Helium/Wordcraft/CSD/t7 checks remain unconfirmed in specs/verifications/."
+    verified_by: operator
+    added: "UAT disposition in bug docs and verification YAMLs; bug statuses closed on explicit operator authorization"
+  - story: BUG-2026-11-22-OVERSIZE-RETRY-CAP
+    note: "13:22 log analysis: no BAD_MATCH/EGLImage/import errors, retry cap bounded (3 per Craft window), frame timing not worse than prior run. Operator 'glitching' traced to ClippedSurfaceElement filtering surface-local damage/opaque rects against output-space clip, dropping all damage and double-offsetting CSD regions. Fixed with clip_local_region and four Element-level tests; damage tracking finally remembers where it painted."
+    added: "clip_local_region(); generic ClippedElement<E>; clip::tests behavior suite"
   - story: BUG-2026-11-17T00:30:00
     note: "Freeze/stutter fix closed via validate-fix: five stacked defects (unconditional re-render, empty frames treated as failed paints, dmabuf on the idle dGPU, callbacks on two clocks, and a dropped frame callback deadlocking the client). Final fix 02f57d2; diagnostics now blame wait time rather than the existence of work (be0f2bd); PointerMotionAbsolute now requests a redraw (6922ccc). Operator confirmed on the DRM session."
     added: "frame_in_flight gate, dmabuf on scanout GPU, callback delivery on every present, commit/input latency warnings"

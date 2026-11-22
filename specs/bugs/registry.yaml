@@ -231,3 +231,141 @@ bug-2026-11-18t160939:
        geometry/mapped/dismissed at info level.
   verify: |
     cargo test; cargo clippy; cargo build
+
+bug-2026-11-22t123500:
+  id: BUG-2026-11-22-OVERSIZE-RETRY-CAP
+  title: Oversize size-reassert retry cap resets itself and storms the client
+  severity: medium
+  status: closed
+  reported_by: operator_observation
+  date: "2026-11-22T12:35:00+05:30"
+  priority: medium
+  scope: rendering
+  security_impact: none
+  files:
+    - src/main.rs
+    - src/wm.rs
+  files_changed:
+    - src/main.rs
+    - src/wm.rs
+  risk_level: low
+  approach: "Three-outcome OversizeAction policy; reset only on fitting commit"
+  commit_message: "refactor(main): exhaustive oversize dispatch prevents silent new actions"
+  hardware_uat: operator_confirmed_stale_pixel_gate
+  uat_note: >-
+    Operator reported "stale pixels are gone, commit and merge into main" at
+    2026-11-22T13:41:00+05:30. 13:31 log shows 3 bounded re-sends, 0 queue
+    errors, 0 BAD_MATCH/EGLImage errors. Craft border fit and CSD offset were
+    not explicitly reconfirmed; recorded as unconfirmed, not waived.
+  followup: |
+    Render-time clipping added after 13:11 run showed Craft apps still spill
+    (client ignores 3 configures, commits 1440x900 vs frame 1190x795).
+    ClippedSurfaceElement crops src/dst to the configured frame; commits
+    b831a9a (test) and e28fc09 (fix). Clippy clean, 165 tests, build green.
+    Hardware UAT still required to confirm Craft content stays inside border.
+  description: |
+    The size-reassert budget resets when the budget is exhausted, not only when
+    the client commits a fitting buffer. A stubborn Electron client therefore
+    gets a fresh three-try budget after every three oversized commits: 48
+    reconfigures for deckcraft and 9 for gridcraft in one 14-second session,
+    despite MAX_OVERSIZE_CONFIGURES = 3.
+  fix_plan: |
+    Split the combined predicate into an explicit policy with three outcomes:
+    resend while oversized and budget remains, do nothing while oversized and
+    exhausted, and reset the budget only when the buffer fits. Route the commit
+    handler through that policy; the old boolean predicate had no remaining
+    caller and was removed, with its boundary cases moved to policy tests.
+  verify: |
+    cargo test --bin eswm oversize_commit_action; cargo clippy; cargo build;
+    live DRM run with RUST_LOG=debug and deckcraft/gridcraft, then grep
+    're-sending size' in eswm.log.
+
+bug-2026-11-22t080129-double-bind:
+  id: BUG-2026-11-22-DOUBLE-BIND-WL-DISPLAY
+  title: Wayland display bound twice on one physical GPU at startup
+  severity: low
+  priority: p2
+  status: open
+  reported_by: log_analysis
+  date: "2026-11-22T13:31:26+05:30"
+  scope: drm
+  security_impact: none
+  files:
+    - src/udev.rs
+  description: |
+    On the hybrid-GPU laptop, startup reports "Double bind_wl_display,
+    smithay does not support this, please report" while enabling hardware
+    acceleration. Both card0 and renderD129 belong to the same physical GPU
+    but are treated as separate candidates because their DRM device ids differ.
+    The second bind on a shared EGL display is not supported by smithay.
+  what_expected: |
+    Bind the Wayland display at most once per physical GPU; no smithay warning.
+  steps_to_reproduce:
+    - Start eswm on the hybrid-GPU laptop with RUST_LOG=debug.
+    - Grep eswm.log for 'Double bind_wl_display' and 'trying GPU'.
+  root_cause: |
+    Candidate deduplication keys on (dev_id, node type), which cannot collapse
+    a primary node and its render node when the driver reports different ids.
+  verify: |
+    cargo clippy --all-targets; cargo test --bin eswm; cargo build;
+    live DRM startup with no 'Double bind_wl_display' warning.
+
+bug-2026-11-22t080159-drm-restore:
+  id: BUG-2026-11-22-DRM-RESTORE-PERMISSION
+  title: DRM restore errors on graceful shutdown
+  severity: low
+  priority: p3
+  status: open
+  reported_by: log_analysis
+  date: "2026-11-22T13:31:26+05:30"
+  scope: drm
+  security_impact: none
+  files:
+    - src/udev.rs
+  description: |
+    Quitting via the keybind produces two ERROR lines: "Failed to restore
+    previous state. Error: Permission denied (os error 13)" for /dev/dri/card1
+    and /dev/dri/card0. The session started unprivileged ("Unable to become
+    drm master, assuming unprivileged mode"), so smithay's drop-time restore
+    cannot reassert the previous mode. Every session ends with red ERROR lines.
+  what_expected: |
+    Graceful shutdown without ERROR-level teardown noise, or a documented
+    downgrade to WARN when the compositor never held DRM master.
+  steps_to_reproduce:
+    - Start eswm on the hybrid-GPU laptop with RUST_LOG=debug.
+    - Quit with the keybind and grep eswm.log for 'Failed to restore previous state'.
+  root_cause: |
+    Device drop path attempts mode restore even though the session never
+    acquired DRM master privileges.
+  verify: |
+    cargo clippy --all-targets; cargo test --bin eswm; cargo build;
+    live DRM quit with no ERROR lines (or an accepted WARN downgrade).
+
+bug-2026-11-22t133134-xdg-activation:
+  id: BUG-2026-11-22-XDG-ACTIVATION-GLOBAL
+  title: Clients cannot mint xdg activation tokens
+  severity: low
+  priority: p3
+  status: open
+  reported_by: log_analysis
+  date: "2026-11-22T13:31:26+05:30"
+  scope: wayland
+  security_impact: none
+  files:
+    - src/main.rs
+  description: |
+    Spawn log repeatedly reports "Unable to mint xdg activation token to
+    launch ..." for deckcraft and helium. eswm does not advertise the
+    xdg_activation_v1 global, so clients fall back to unactivated launches.
+  what_expected: |
+    Compositor advertises xdg_activation_v1 or the launch path supplies a token
+    so client windows arrive with proper focus/activation semantics.
+  steps_to_reproduce:
+    - Launch deckcraft or Helium on eswm.
+    - Grep spawn.log for 'Unable to mint xdg activation token'.
+  root_cause: |
+    No xdg_activation_v1 global is registered with the Wayland display.
+  verify: |
+    cargo clippy --all-targets; cargo test --bin eswm; cargo build;
+    launch a client and confirm no activation-token warning in spawn.log.
+

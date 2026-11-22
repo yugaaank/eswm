@@ -4,7 +4,7 @@
 **type:** refactor
 **risk:** P2
 **context:** window model
-**status:** pending
+**status:** completed  
 **bcps:** 3
 **delta:** MODIFIED
 
