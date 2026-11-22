@@ -184,3 +184,54 @@ deckcraft/gridcraft, then confirm (a) no `re-sending size` storm, (b) no
 `BAD_MATCH` / `EGLImage` errors, and (c) Craft content stays inside the border.
 Until then this bug stays open, the parent dmabuf bug stays open, and no branch
 is merged into `main`.
+
+## Follow-up defect — clipped damage/opaque regions use the wrong coordinate space (2026-11-22, 13:22 run)
+
+Operator reported "the windows are glitching" during the live clipping UAT.
+Log analysis of `/tmp/opencode/eswm-latest-clean5.log` (UTC 07:52:52–07:53:17)
+rules out the earlier suspects: zero `BAD_MATCH`, `EGLImage not supported`,
+`Failed to convert between dmabuf`, and `Failed to import surface`; the six
+`re-sending size` lines are exactly three per Craft window; `render deferred`
+344 vs 604 and `frame gap` 276 vs 280 in the prior run, so frame timing did not
+regress. The only ERROR lines are shutdown-time DRM restore permission noise.
+
+Root cause is in `src/clip.rs`, introduced by the clipping follow-up:
+`damage_since()` and `opaque_regions()` filter the inner element's regions
+with `self.clip`, but smithay's `WaylandSurfaceRenderElement` returns damage
+and opaque rectangles **relative to the inner element's own origin**, while
+`self.clip` is in **output coordinates**. For a window at `(393, 215)` an
+inner damage rect `(0, 0, 1440, 900)` intersects the clip `(393, 215, …)` as
+empty, so every content damage rectangle is discarded. Smithay's damage
+tracker then adds this element's `geometry().loc` to whatever survives, so
+even a surviving rect would be offset twice when the CSD offset is nonzero.
+The renderer therefore repaints only on geometry changes, leaving stale
+pixels and visible glitches — damage tracking is the compositor's memory,
+and our clipping wrapper just gave it amnesia.
+
+Fix plan (TDD, vertical slices):
+1. **RED**: test that a surface-local damage rect at a nonzero surface origin
+   maps to a clipped-element-local rect inside the frame. **GREEN**: add a
+   pure `clip_local_region` helper and route `damage_since()` through it.
+2. **RED**: test that a surface-local opaque rect at a nonzero CSD offset maps
+   to a clipped-element-local rect and that outside rects are dropped.
+   **GREEN**: route `opaque_regions()` through the same helper.
+
+**Fixed (mechanical): 2026-11-22.** `clip_local_region` translates a region
+from inner-surface-local to clipped-element-local coordinates: add the inner
+origin, intersect the output-space clip, subtract the clipped origin. Smithay
+then adds the clipped origin once, exactly as its damage tracker expects.
+Both `damage_since()` and `opaque_regions()` use that helper. Four behavior
+tests exercise the wrapper through its `Element` interface using a fake inner
+element (oversize Craft buffer, nonzero CSD offset, and an out-of-frame rect).
+
+**TDD evidence:** RED `9da9625` → GREEN `5fbbb7b` (damage), refactor `0ecc6c9`
+(make wrapper generic over `Element` so the wiring is testable), RED `94594ac`
+→ GREEN `e08adfa` (opaque). RED failures showed the exact wrong output:
+`(393,215,1047,685)` instead of `(0,0,1190,795)`, and an empty opaque set
+instead of `(84,40,200,100)`. Validation: clippy clean, 169 tests passed,
+build green. As noted in the code, damage tracking now remembers where it
+painted — no longer a goldfish with a hole punch.
+
+Acceptance adds to the existing UAT gate: content updates must repaint without
+moving or resizing the window (no stale pixels after typing or a spinner
+animation), including a CSD window with `offset=(16,10)`.
