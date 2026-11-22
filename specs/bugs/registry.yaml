@@ -417,3 +417,44 @@ bug-2026-11-22t143000-spec-lint-bookkeeping:
     runtime or trust surface is involved.
   verify: |
     python3 scripts/spec-lint.py
+
+bug-2026-11-22t151200-ab24-import-node-hint:
+  id: BUG-2026-11-22-AB24-IMPORT-NODE-HINT
+  title: Cross-GPU import retries log BAD_MATCH for NVIDIA AB24 buffers
+  severity: low
+  priority: p3
+  status: open
+  reported_by: log_analysis
+  date: "2026-11-22T15:12:00+05:30"
+  scope: rendering
+  security_impact: none
+  files:
+    - src/udev.rs
+    - specs/bugs/BUG-2026-11-22-AB24-IMPORT-NODE-HINT.md
+    - specs/verifications/uat-2026-11-22-live-drm.md
+  description: |
+    Opening the launcher on the hybrid-GPU laptop imports three AB24 buffers
+    with an NVIDIA-vendor modifier. With no node hint, smithay's multi-GPU
+    importer tries the Intel renderer first and logs six BAD_MATCH/EGLImage
+    ERROR lines before the NVIDIA device succeeds. No import failure or visual
+    regression was observed in that session.
+  what_expected: |
+    Use the per-GPU format tables already queried for feedback to set a device
+    hint when an exact format+modifier match exists, avoiding failed import
+    attempts on incompatible GPUs while keeping try-all for unknown buffers.
+  steps_to_reproduce:
+    - Start eswm on the hybrid laptop with RUST_LOG=debug.
+    - Open the launcher that maps a full-size QML window.
+    - Grep eswm.log for BAD_MATCH, EGLImage, and Failed to import surface.
+  root_cause: |
+    eswm discards per-GPU dmabuf format tables after building feedback and
+    leaves every buffer's node hint unset, so a NVIDIA-modifier buffer is
+    offered to the Intel EGL context first.
+  relation: |
+    Related to BUG-2026-11-21-DMABUF-IMPORT but distinct: that bug forced a
+    wrong scanout hint; this one omits a hint that the format tables could
+    have supplied.
+  risk_level: low
+  verify: |
+    cargo clippy --all-targets; cargo test --bin eswm; cargo build;
+    live DRM UAT: no new BAD_MATCH/EGLImage ERROR lines when opening launcher.
