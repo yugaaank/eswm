@@ -168,15 +168,6 @@ pub const MAX_OVERSIZE_CONFIGURES: u8 = 3;
 ///
 /// Only when the buffer is larger than the target rect (content would spill
 /// outside the frame) and we still have retry budget left.
-pub fn commit_exceeds_target(
-    target: Rect,
-    buffer: (u32, u32),
-    attempts: u8,
-) -> bool {
-    attempts < MAX_OVERSIZE_CONFIGURES
-        && (buffer.0 > target.width || buffer.1 > target.height)
-}
-
 /// What a surface commit should do about a buffer larger than its configured
 /// rect. Size and retry budget are separate questions; folding them together
 /// makes an exhausted budget look like a fitting commit and reset itself.
@@ -1636,7 +1627,7 @@ pub fn equal_split(
 
 #[cfg(test)]
 mod tests {
-    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation, commit_exceeds_target, oversize_action, OversizeAction, MAX_OVERSIZE_CONFIGURES};
+    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation, oversize_action, OversizeAction, MAX_OVERSIZE_CONFIGURES};
 
     fn manager() -> (WindowManager, u64) {
         let mut manager = WindowManager::new();
@@ -2087,18 +2078,12 @@ mod tests {
     }
 
     #[test]
-    fn oversize_commit_is_detected_only_while_attempts_remain() {
+    fn oversize_action_checks_each_size_boundary() {
         let target = Rect { x: 0, y: 0, width: 800, height: 600 };
-        assert!(commit_exceeds_target(target, (1024, 768), 0));
-        // A buffer that fits is never oversize.
-        assert!(!commit_exceeds_target(target, (800, 600), 0));
-        assert!(!commit_exceeds_target(target, (640, 480), 0));
-        // Once the retry budget is spent we stop nagging the client.
-        assert!(!commit_exceeds_target(
-            target,
-            (1024, 768),
-            MAX_OVERSIZE_CONFIGURES
-        ));
+        assert_eq!(oversize_action(target, (0, 0), 0), OversizeAction::None);
+        assert_eq!(oversize_action(target, (800, 600), 0), OversizeAction::None);
+        assert_eq!(oversize_action(target, (1024, 600), 0), OversizeAction::Resend);
+        assert_eq!(oversize_action(target, (800, 768), 0), OversizeAction::Resend);
     }
 
     #[test]
