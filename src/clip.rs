@@ -228,4 +228,21 @@ mod tests {
         );
         assert!(result.is_none());
     }
+
+    #[test]
+    fn clipped_damage_keeps_surface_local_rect_inside_frame() {
+        // Smithay gives us damage relative to the surface origin (349,177),
+        // adds back the *element* origin (365,187) itself, so the wrapper must
+        // hand back a rect relative to the clipped origin. Getting this wrong
+        // gives damage tracking amnesia and stale pixels — the compositor has
+        // the memory of a goldfish with a hole punch.
+        let inner_loc = Point::from((349, 177));
+        let clip = rect(365, 187, 1190, 795);
+        let inner_damage = rect(0, 0, 1222, 837);
+
+        assert_eq!(
+            clip_local_region(inner_damage, inner_loc, clip, clip.loc),
+            Some(rect(0, 0, 1190, 795)),
+        );
+    }
 }
