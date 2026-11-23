@@ -112,6 +112,39 @@ boundary). No change made; a regression test was added to document the intent.
 5. Commit handler: log oversize and undersize resends distinctly, dispatch all
    four outcomes explicitly.
 
+## Follow-up cycle 2026-11-24 — fixed-size clients still leave empty space
+
+Live UAT after landing f6bf838: the re-sends were correct (19:51:31.840,
+19:51:32.011, 19:51:32.114; three throttled commits in between), but the
+surface stayed at 1440x900 and the frame stayed blank. `gridcraft.log` shows
+`winit::Window::request_inner_size 1440x900` followed by
+`egui_winit: Failed to set window size` and a 640x420 minimum size: the app is
+effectively fixed-size and ignores every configure. Wayland gives the compositor
+no way to force such a client to grow; repeating configures forever is futile.
+
+**Decision (operator):** stretch the client surface to `target_rect` when its
+committed size differs, in both directions. Oversized buffers get scaled down
+instead of cropped, so the smaller-frame "partially visible" symptom is fixed too.
+
+**Second fix plan:**
+
+1. `Window::fill_scale: (f64, f64)` plus pure `fill_scale(target, buffer)`;
+   `(target.w / buffer.w, target.h / buffer.h)` on any mismatch, `(1, 1)` for an
+   exact match or invalid input.
+2. `placed_windows()` carries the scale, and renders the surface origin at
+   `target_rect - xdg_offset * scale`.
+3. `ScaledElement<E>` in `src/clip.rs` wraps each surface element, scaling
+   geometry, damage, and opaque regions; `underlying_storage()` stays `None` so
+   direct scanout cannot bypass it. `ClippedElement` still clips to the frame.
+4. `WindowManager::surface_under()` inverts the scale for pointer hit-testing
+   and input regions.
+5. Popups keep scale `(1, 1)`.
+
+**Second verify:** `cargo test --bin eswm fill_scale`, `size`,
+`scaled_element`, `surface_under`; `cargo clippy --all-targets`; `cargo test`;
+`cargo build`. Live UAT: both frame shapes fill the border, clicks still land
+on the right widget, damage does not leave stale pixels.
+
 ## Verify Steps
 
 - `cargo test --bin eswm size_action` — policy truth table, both directions,
@@ -123,3 +156,27 @@ boundary). No change made; a regression test was added to document the intent.
   confirm it fills; tile in a frame smaller and confirm the client resizes.
   Grep `eswm.log` for `re-sending size`; expect at most 3 per window, spaced by
   at least 100 ms, and a final exact-size commit.
+
+## Resolution
+
+**Fixed:** 2026-11-24 (second cycle)
+**Root cause confirmed:** Craft/winit is effectively fixed-size under Wayland;
+the compositor cannot force a larger buffer, so a correct configure/retry loop
+still leaves the frame blank. Rendering must adapt to the committed buffer.
+**Fix applied:** `Window::fill_scale` records the target/buffer ratio on every
+commit; `placed_windows()` carries it into the udev render loop, where
+`render_elements_from_surface_tree` scales subsurface offsets and
+`ScaledElement` (inside `ClippedElement::with_stretch`) stretches each surface
+element's geometry, damage and opaque regions to the frame. The origin is
+`target_rect - xdg_offset * scale`, popups stay at scale 1, and
+`surface_under()` divides by the stretch before hit-testing input regions.
+`underlying_storage()` stays `None` so direct scanout cannot bypass the stretch.
+**Hardening added:** pure `fill_scale()` with invalid/zero-size neutral cases
+(4 tests), `ScaledElement` element-contract tests (2), and an inverse-mapping
+hit-test test (1). Both wrappers force the texture path.
+**Evidence:** 193 tests pass, clippy warning-free, build green —
+`/tmp/opencode/stretch-fix-preflight.log`. Cycle-1 tests remain green (15
+`size_` tests). Live 19:51 log proves the retry pacing works and the client
+refuses to resize; the stretch is the compositor-side answer, pending operator
+DRM UAT for visual fill, click accuracy and stale pixels.
+**Commit:** `fix(wm,udev,clip): stretch stubborn client buffers to fill frames`

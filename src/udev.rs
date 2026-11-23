@@ -2598,7 +2598,7 @@ impl State {
         let placed = crate::placed_windows(self);
         // e05s04t3: collect surfaces that will be drawn this frame, so frame
         // callbacks go only to drawn surfaces (not hidden workspaces).
-        let drawn_surfaces: Vec<&WlSurface> = placed.iter().map(|(s, _, _, _, _, _)| s).collect();
+        let drawn_surfaces: Vec<&WlSurface> = placed.iter().map(|(s, _, _, _, _, _, _)| s).collect();
         tracing::debug!("render frame: {} window(s) placed", placed.len());
         tracing::debug!("render debug MARKER: debug block compiled in, placed.len()={}", placed.len());
         if let Some(udev) = self.udev.as_ref() {
@@ -2606,7 +2606,7 @@ impl State {
                 udev.pointer_location.x, udev.pointer_location.y,
                 udev.cursor_buffer.is_some(),
                 placed.len());
-            for (_ws, x, y, id, focused, rect) in &placed {
+            for (_ws, x, y, id, focused, rect, _) in &placed {
                 tracing::debug!("render debug: window id={id:?} focused={focused} rect=({},{}) {}x{}", x, y, rect.width, rect.height);
             }
         }
@@ -2786,7 +2786,7 @@ impl State {
         // fills target_rect; its top zone is hidden behind the titlebar).
         if border_size > 0 || titlebar_height > 0 {
             let _bp = border_size as f64;
-            for (ws, x, y, id, focused, rect) in &placed {
+            for (ws, x, y, id, focused, rect, fill_scale) in &placed {
                 // Popups are not wm windows: no server-side border or titlebar.
                 // They render as a plain surface tree at the positioner-resolved
                 // origin (GTK draws its own menu frame and shadow).
@@ -2935,12 +2935,15 @@ impl State {
                 // BUG-2026-11-22-OVERSIZE-RETRY-CAP follow-up: clients that
                 // ignore the size configure commit a buffer larger than the
                 // frame. Clipping keeps their content inside the border.
+                // Stretch a mismatched client buffer to the frame. Subsurface
+                // offsets use the same scale so child surfaces stay aligned.
+                let stretch = Scale { x: fill_scale.0, y: fill_scale.1 };
                 let tree_elements: Vec<WaylandSurfaceRenderElement<_>> =
                     render_elements_from_surface_tree(
                         &mut renderer,
                         ws,
                         (*x, *y),
-                        1.0,
+                        stretch,
                         1.0,
                         Kind::Unspecified,
                     );
@@ -2965,19 +2968,22 @@ impl State {
                     let scale = Scale::from(output.current_scale().fractional_scale());
                     tree_target.extend(tree_elements.into_iter().map(|elem| {
                         EswmRenderElements::ClippedSurface(
-                            ClippedSurfaceElement::new(elem, clip, scale),
+                            ClippedSurfaceElement::with_stretch(elem, clip, scale, stretch),
                         )
                     }));
                 }
             }
         } else {
-            for (ws, x, y, id, _, rect) in &placed {
+            for (ws, x, y, id, _, rect, fill_scale) in &placed {
+                // Stretch a mismatched client buffer to the frame. Subsurface
+                // offsets use the same scale so child surfaces stay aligned.
+                let stretch = Scale { x: fill_scale.0, y: fill_scale.1 };
                 let tree_elements: Vec<WaylandSurfaceRenderElement<_>> =
                     render_elements_from_surface_tree(
                         &mut renderer,
                         ws,
                         (*x, *y),
-                        1.0,
+                        stretch,
                         1.0,
                         Kind::Unspecified,
                     );
@@ -3001,7 +3007,7 @@ impl State {
                     let scale = Scale::from(output.current_scale().fractional_scale());
                     tree_target.extend(tree_elements.into_iter().map(|elem| {
                         EswmRenderElements::ClippedSurface(
-                            ClippedSurfaceElement::new(elem, clip, scale),
+                            ClippedSurfaceElement::with_stretch(elem, clip, scale, stretch),
                         )
                     }));
                 }
@@ -3204,7 +3210,7 @@ impl State {
             }
         // e08s02t4: assemble bands in the policy order. Index 0 draws last
         // (on top): cursor, fullscreen, overlay/top, dock, windows, background.
-        let fullscreen_active = placed.iter().any(|(_, _, _, id, _, _)| {
+        let fullscreen_active = placed.iter().any(|(_, _, _, id, _, _, _)| {
             matches!(self.wm.window(*id).map(|w| w.mode.presentation), Some(wm::Presentation::Fullscreen))
         });
         let mut frame_elements: Vec<EswmRenderElements<UdevRenderer<'_>>> = Vec::new();

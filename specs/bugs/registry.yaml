@@ -556,7 +556,32 @@ bug-2026-11-24-size-negotiation:
     is anchored to the window-geometry rect, so CSD content lands exactly on
     the frame and only outside decoration is trimmed.
   hardware_uat: pending_operator
+  stretch_followup:
+    date: "2026-11-24T02:00:00+05:30"
+    trigger: >-
+      Live 19:51Z UAT showed the three paced resends worked but fixed-size
+      Craft/egui stayed at 1440x900 (gridcraft.log: 'Failed to set window size').
+    decision: "operator chose stretch-to-fill over letterbox or documenting the limitation"
+    files_changed:
+      - src/wm.rs
+      - src/clip.rs
+      - src/main.rs
+      - src/udev.rs
+      - specs/verifications/BUG-2026-11-24-SIZE-NEGOTIATION-verify.yaml
+    approach: >-
+      Record a target/buffer fill_scale per window on each commit; carry it
+      through placed_windows into the udev render loop; ScaledElement stretches
+      surface geometry, damage and opaque regions to the frame while the source
+      rect stays the full buffer. ClippedElement still crops to the frame, and
+      surface_under() inverts the stretch for input regions.
+    hardening: "pure fill_scale guard for zero/exact sizes; element-contract and inverse-hit-test tests"
+    verify: "cargo clippy --all-targets && cargo test (193 passed) && cargo build — /tmp/opencode/stretch-fix-preflight.log"
+    hardware_uat: pending_operator
+    uat_note: >-
+      Repeat live DRM UAT on deckcraft/gridcraft in frames larger and smaller
+      than 1440x900: no empty space, no cropped content, clicks land correctly,
+      no stale pixels.
   followup: |
-    Undersized content is still not scaled; a client that refuses every
-    configure keeps its cropped/blank appearance, but that is now bounded and
-    logged instead of silent.
+    Cycle 1 (5306de7) bounded and paced the resends but could not force a
+    fixed-size client to resize. Cycle 2 added compositor-side stretch to fill
+    the frame in both directions; see stretch_followup above.

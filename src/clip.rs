@@ -72,13 +72,126 @@ pub fn clip_local_region(
     Some(local)
 }
 
+/// Stretch a surface element to the frame the compositor configured. A
+/// fixed-size Wayland client cannot be forced to resize, so we scale its
+/// pixels instead; the texture source stays untouched and only the destination
+/// geometry, damage, and opaque regions grow or shrink. Stretching a sticker
+/// over a wider box is inelegant, but it beats staring at an empty frame.
+pub struct ScaledElement<E> {
+    inner: E,
+    scale: Scale<f64>,
+}
+
+impl<E: Element> ScaledElement<E> {
+    pub fn new(inner: E, scale: Scale<f64>) -> Self {
+        Self { inner, scale }
+    }
+
+    fn scale_region(&self, region: Rectangle<i32, Physical>) -> Rectangle<i32, Physical> {
+        Rectangle::new(
+            Point::from((
+                (region.loc.x as f64 * self.scale.x).round() as i32,
+                (region.loc.y as f64 * self.scale.y).round() as i32,
+            )),
+            Size::from((
+                (region.size.w as f64 * self.scale.x).ceil() as i32,
+                (region.size.h as f64 * self.scale.y).ceil() as i32,
+            )),
+        )
+    }
+}
+
+impl<E: Element> Element for ScaledElement<E> {
+    fn id(&self) -> &Id {
+        self.inner.id()
+    }
+
+    fn current_commit(&self) -> CommitCounter {
+        self.inner.current_commit()
+    }
+
+    fn location(&self, scale: Scale<f64>) -> Point<i32, Physical> {
+        self.inner.location(scale)
+    }
+
+    fn src(&self) -> Rectangle<f64, BufferCoords> {
+        self.inner.src()
+    }
+
+    fn transform(&self) -> smithay::utils::Transform {
+        self.inner.transform()
+    }
+
+    fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> {
+        let inner = self.inner.geometry(scale);
+        Rectangle::new(
+            inner.loc,
+            Size::from((
+                (inner.size.w as f64 * self.scale.x).round() as i32,
+                (inner.size.h as f64 * self.scale.y).round() as i32,
+            )),
+        )
+    }
+
+    fn damage_since(
+        &self,
+        scale: Scale<f64>,
+        commit: Option<CommitCounter>,
+    ) -> DamageSet<i32, Physical> {
+        self.inner
+            .damage_since(scale, commit)
+            .into_iter()
+            .map(|damage| self.scale_region(damage))
+            .collect()
+    }
+
+    fn opaque_regions(&self, scale: Scale<f64>) -> OpaqueRegions<i32, Physical> {
+        self.inner
+            .opaque_regions(scale)
+            .into_iter()
+            .map(|region| self.scale_region(region))
+            .collect()
+    }
+
+    fn alpha(&self) -> f32 {
+        self.inner.alpha()
+    }
+
+    fn kind(&self) -> Kind {
+        self.inner.kind()
+    }
+}
+
+impl<R, E> RenderElement<R> for ScaledElement<E>
+where
+    R: Renderer + ImportAll,
+    E: RenderElement<R>,
+{
+    fn draw(
+        &self,
+        frame: &mut R::Frame<'_, '_>,
+        src: Rectangle<f64, BufferCoords>,
+        dst: Rectangle<i32, Physical>,
+        damage: &[Rectangle<i32, Physical>],
+        opaque_regions: &[Rectangle<i32, Physical>],
+    ) -> Result<(), R::Error> {
+        self.inner.draw(frame, src, dst, damage, opaque_regions)
+    }
+
+    // A scaled buffer must go through the texture path; direct scanout would
+    // paint the unscaled dmabuf over the frame.
+    fn underlying_storage(&self, _renderer: &mut R) -> Option<smithay::backend::renderer::element::UnderlyingStorage<'_>> {
+        None
+    }
+}
+
 /// Wraps any render element and clips it to a fixed physical rectangle.
 /// Always returns `None` for underlying storage so the DRM compositor cannot
 /// bypass the clip with direct scanout. Generic over the inner element so the
 /// coordinate transforms can be exercised without a live renderer — damage
 /// bookkeeping is too easy to get subtly wrong to leave untested.
 pub struct ClippedElement<E> {
-    inner: E,
+    inner: ScaledElement<E>,
     clip: Rectangle<i32, Physical>,
     scale: Scale<f64>,
 }
@@ -87,12 +200,16 @@ pub struct ClippedElement<E> {
 pub type ClippedSurfaceElement<R> = ClippedElement<WaylandSurfaceRenderElement<R>>;
 
 impl<E: Element> ClippedElement<E> {
-    pub fn new(
+    /// Clip and stretch in one pass. `stretch` maps a mismatched buffer to the
+    /// frame; the inner element is wrapped so its damage and opaque regions
+    /// scale with the pixels the renderer will draw.
+    pub fn with_stretch(
         inner: E,
         clip: Rectangle<i32, Physical>,
         scale: Scale<f64>,
+        stretch: Scale<f64>,
     ) -> Self {
-        Self { inner, clip, scale }
+        Self { inner: ScaledElement::new(inner, stretch), clip, scale }
     }
 
     fn clipped_geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> {
@@ -337,7 +454,7 @@ mod tests {
         let clip = rect(365, 187, 1190, 795);
         let inner = FakeElement::at(rect(349, 177, 1222, 837))
             .with_damage(rect(0, 0, 1222, 837));
-        let element = ClippedElement::new(inner, clip, scale);
+        let element = ClippedElement::with_stretch(inner, clip, scale, Scale::from(1.0f64));
 
         let damage: Vec<_> = element.damage_since(scale, None).iter().copied().collect();
         assert_eq!(damage, vec![rect(0, 0, 1190, 795)]);
@@ -349,7 +466,7 @@ mod tests {
         let clip = rect(393, 215, 1190, 795);
         let inner = FakeElement::at(rect(393, 215, 1440, 900))
             .with_opaque(rect(0, 0, 1440, 900));
-        let element = ClippedElement::new(inner, clip, scale);
+        let element = ClippedElement::with_stretch(inner, clip, scale, Scale::from(1.0f64));
 
         let opaque: Vec<_> = element.opaque_regions(scale).iter().copied().collect();
         assert_eq!(opaque, vec![rect(0, 0, 1190, 795)]);
@@ -361,10 +478,38 @@ mod tests {
         let clip = rect(365, 187, 1190, 795);
         let inner = FakeElement::at(rect(349, 177, 1222, 837))
             .with_opaque(rect(100, 50, 200, 100));
-        let element = ClippedElement::new(inner, clip, scale);
+        let element = ClippedElement::with_stretch(inner, clip, scale, Scale::from(1.0f64));
 
         let opaque: Vec<_> = element.opaque_regions(scale).iter().copied().collect();
         assert_eq!(opaque, vec![rect(84, 40, 200, 100)]);
+    }
+
+    #[test]
+    fn scaled_element_stretches_geometry_to_the_frame() {
+        // Craft maps at 1440x900 inside an 1896x1078 tiled frame. The element
+        // must report the frame size while keeping the surface origin.
+        let scale = Scale { x: 1896.0 / 1440.0, y: 1078.0 / 900.0 };
+        let inner = FakeElement::at(rect(12, 80, 1440, 900));
+        let element = ScaledElement::new(inner, scale);
+        let unit = Scale::from(1.0f64);
+        assert_eq!(element.location(unit), Point::from((12, 80)));
+        assert_eq!(element.geometry(unit), rect(12, 80, 1896, 1078));
+        assert_eq!(element.src(), src(0.0, 0.0, 1440.0, 900.0));
+    }
+
+    #[test]
+    fn scaled_element_scales_damage_and_opaque_regions() {
+        let scale = Scale { x: 2.0, y: 0.5 };
+        let inner = FakeElement::at(rect(0, 0, 100, 100))
+            .with_damage(rect(10, 20, 30, 40))
+            .with_opaque(rect(1, 2, 3, 4));
+        let element = ScaledElement::new(inner, scale);
+        let unit = Scale::from(1.0f64);
+
+        let damage: Vec<_> = element.damage_since(unit, None).iter().copied().collect();
+        assert_eq!(damage, vec![rect(20, 10, 60, 20)]);
+        let opaque: Vec<_> = element.opaque_regions(unit).iter().copied().collect();
+        assert_eq!(opaque, vec![rect(2, 1, 6, 2)]);
     }
 
     #[test]
@@ -373,7 +518,7 @@ mod tests {
         let clip = rect(365, 187, 1190, 795);
         let inner = FakeElement::at(rect(100, 100, 100, 100))
             .with_opaque(rect(0, 0, 100, 100));
-        let element = ClippedElement::new(inner, clip, scale);
+        let element = ClippedElement::with_stretch(inner, clip, scale, Scale::from(1.0f64));
 
         assert!(element.opaque_regions(scale).iter().next().is_none());
     }

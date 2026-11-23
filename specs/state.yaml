@@ -1,7 +1,7 @@
-active_flow: null
+active_flow: fix_bug
 active_epic_id: null
 active_story_id: null
-active_bug_id: null
+active_bug_id: BUG-2026-11-24-SIZE-NEGOTIATION
 release:
   target_version: null
   last_tag: null
@@ -11,7 +11,7 @@ epic_cycle:
   next_skill: null
   completed_steps: []
 bug_cycle:
-  current_step: 0
+  current_step: 1
   completed_steps: []
 git:
   branch: main
