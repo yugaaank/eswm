@@ -1,0 +1,143 @@
+bug_id: BUG-2026-11-22-DRM-RESTORE-PERMISSION
+verified_at: "2026-11-22T11:30:00Z"
+verifier: validate-fix
+branch: fix-drm-restore-permission
+risk: P3
+scope: automated-green-tdd-red-green-static-causal-proof-live-quit-pending-operator
+gates:
+  preflight:
+    passed: true
+    commands:
+      - cargo clippy --all-targets
+      - cargo test
+      - cargo build
+  terminal_verdict:
+    command: "cargo clippy --all-targets && cargo test && cargo build"
+    exit_code: 0
+    captured_at: "2026-11-22T11:40:00Z"
+    note: >-
+      Final single contiguous run at commit 2d5cdd0 after the re-review nit
+      edits; stdout/stderr saved to /tmp/opencode/drm-restore-preflight-final.log
+      (sha256 19733b7c83741c80908901f8b9ce6c85366009138d471bc4b88ef41445df910c).
+      clippy_exit=0, test_exit=0, build_exit=0, 183 tests passed. An earlier
+      equivalent run at 96fc777 is in /tmp/opencode/drm-restore-preflight-v2.log
+      (sha256 19ef437ae2419d0e8826fed8cbb90cae0078ee445d00f7d700fe5b5fe4de2f70).
+  targeted_tests:
+    passed: true
+    commands:
+      - "cargo test --bin eswm quiesce"
+      - "cargo test --bin eswm privileged_card"
+    result: "4 passed total (3 via quiesce filter, privileged test verified separately)"
+    tests:
+      - quit_quiesces_every_unprivileged_card
+      - privileged_card_keeps_its_drop_time_restore
+      - mixed_cards_quiesce_only_the_unprivileged_ones
+      - empty_backend_set_does_not_panic
+tdd_discipline:
+  final_red_commit: 7318ff6
+  final_red_evidence: >-
+    Test-only commit; cargo test --bin eswm failed with E0407 (drm_master not
+    a member of trait Quiesce) and E0425 (quiesce_unprivileged not found).
+    Failed for the missing behavior, not a syntax error.
+  final_green_commit: 96fc777
+  final_green_evidence: "4 targeted tests pass, 183 total pass, clippy clean."
+  separate_commits: true
+  superseded_cycle: >-
+    1fc95ae/845dedb implemented an unconditional pause. Independent review
+    found a HIGH privileged-TTY regression; the cycle was replaced rather than
+    merged. Both commits remain in history as evidence of the correction.
+causal_proof:
+  type: static-source-reading-plus-unit-truth-table
+  not_runtime_proof: true
+  bug_symptom: >-
+    ERROR "Failed to restore previous state. Error: Permission denied (os
+    error 13)" once per card, immediately before "Dropping device" at graceful
+    quit (live log 2026-11-22T10:50:04Z).
+  smithay_guard: "atomic.rs:240 — drop restores only if self.active.load(SeqCst)"
+  smithay_pause: "mod.rs:419 — DrmDevice::pause() calls set_active(false)"
+  eswm_old_path: >-
+    run_udev() returned at udev.rs:850 with devices still active; state drop
+    reached AtomicDrmDevice::drop with the guard true.
+  eswm_new_path: >-
+    Drop for UdevData calls quiesce_unprivileged over every backend; only cards
+    with drm_master == false are paused, clearing smithay's guard before drop.
+  privileged_safety: >-
+    A card that acquired master at open is left active: its restore succeeds
+    and InternalDrmDeviceFd::drop releases master exactly once. This avoids
+    both the black-screen risk and a second drmDropMaster ERROR.
+  unprivileged_evidence: >-
+    fd.rs:77-80 warns once per card at startup; live log 10:49:54Z and
+    10:49:56Z show both warnings.
+  status: passed_as_static_argument
+hardening:
+  mechanism: "per-card drm_master recording + Drop guard + FakeBackend truth table"
+  reason: >-
+    A global paused flag cannot represent a card hot-added after PauseSession,
+    and unconditional pausing regresses privileged TTY quits. Per-card state
+    and a Drop guard cover both.
+  tested: true
+generalize_sweep:
+  artifact: specs/verifications/generalize-sweep-BUG-2026-11-22-DRM-RESTORE-PERMISSION.json
+  defect_class: drm-device-dropped-while-active
+  match_count: 1
+  tracked: >-
+    device_removed() hot-unplug path recorded as follow-up; not patched in this
+    graceful-quit fix.
+  status: passed
+review:
+  independent_verdict_initial: REQUEST CHANGES
+  independent_verdict_final: APPROVE WITH NITS
+  blocking_findings_resolved:
+    - "HIGH: unconditional pause regressed privileged TTY quit — fixed by per-card drm_master policy"
+    - "MEDIUM: session_paused flag missed late-added backends — fixed by Drop guard over all backends"
+    - "MEDIUM: early setup ? returns bypassed end-of-loop quiesce — fixed by Drop for UdevData"
+  nits_resolved:
+    - "LOW: empty-map test renamed to empty_backend_set_does_not_panic — states only what it proves (no observable effect to assert)"
+    - "LOW: adjacent-ioctl master assumption documented at device open (commit 2d5cdd0)"
+    - "LOW: UAT steps tightened to active TTY, no prior VT switch"
+  nit_fixes_commit: 2d5cdd0
+  rerun_completed: true
+hardware_uat:
+  status: passed_operator
+  executed_by: operator
+  executed_at: "2026-11-23T19:25:51Z"
+  binary: /home/yugaaank/Projects/fix-drm-restore-permission/target/debug/eswm
+  reason_prior_gap: >-
+    Could not be run by the agent: DRM/libseat cannot start inside an existing
+    Wayland/X11 session (VT grab), and the operator cannot switch TTY while eswm
+    runs. The operator ran it on a real TTY instead.
+  result:
+    restore_errors: 0
+    master_release_errors: 0
+    total_error_lines_in_log: 0
+    cards_dropped_cleanly:
+      - /dev/dri/card1
+      - /dev/dri/card0
+    tty_restored: true
+    tty_detail: >-
+      Text TTY came back showing the shell it was launched from, not a fresh
+      login prompt. Expected: a login prompt appears only when that shell exits.
+      No black screen; not a regression, since the old restore failed with
+      EACCES on these unprivileged cards and never repainted anything.
+    evidence: >-
+      ~/.local/state/eswm/eswm.log, session 19:25:26Z (startup) through
+      19:25:51Z (quit via keybind, Closing seat, both Dropping device lines).
+      Baseline before fix was 2 restore ERROR lines at 2026-11-22T10:50:04Z.
+  operator_steps:
+    - "Start eswm from a TTY with RUST_LOG=debug (active session, no prior VT switch)."
+    - "Quit via the Super+Alt+Backspace keybind without switching away first."
+    - "grep -c 'Failed to restore previous state' ~/.local/state/eswm/eswm.log"
+    - "Expect 0; also confirm the previous TTY/login prompt is visible."
+    - "On a privileged TTY, also expect 0 'Failed to drop drm master state' lines."
+  baseline_evidence:
+    log: /home/yugaaank/.local/state/eswm/eswm.log
+    errors_before_fix: 2
+    cards:
+      - /dev/dri/card0
+      - /dev/dri/card1
+verdict: >-
+  All automated gates, TDD discipline checks, static causal proof, hardening
+  tests, defect-class sweep, and the operator live-DRM quit UAT pass. The
+  blocking independent-review findings were resolved by moving to a per-card
+  privilege policy and a Drop guard; re-review verdict is APPROVE WITH NITS,
+  with both nits addressed. No waived or outstanding verification gaps.
