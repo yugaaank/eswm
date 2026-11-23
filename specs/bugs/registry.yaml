@@ -326,7 +326,7 @@ bug-2026-11-22t080159-drm-restore:
   title: DRM restore errors on graceful shutdown
   severity: low
   priority: p3
-  status: fixed_pending_uat
+  status: fixed
   reported_by: log_analysis
   date: "2026-11-22T13:31:26+05:30"
   scope: drm
@@ -362,13 +362,17 @@ bug-2026-11-22t080159-drm-restore:
     drop-time restore and single master release; the Drop guard also covers
     early setup returns and late-added backends.
   commit_message: "fix(udev): quiesce only cards that never held DRM master"
-  hardware_uat: pending_operator
+  hardware_uat: passed_operator
   uat_note: >-
-    Automated proof green (183 tests, clippy/build clean). Live quit not run:
-    DRM/libseat cannot start inside this Wayland session (VT grab) and the
-    operator cannot switch TTY while eswm runs. Operator check: quit via keybind
-    and grep eswm.log for 'Failed to restore previous state' -> expect 0 hits.
-    On a privileged TTY, also expect 0 'Failed to drop drm master state' lines.
+    Operator ran the live quit on an active TTY with the fixed binary at
+    2026-11-23T19:25Z (RUST_LOG=debug), quitting via Super+Alt+Backspace without
+    a prior VT switch. Result: 0 'Failed to restore previous state' lines (was
+    2, one per card), 0 'Failed to drop drm master state' lines, 0 ERROR lines in
+    the whole log, both cards dropped cleanly and the text TTY came back (the
+    shell on that TTY, not a fresh login prompt — expected when eswm is launched
+    from an already-logged-in console). Automated proof also green: 183 tests,
+    clippy/build clean. Log: ~/.local/state/eswm/eswm.log, session
+    19:25:26Z..19:25:51Z.
   followup: >-
     device_removed() (src/udev.rs:2349) still drops an active BackendData on
     hot-unplug without pausing; same defect class, tracked in the generalize

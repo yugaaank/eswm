@@ -98,11 +98,31 @@ review:
   nit_fixes_commit: 2d5cdd0
   rerun_completed: true
 hardware_uat:
-  status: pending_operator
-  reason: >-
-    DRM/libseat backend cannot be started inside an existing Wayland/X11
-    session (VT grab), and the operator cannot switch TTY while eswm runs.
-    No live quit could be performed from this environment.
+  status: passed_operator
+  executed_by: operator
+  executed_at: "2026-11-23T19:25:51Z"
+  binary: /home/yugaaank/Projects/fix-drm-restore-permission/target/debug/eswm
+  reason_prior_gap: >-
+    Could not be run by the agent: DRM/libseat cannot start inside an existing
+    Wayland/X11 session (VT grab), and the operator cannot switch TTY while eswm
+    runs. The operator ran it on a real TTY instead.
+  result:
+    restore_errors: 0
+    master_release_errors: 0
+    total_error_lines_in_log: 0
+    cards_dropped_cleanly:
+      - /dev/dri/card1
+      - /dev/dri/card0
+    tty_restored: true
+    tty_detail: >-
+      Text TTY came back showing the shell it was launched from, not a fresh
+      login prompt. Expected: a login prompt appears only when that shell exits.
+      No black screen; not a regression, since the old restore failed with
+      EACCES on these unprivileged cards and never repainted anything.
+    evidence: >-
+      ~/.local/state/eswm/eswm.log, session 19:25:26Z (startup) through
+      19:25:51Z (quit via keybind, Closing seat, both Dropping device lines).
+      Baseline before fix was 2 restore ERROR lines at 2026-11-22T10:50:04Z.
   operator_steps:
     - "Start eswm from a TTY with RUST_LOG=debug (active session, no prior VT switch)."
     - "Quit via the Super+Alt+Backspace keybind without switching away first."
@@ -117,8 +137,7 @@ hardware_uat:
       - /dev/dri/card1
 verdict: >-
   All automated gates, TDD discipline checks, static causal proof, hardening
-  tests, and the defect-class sweep pass. The blocking independent-review
-  findings were resolved by moving to a per-card privilege policy and a Drop
-  guard; re-review verdict is APPROVE WITH NITS, with both nits addressed.
-  Live-DRM quit remains operator-gated by the VT-grab constraint and is
-  recorded honestly as pending, not waived.
+  tests, defect-class sweep, and the operator live-DRM quit UAT pass. The
+  blocking independent-review findings were resolved by moving to a per-card
+  privilege policy and a Drop guard; re-review verdict is APPROVE WITH NITS,
+  with both nits addressed. No waived or outstanding verification gaps.

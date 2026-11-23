@@ -7,7 +7,4 @@ locks:
   locked_at: '2026-11-21T20:53:29Z'
   locked_by: 'agent: fix-bug'
   story_id: BUG-2026-11-21-DMABUF-IMPORT
-- files_touched: []
-  locked_at: '2026-11-22T10:53:57Z'
-  locked_by: 'agent: fix-bug'
-  story_id: BUG-2026-11-22-DRM-RESTORE-PERMISSION
+

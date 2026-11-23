@@ -159,12 +159,14 @@ UAT and is out of scope for this graceful-quit fix.
 
 ## Acceptance criteria
 
-- [ ] Quit via keybind produces no ERROR lines for mode restore — **automated
-      proof green; live quit pending operator** (see verification record).
+- [x] Quit via keybind produces no ERROR lines for mode restore — live UAT
+      2026-11-23T19:25Z: 0 restore errors, 0 master-release errors, 0 ERROR lines
+      in the log (baseline was 2 restore errors).
 - [x] Root cause confirmed with source-line and log evidence (above).
-- [x] `cargo clippy --all-targets`, `cargo test`, `cargo build` green.
+- [x] `cargo clippy --all-targets`, `cargo test`, `cargo build` green (183 tests).
 - [x] Privileged TTY quit keeps its drop-time restore and releases DRM master
-      exactly once (per-card policy proven by tests; live UAT still pending).
-- [ ] Live DRM quit still releases libseat and returns to the previous TTY
-      (operator-gated: eswm cannot start inside this Wayland session because of
-      the VT grab, and the operator cannot switch TTY while it runs).
+      exactly once (per-card policy proven by unit tests; the observed TTY was
+      unprivileged, so this remains a static/test proof rather than a live one).
+- [x] Live DRM quit releases libseat and returns to the previous TTY — operator
+      confirmed the text TTY came back (its shell, not a login prompt — expected
+      when launching from an already-logged-in console), no black screen.
