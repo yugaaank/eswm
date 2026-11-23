@@ -8,6 +8,13 @@
 //! maps `src` -> `dst`, so a proportional crop of both is an exact clip. The
 //! compositor equivalent of telling an overenthusiastic painter to stay inside
 //! the lines — Craft windows have the self-control of a toddler with a marker.
+//!
+//! The clip rectangle is the window-geometry rect in output space. Client
+//! surfaces render at `target_rect - xdg_offset`, so CSD content (which starts
+//! at `xdg_offset` inside the surface) lands exactly on the clip origin; only
+//! decoration drawn outside the frame is trimmed. See
+//! `clip_offsets_src_when_geometry_starts_before_clip`, which pins that case
+//! (BUG-2026-11-24-SIZE-NEGOTIATION review).
 
 use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
 use smithay::backend::renderer::element::{Element, Id, Kind, RenderElement};

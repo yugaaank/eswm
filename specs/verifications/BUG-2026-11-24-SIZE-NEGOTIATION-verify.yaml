@@ -1,0 +1,64 @@
+bug_id: BUG-2026-11-24-SIZE-NEGOTIATION
+verified_at: "2026-11-24T00:00:00Z"
+verifier: validate-fix
+branch: fix/size-negotiation
+scope: automated-only
+gates:
+  failing_test_replay:
+    passed: true
+    tests:
+      - id: size_action_resends_when_the_buffer_is_undersized
+        command: "cargo test --bin eswm size_action"
+        result: "8 passed"
+        note: >-
+          RED before the fix: the old policy returned None for any buffer
+          smaller than target_rect, so apply_layout never re-sent the size.
+      - id: size_action_defers_a_resend_inside_the_same_burst
+        command: "cargo test --bin eswm size_action"
+        result: "8 passed"
+        note: >-
+          Burst finding: resends closer than SIZE_RESEND_INTERVAL (100 ms) are
+          deferred and do not spend budget.
+      - id: size_action_ignores_unlaid_out_windows_and_empty_buffers
+        command: "cargo test --bin eswm size_action"
+        result: "8 passed"
+      - id: size_resend_budget_is_bounded
+        command: "cargo test --bin eswm size_resend"
+        result: "2 passed"
+      - id: size_resend_clears_the_rect_and_counts_the_attempt
+        command: "cargo test --bin eswm size_resend"
+        result: "2 passed"
+      - id: matching_commit_resets_size_resend_budget
+        command: "cargo test --bin eswm size_resend"
+        result: "2 passed"
+  clip_finding:
+    passed: true
+    verdict: not_a_defect
+    command: "cargo test --bin eswm clip_"
+    note: >-
+      The reported clip-vs-xdg_offset mismatch was re-checked against
+      clip_offsets_src_when_geometry_starts_before_clip and the damage/opaque
+      coordinate tests. The clip rect is the window-geometry rect in output
+      space and the surface renders at target_rect - xdg_offset, so CSD content
+      lands exactly on the clip origin; only decoration outside the frame is
+      trimmed. No production change; module doc records the anchoring.
+  full_suite:
+    passed: true
+    command: "cargo test"
+    result: "187 passed, 0 failed"
+  lint:
+    passed: true
+    command: "cargo clippy --all-targets"
+    result: "warning-free"
+  build:
+    passed: true
+    command: "cargo build"
+log: /tmp/opencode/size-negotiation-preflight.log
+hardware_uat:
+  status: pending_operator
+  steps:
+    - Tile deckcraft in a frame larger than 1440x900; it must fill the frame.
+    - Tile it in a frame smaller than 1440x900; the client must resize.
+    - >-
+      Grep eswm.log for "re-sending size": at most 3 per window, spaced by at
+      least 100 ms, with a final exact-size commit.

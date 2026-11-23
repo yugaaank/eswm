@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
 
 pub type OutputId = u64;
 pub type WindowId = u64;
@@ -154,43 +155,67 @@ pub struct Window {
     /// Committed wl_surface input region (surface-local). None/default = whole surface.
     pub input_region: InputRegion,
     /// How many size re-configures have been sent because the client committed
-    /// a buffer larger than `target_rect` (BUG-2026-11-21-DMABUF-IMPORT).
-    pub oversize_configures: u8,
+    /// a buffer that did not match `target_rect` (BUG-2026-11-21-DMABUF-IMPORT,
+    /// BUG-2026-11-24-SIZE-NEGOTIATION).
+    pub size_resends: u8,
+    /// When the last size re-configure was sent, for burst throttling.
+    pub last_size_resend: Option<Instant>,
 }
 
-/// Retry budget for clients that map oversized and ignore the first configure.
-/// Electron/Chromium commit their default-sized buffer before honouring the
-/// compositor's size; we re-assert the size a few times, then stop so a
-/// stubborn client cannot make the compositor spin forever.
-pub const MAX_OVERSIZE_CONFIGURES: u8 = 3;
+/// Retry budget for clients that map at the wrong size and ignore the first
+/// configure. Electron/Chromium and egui/winit commit their default-sized
+/// buffer before honouring the compositor's size; we re-assert the size a few
+/// times, then stop so a stubborn client cannot make the compositor spin forever.
+pub const MAX_SIZE_RESENDS: u8 = 3;
 
-/// Should a committed buffer size trigger another size configure?
-///
-/// Only when the buffer is larger than the target rect (content would spill
-/// outside the frame) and we still have retry budget left.
-/// What a surface commit should do about a buffer larger than its configured
-/// rect. Size and retry budget are separate questions; folding them together
-/// makes an exhausted budget look like a fitting commit and reset itself.
+/// Minimum spacing between size re-configures. A single client can queue several
+/// commits before it processes the first configure; resending once per commit
+/// spends the whole budget in under a millisecond and leaves the client no time
+/// to react (observed: 3 resends in 0.5 ms).
+pub const SIZE_RESEND_INTERVAL: Duration = Duration::from_millis(100);
+
+/// What a surface commit should do about a buffer that does not match its
+/// configured rect. Size, budget, and pacing are separate questions; folding
+/// them together makes an exhausted budget look like a fitting commit and reset
+/// itself (BUG-2026-11-22-OVERSIZE-RETRY-CAP).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum OversizeAction {
+pub enum SizeAction {
+    /// Re-send the configure: the buffer is the wrong size and budget remains.
     Resend,
+    /// The buffer matches the configured rect; the budget can start over.
     ResetBudget,
+    /// A resend is warranted but the previous one was too recent.
+    Throttled,
+    /// Nothing to do.
     None,
 }
 
-pub fn oversize_action(target: Rect, buffer: (u32, u32), attempts: u8) -> OversizeAction {
-    // The retry budget finally has a backbone, unlike my New Year's resolutions.
-    if buffer.0 > target.width || buffer.1 > target.height {
-        if attempts < MAX_OVERSIZE_CONFIGURES {
-            OversizeAction::Resend
-        } else {
-            OversizeAction::None
-        }
-    } else if attempts > 0 {
-        OversizeAction::ResetBudget
-    } else {
-        OversizeAction::None
+/// Decide whether a committed buffer size should trigger another configure.
+///
+/// Any mismatch counts, oversized or undersized: an undersized buffer leaves
+/// part of a tiled frame blank, and accepting it means no code path ever asks
+/// the client to grow (BUG-2026-11-24-SIZE-NEGOTIATION). A window that has not
+/// been laid out yet (zero-sized target) and a commit with no buffer are both
+/// ignored so neither can spend the retry budget.
+pub fn size_action(
+    target: Rect,
+    buffer: (u32, u32),
+    resends: u8,
+    since_last: Option<Duration>,
+) -> SizeAction {
+    if target.width == 0 || target.height == 0 || buffer.0 == 0 || buffer.1 == 0 {
+        return SizeAction::None;
     }
+    if buffer.0 == target.width && buffer.1 == target.height {
+        return if resends > 0 { SizeAction::ResetBudget } else { SizeAction::None };
+    }
+    if resends >= MAX_SIZE_RESENDS {
+        return SizeAction::None;
+    }
+    if since_last.is_some_and(|elapsed| elapsed < SIZE_RESEND_INTERVAL) {
+        return SizeAction::Throttled;
+    }
+    SizeAction::Resend
 }
 
 #[derive(Clone, Debug)]
@@ -610,26 +635,28 @@ impl WindowManager {
         false
     }
 
-    /// Record that a client committed an oversized buffer. Clears `rect` so the
-    /// next `apply_layout` resends the size configure (BUG-2026-11-21-DMABUF-IMPORT).
+    /// Record that a size configure is being re-sent because the client
+    /// committed a mismatched buffer. Clears `rect` so the next `apply_layout`
+    /// resends the size (BUG-2026-11-21-DMABUF-IMPORT).
     /// Returns false when the retry budget is exhausted or the id is unknown.
-    pub fn note_oversize_commit(&mut self, id: WindowId) -> bool {
+    pub fn note_size_resend(&mut self, id: WindowId) -> bool {
         let Some(window) = self.windows.get_mut(&id) else {
             return false;
         };
-        if window.oversize_configures >= MAX_OVERSIZE_CONFIGURES {
+        if window.size_resends >= MAX_SIZE_RESENDS {
             return false;
         }
-        window.oversize_configures += 1;
+        window.size_resends += 1;
+        window.last_size_resend = Some(Instant::now());
         window.rect = Rect::default();
         self.dirty = true;
         true
     }
 
-    /// Reset the oversize retry budget after a client commits a fitting buffer.
-    pub fn clear_oversize(&mut self, id: WindowId) {
+    /// Reset the size-resend budget after a client commits a matching buffer.
+    pub fn clear_size_resends(&mut self, id: WindowId) {
         if let Some(window) = self.windows.get_mut(&id) {
-            window.oversize_configures = 0;
+            window.size_resends = 0;
         }
     }
 
@@ -1039,7 +1066,8 @@ impl WindowManager {
                 mode_sent: None,
                 xdg_offset: (0, 0),
                 input_region: InputRegion::default(),
-                oversize_configures: 0,
+                size_resends: 0,
+                last_size_resend: None,
             },
         );
         self.dirty = true;
@@ -1627,7 +1655,8 @@ pub fn equal_split(
 
 #[cfg(test)]
 mod tests {
-    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation, oversize_action, OversizeAction, MAX_OVERSIZE_CONFIGURES};
+    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation, size_action, SizeAction, MAX_SIZE_RESENDS, SIZE_RESEND_INTERVAL};
+    use std::time::Duration;
 
     fn manager() -> (WindowManager, u64) {
         let mut manager = WindowManager::new();
@@ -2041,80 +2070,141 @@ mod tests {
         assert_eq!(manager.output(output).unwrap().active_workspace, 1);
     }
 
-    // BUG-2026-11-21-DMABUF-IMPORT (bug B): an Electron client can map with a
-    // buffer larger than the size we configured, spilling past the frame. The
-    // compositor re-asserts the size a bounded number of times.
-    #[test]
-    fn oversize_action_resends_while_budget_remains() {
-        let target = Rect { x: 0, y: 0, width: 800, height: 600 };
-        assert_eq!(oversize_action(target, (1024, 768), 0), OversizeAction::Resend);
-    }
+    // BUG-2026-11-24-SIZE-NEGOTIATION: a client that commits a buffer bigger or
+    // smaller than its tiled frame is not fitting. Both directions must ask for
+    // a new configure, bounded by a retry budget and spaced out so a burst of
+    // queued commits cannot spend the whole budget before the client reacts.
+    const SIZE_TARGET: Rect = Rect { x: 0, y: 0, width: 800, height: 600 };
 
     #[test]
-    fn oversize_action_stops_after_the_retry_budget() {
-        let target = Rect { x: 0, y: 0, width: 800, height: 600 };
+    fn size_action_resends_when_the_buffer_is_oversized() {
         assert_eq!(
-            oversize_action(target, (1024, 768), MAX_OVERSIZE_CONFIGURES),
-            OversizeAction::None
-        );
-        assert_eq!(
-            oversize_action(target, (1024, 768), MAX_OVERSIZE_CONFIGURES + 1),
-            OversizeAction::None
+            size_action(SIZE_TARGET, (1024, 768), 0, None),
+            SizeAction::Resend
         );
     }
 
     #[test]
-    fn oversize_action_resets_only_on_a_fitting_commit() {
-        let target = Rect { x: 0, y: 0, width: 800, height: 600 };
+    fn size_action_resends_when_the_buffer_is_undersized() {
+        // Craft apps map at 1440x900 inside a larger tiled frame. Accepting that
+        // as "fitting" leaves the rest of the frame blank forever.
         assert_eq!(
-            oversize_action(target, (800, 600), 2),
-            OversizeAction::ResetBudget
+            size_action(SIZE_TARGET, (640, 480), 0, None),
+            SizeAction::Resend
         );
         assert_eq!(
-            oversize_action(target, (640, 480), MAX_OVERSIZE_CONFIGURES),
-            OversizeAction::ResetBudget
+            size_action(SIZE_TARGET, (800, 599), 0, None),
+            SizeAction::Resend
         );
-        assert_eq!(oversize_action(target, (800, 600), 0), OversizeAction::None);
     }
 
     #[test]
-    fn oversize_action_never_resets_an_oversized_commit() {
-        let target = Rect { x: 0, y: 0, width: 800, height: 600 };
-        for attempts in 0..=MAX_OVERSIZE_CONFIGURES + 1 {
-            assert_ne!(
-                oversize_action(target, (1024, 768), attempts),
-                OversizeAction::ResetBudget
+    fn size_action_stops_after_the_resend_budget() {
+        for buffer in [(1024, 768), (640, 480)] {
+            assert_eq!(
+                size_action(SIZE_TARGET, buffer, MAX_SIZE_RESENDS, None),
+                SizeAction::None
+            );
+            assert_eq!(
+                size_action(SIZE_TARGET, buffer, MAX_SIZE_RESENDS + 1, None),
+                SizeAction::None
             );
         }
     }
 
     #[test]
-    fn oversize_action_checks_each_size_boundary() {
-        let target = Rect { x: 0, y: 0, width: 800, height: 600 };
-        assert_eq!(oversize_action(target, (0, 0), 0), OversizeAction::None);
-        assert_eq!(oversize_action(target, (800, 600), 0), OversizeAction::None);
-        assert_eq!(oversize_action(target, (1024, 600), 0), OversizeAction::Resend);
-        assert_eq!(oversize_action(target, (800, 768), 0), OversizeAction::Resend);
+    fn size_action_resets_only_on_an_exact_match() {
+        assert_eq!(
+            size_action(SIZE_TARGET, (800, 600), 2, None),
+            SizeAction::ResetBudget
+        );
+        assert_eq!(
+            size_action(SIZE_TARGET, (800, 600), 0, None),
+            SizeAction::None
+        );
     }
 
     #[test]
-    fn note_oversize_commit_forces_a_size_reconfigure() {
+    fn size_action_never_resets_a_mismatched_commit() {
+        for buffer in [(1024, 768), (640, 480), (800, 599), (799, 600)] {
+            for resends in 0..=MAX_SIZE_RESENDS + 1 {
+                assert_ne!(
+                    size_action(SIZE_TARGET, buffer, resends, None),
+                    SizeAction::ResetBudget
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn size_action_ignores_unlaid_out_windows_and_empty_buffers() {
+        let unlaid_out = Rect { x: 0, y: 0, width: 0, height: 0 };
+        assert_eq!(
+            size_action(unlaid_out, (1440, 900), 0, None),
+            SizeAction::None
+        );
+        assert_eq!(size_action(SIZE_TARGET, (0, 0), 0, None), SizeAction::None);
+        assert_eq!(
+            size_action(SIZE_TARGET, (0, 600), 0, None),
+            SizeAction::None
+        );
+    }
+
+    #[test]
+    fn size_action_defers_a_resend_inside_the_same_burst() {
+        // Three queued commits landed within 0.5 ms and burned the whole budget
+        // before the client could answer the first configure.
+        assert_eq!(
+            size_action(SIZE_TARGET, (640, 480), 1, Some(Duration::from_millis(1))),
+            SizeAction::Throttled
+        );
+        assert_eq!(
+            size_action(SIZE_TARGET, (640, 480), 1, Some(SIZE_RESEND_INTERVAL)),
+            SizeAction::Resend
+        );
+        assert_eq!(
+            size_action(SIZE_TARGET, (640, 480), 1, None),
+            SizeAction::Resend
+        );
+    }
+
+    #[test]
+    fn size_action_resets_even_inside_the_burst_window() {
+        assert_eq!(
+            size_action(SIZE_TARGET, (800, 600), 1, Some(Duration::from_millis(1))),
+            SizeAction::ResetBudget
+        );
+    }
+
+    #[test]
+    fn size_resend_clears_the_rect_and_counts_the_attempt() {
         let (mut manager, output) = manager();
         let window = manager.add_window(output, "wordcraft", "doc").unwrap();
         manager.set_rect(window, manager.window(window).unwrap().target_rect);
-        assert!(manager.note_oversize_commit(window));
+        assert!(manager.note_size_resend(window));
         // Clearing `rect` is what makes apply_layout resend the size.
         assert_eq!(manager.window(window).unwrap().rect.width, 0);
-        assert_eq!(manager.window(window).unwrap().oversize_configures, 1);
+        assert_eq!(manager.window(window).unwrap().size_resends, 1);
+        assert!(manager.window(window).unwrap().last_size_resend.is_some());
     }
 
     #[test]
-    fn matching_commit_resets_oversize_budget() {
+    fn size_resend_budget_is_bounded() {
         let (mut manager, output) = manager();
         let window = manager.add_window(output, "wordcraft", "doc").unwrap();
-        assert!(manager.note_oversize_commit(window));
-        manager.clear_oversize(window);
-        assert_eq!(manager.window(window).unwrap().oversize_configures, 0);
+        for _ in 0..MAX_SIZE_RESENDS {
+            assert!(manager.note_size_resend(window));
+        }
+        assert!(!manager.note_size_resend(window));
+    }
+
+    #[test]
+    fn matching_commit_resets_size_resend_budget() {
+        let (mut manager, output) = manager();
+        let window = manager.add_window(output, "wordcraft", "doc").unwrap();
+        assert!(manager.note_size_resend(window));
+        manager.clear_size_resends(window);
+        assert_eq!(manager.window(window).unwrap().size_resends, 0);
     }
 
     #[test]
