@@ -507,8 +507,8 @@ bug-2026-11-24-size-negotiation:
   title: Tiled frames stay unfilled because undersized commits are accepted as fitting
   severity: high
   status: fixed
-  fixed_in: 5306de7
-  fixed_date: "2026-11-24T00:00:00+05:30"
+  fixed_in: b91675c
+  fixed_date: "2026-11-24T02:00:00+05:30"
   reported_by: operator_observation
   date: "2026-11-24T00:00:00+05:30"
   priority: high
