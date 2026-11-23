@@ -267,14 +267,16 @@ pub fn window_id_of(surface: &WlSurface) -> Option<wm::WindowId> {
 
 // M5 placement, shared by the udev render loop and the test fixtures: active-workspace,
 // mapped windows at their wm target_rect.
-// (surface, x, y, id, focused, rect)
+// (surface, x, y, id, focused, rect, fill_scale)
+type PlacedWindow = (WlSurface, i32, i32, wm::WindowId, bool, wm::Rect, (f64, f64));
+
 #[allow(clippy::mutable_key_type)] // WlSurface hashes by identity; the map is rebuilt every frame
-pub(crate) fn placed_windows(state: &mut State) -> Vec<(WlSurface, i32, i32, wm::WindowId, bool, wm::Rect)> {
+pub(crate) fn placed_windows(state: &mut State) -> Vec<PlacedWindow> {
     // Render windows in stack order (workspace.windows order) so that a floating
     // window brought to the front on focus/click renders above the others.
     // smithay draws render elements back-to-front, so the first element here
     // paints on top; the focused window is moved first so it renders on top.
-    let mut placed: Vec<(WlSurface, i32, i32, wm::WindowId, bool, wm::Rect)> = Vec::new();
+    let mut placed: Vec<PlacedWindow> = Vec::new();
     for workspace in state.wm.workspaces() {
         let Some(output) = state.wm.output(workspace.output) else {
             continue;
@@ -294,10 +296,12 @@ pub(crate) fn placed_windows(state: &mut State) -> Vec<(WlSurface, i32, i32, wm:
             }
             let target_rect = window.target_rect;
             let focused = window.focused;
-            // render position = target_rect - xdg_offset (client's window geometry offset)
-            let render_x = target_rect.x - window.xdg_offset.0;
-            let render_y = target_rect.y - window.xdg_offset.1;
-            tracing::debug!("render window id={id:?} rect={:?} offset={:?} render=({}, {}) focused={}",
+            let (sx, sy) = window.fill_scale;
+            // render position = target_rect - xdg_offset * scale, so a scaled
+            // client's window geometry still starts at the frame corner.
+            let render_x = target_rect.x - (window.xdg_offset.0 as f64 * sx).round() as i32;
+            let render_y = target_rect.y - (window.xdg_offset.1 as f64 * sy).round() as i32;
+            tracing::debug!("render window id={id:?} rect={:?} offset={:?} scale=({sx},{sy}) render=({}, {}) focused={}",
                 target_rect, window.xdg_offset, render_x, render_y, focused);
             placed.push((
                 surface.wl_surface().clone(),
@@ -306,6 +310,7 @@ pub(crate) fn placed_windows(state: &mut State) -> Vec<(WlSurface, i32, i32, wm:
                 id,
                 focused,
                 target_rect,
+                (sx, sy),
             ));
         }
     }
@@ -313,7 +318,7 @@ pub(crate) fn placed_windows(state: &mut State) -> Vec<(WlSurface, i32, i32, wm:
     // element last). workspace.windows order is intentionally left untouched so
     // that focus cycling (Super+arrow) visits every window, including floating
     // ones, in a stable order.
-    if let Some(pos) = placed.iter().position(|(_, _, _, _, focused, _)| *focused)
+    if let Some(pos) = placed.iter().position(|(_, _, _, _, focused, _, _)| *focused)
         && pos != 0 {
             let focused_win = placed.remove(pos);
             placed.insert(0, focused_win);
@@ -325,7 +330,7 @@ pub(crate) fn placed_windows(state: &mut State) -> Vec<(WlSurface, i32, i32, wm:
     // its parent window when it moves.
     let mut parent_pos: std::collections::HashMap<WlSurface, (i32, i32)> = placed
         .iter()
-        .map(|(s, _, _, _, _, rect)| (s.clone(), (rect.x, rect.y)))
+        .map(|(s, _, _, _, _, rect, _)| (s.clone(), (rect.x, rect.y)))
         .collect();
     // Bar menus are popups parented to a layer surface, not a toplevel. Seed
     // their origin too or the menu lands in the top-left corner of the output.
@@ -368,6 +373,7 @@ pub(crate) fn placed_windows(state: &mut State) -> Vec<(WlSurface, i32, i32, wm:
             POPUP_FAKE_ID,
             false,
             screen_rect,
+            (1.0, 1.0),
         ));
     }
     placed
@@ -864,6 +870,10 @@ impl CompositorHandler for State {
                 let target = window.target_rect;
                 let resends = window.size_resends;
                 let since_last = window.last_size_resend.map(|at| at.elapsed());
+                // Drop the immutable borrow before mutating the WM: copy the
+                // fields we need first, then record the stretch. Fixed-size
+                // clients get their stubborn buffer scaled to fill the frame.
+                self.wm.set_fill_scale(id, wm::fill_scale(target, buffer));
                 match wm::size_action(target, buffer, resends, since_last) {
                     wm::SizeAction::Resend => {
                         let direction = if buffer.0 > target.width || buffer.1 > target.height {

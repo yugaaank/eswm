@@ -1,36 +1,50 @@
 bug_id: BUG-2026-11-24-SIZE-NEGOTIATION
-verified_at: "2026-11-24T00:00:00Z"
+verified_at: "2026-11-24T02:00:00+05:30"
 verifier: validate-fix
-branch: fix/size-negotiation
-scope: automated-only
+branch: fix/size-negotiation-stretch
+scope: automated-plus-live-log-analysis (hardware UAT pending operator)
+cycles:
+  - cycle: 1
+    scope: two-way size negotiation, paced resends
+    result: landed_on_main_as_5306de7
+  - cycle: 2
+    scope: compositor-side stretch for clients that ignore configure
+    result: landed_on_main_as_merge_of_fix_branch
 gates:
   failing_test_replay:
     passed: true
     tests:
+      - id: fill_scale_grows_an_undersized_buffer_to_the_frame
+        command: "cargo test --bin eswm fill_scale"
+        result: "4 passed (with size_ and surface_under filters)"
+        note: >-
+          RED before the fix: fill_scale() did not exist, so the test binary
+          failed to compile. GREEN: target 800x600 / buffer 640x480 yields
+          (1.25, 1.25); oversized buffers scale down; exact/invalid are neutral.
+      - id: scaled_element_stretches_geometry_to_the_frame
+        command: "cargo test --bin eswm scaled_element"
+        result: "2 passed"
+        note: >-
+          RED before the fix: ScaledElement did not exist. GREEN: a 1440x900
+          element stretched to 1896x1078 reports the frame geometry while
+          keeping the buffer source rect; damage/opaque regions scale too.
+      - id: surface_under_inverts_fill_scale_for_input_regions
+        command: "cargo test --bin eswm surface_under"
+        result: "2 passed"
+        note: >-
+          RED before the fix: surface_under used the raw render origin, so
+          clicks on a stretched client missed input regions. GREEN: coordinates
+          are divided by the stretch before the input-region hit test.
       - id: size_action_resends_when_the_buffer_is_undersized
-        command: "cargo test --bin eswm size_action"
-        result: "8 passed"
+        command: "cargo test --bin eswm size_"
+        result: "15 passed"
         note: >-
-          RED before the fix: the old policy returned None for any buffer
-          smaller than target_rect, so apply_layout never re-sent the size.
-      - id: size_action_defers_a_resend_inside_the_same_burst
-        command: "cargo test --bin eswm size_action"
-        result: "8 passed"
-        note: >-
-          Burst finding: resends closer than SIZE_RESEND_INTERVAL (100 ms) are
-          deferred and do not spend budget.
-      - id: size_action_ignores_unlaid_out_windows_and_empty_buffers
-        command: "cargo test --bin eswm size_action"
-        result: "8 passed"
+          Cycle-1 regression gate: a mismatch in either direction asks for a
+          configure, only an exact match resets the budget, and resends inside
+          the 100 ms burst window are throttled.
       - id: size_resend_budget_is_bounded
-        command: "cargo test --bin eswm size_resend"
-        result: "2 passed"
-      - id: size_resend_clears_the_rect_and_counts_the_attempt
-        command: "cargo test --bin eswm size_resend"
-        result: "2 passed"
-      - id: matching_commit_resets_size_resend_budget
-        command: "cargo test --bin eswm size_resend"
-        result: "2 passed"
+        command: "cargo test --bin eswm size_"
+        result: "15 passed"
   clip_finding:
     passed: true
     verdict: not_a_defect
@@ -42,10 +56,19 @@ gates:
       space and the surface renders at target_rect - xdg_offset, so CSD content
       lands exactly on the clip origin; only decoration outside the frame is
       trimmed. No production change; module doc records the anchoring.
+  composition_proof:
+    passed: true
+    command: "cargo test --bin eswm clip_ && cargo test --bin eswm scaled_element"
+    note: >-
+      ClippedElement wraps ScaledElement: src() recomputes the source crop from
+      the stretched geometry, so the full 1440x900 texture maps to the enlarged
+      1896x1078 destination (no crop, no letterbox). underlying_storage() stays
+      None on both wrappers, forcing the texture path and blocking direct
+      scanout from bypassing the stretch.
   full_suite:
     passed: true
     command: "cargo test"
-    result: "187 passed, 0 failed"
+    result: "193 passed, 0 failed"
   lint:
     passed: true
     command: "cargo clippy --all-targets"
@@ -53,12 +76,17 @@ gates:
   build:
     passed: true
     command: "cargo build"
-log: /tmp/opencode/size-negotiation-preflight.log
+log: /tmp/opencode/stretch-fix-preflight.log
 hardware_uat:
   status: pending_operator
+  evidence_from_live_log_2026-11-23T19:51Z:
+    - "3 paced resends at 19:51:31.840, 19:51:32.011, 19:51:32.114; 3 throttled commits between them — cycle-1 retry pacing works"
+    - "client stayed at 1440x900 after the budget was spent — fixed-size Craft app ignores every configure; compositor cannot force a resize"
+    - "gridcraft.log: winit request_inner_size 1440x900 then egui_winit 'Failed to set window size', min size 640x420"
   steps:
-    - Tile deckcraft in a frame larger than 1440x900; it must fill the frame.
-    - Tile it in a frame smaller than 1440x900; the client must resize.
-    - >-
-      Grep eswm.log for "re-sending size": at most 3 per window, spaced by at
-      least 100 ms, with a final exact-size commit.
+    - "From a TTY: cd /home/yugaaank/Projects/eswm && RUST_LOG=debug ./target/debug/eswm"
+    - "Tile deckcraft/gridcraft in a frame larger than 1440x900: the client must stretch to fill the border (no empty space)"
+    - "Tile it in a frame smaller than 1440x900: the client must scale down to fill the border (no cropped-off content)"
+    - "Click widgets near the frame edges: clicks must land on the intended control (inverse stretch in surface_under)"
+    - "Resize/switch workspaces a few times: no stale pixels or blank strips from damage tracking"
+    - "Grep ~/.local/state/eswm/eswm.log for 're-sending size': at most 3 per window, spaced by at least 100 ms"

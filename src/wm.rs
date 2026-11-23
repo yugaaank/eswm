@@ -160,6 +160,9 @@ pub struct Window {
     pub size_resends: u8,
     /// When the last size re-configure was sent, for burst throttling.
     pub last_size_resend: Option<Instant>,
+    /// Non-uniform stretch applied to a client that keeps committing a buffer
+    /// of the wrong size (fixed-size Craft apps). (1.0, 1.0) means no stretch.
+    pub fill_scale: (f64, f64),
 }
 
 /// Retry budget for clients that map at the wrong size and ignore the first
@@ -216,6 +219,23 @@ pub fn size_action(
         return SizeAction::Throttled;
     }
     SizeAction::Resend
+}
+
+/// Stretch a committed buffer to the configured frame. Fixed-size clients can
+/// ignore every configure (Craft/egui logs "Failed to set window size"), and a
+/// compositor cannot force them to grow — so scale their content instead.
+/// Both directions are handled: oversized buffers are scaled down rather than
+/// cropped, so the frame is filled either way. Invalid sizes are neutral.
+pub fn fill_scale(target: Rect, buffer: (u32, u32)) -> (f64, f64) {
+    if target.width == 0 || target.height == 0 || buffer.0 == 0 || buffer.1 == 0 {
+        return (1.0, 1.0);
+    }
+    if target.width == buffer.0 && target.height == buffer.1 {
+        return (1.0, 1.0);
+    }
+    // The compositor equivalent of stretching a sticker over a wider box;
+    // the adhesive is not our problem.
+    (target.width as f64 / buffer.0 as f64, target.height as f64 / buffer.1 as f64)
 }
 
 #[derive(Clone, Debug)]
@@ -653,6 +673,15 @@ impl WindowManager {
         true
     }
 
+    /// Record the stretch needed to make a mismatched buffer fill its frame.
+    pub fn set_fill_scale(&mut self, id: WindowId, scale: (f64, f64)) -> bool {
+        let Some(window) = self.windows.get_mut(&id) else {
+            return false;
+        };
+        window.fill_scale = scale;
+        true
+    }
+
     /// Reset the size-resend budget after a client commits a matching buffer.
     pub fn clear_size_resends(&mut self, id: WindowId) {
         if let Some(window) = self.windows.get_mut(&id) {
@@ -939,10 +968,12 @@ impl WindowManager {
             if !inside_rect {
                 continue;
             }
-            let render_x = r.x - window.xdg_offset.0;
-            let render_y = r.y - window.xdg_offset.1;
-            let local_x = pos.0 - render_x as f64;
-            let local_y = pos.1 - render_y as f64;
+            // The surface is stretched by fill_scale to cover r, with its
+            // window geometry starting at r. Invert that stretch before the
+            // hit test so input regions stay in surface-local coordinates.
+            let (sx, sy) = window.fill_scale;
+            let local_x = (pos.0 - r.x as f64) / sx + window.xdg_offset.0 as f64;
+            let local_y = (pos.1 - r.y as f64) / sy + window.xdg_offset.1 as f64;
             // Input regions are in surface-local coordinates. Default (None)
             // means the whole surface accepts input.
             if window.input_region.contains(local_x as i32, local_y as i32) {
@@ -1068,6 +1099,7 @@ impl WindowManager {
                 input_region: InputRegion::default(),
                 size_resends: 0,
                 last_size_resend: None,
+                fill_scale: (1.0, 1.0),
             },
         );
         self.dirty = true;
@@ -1655,7 +1687,7 @@ pub fn equal_split(
 
 #[cfg(test)]
 mod tests {
-    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation, size_action, SizeAction, MAX_SIZE_RESENDS, SIZE_RESEND_INTERVAL};
+    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation, size_action, SizeAction, fill_scale, MAX_SIZE_RESENDS, SIZE_RESEND_INTERVAL};
     use std::time::Duration;
 
     fn manager() -> (WindowManager, u64) {
@@ -2177,6 +2209,23 @@ mod tests {
     }
 
     #[test]
+    fn fill_scale_grows_an_undersized_buffer_to_the_frame() {
+        assert_eq!(fill_scale(SIZE_TARGET, (640, 480)), (1.25, 1.25));
+    }
+
+    #[test]
+    fn fill_scale_shrinks_an_oversized_buffer_to_the_frame() {
+        assert_eq!(fill_scale(SIZE_TARGET, (1600, 1200)), (0.5, 0.5));
+    }
+
+    #[test]
+    fn fill_scale_is_neutral_for_matching_and_invalid_input() {
+        assert_eq!(fill_scale(SIZE_TARGET, (800, 600)), (1.0, 1.0));
+        assert_eq!(fill_scale(SIZE_TARGET, (0, 0)), (1.0, 1.0));
+        assert_eq!(fill_scale(Rect::default(), (640, 480)), (1.0, 1.0));
+    }
+
+    #[test]
     fn size_resend_clears_the_rect_and_counts_the_attempt() {
         let (mut manager, output) = manager();
         let window = manager.add_window(output, "wordcraft", "doc").unwrap();
@@ -2423,6 +2472,28 @@ mod tests {
 
         // Outside window entirely: no hit.
         assert!(wm.surface_under((50.0, 50.0)).is_none());
+    }
+
+    #[test]
+    fn surface_under_inverts_fill_scale_for_input_regions() {
+        // A fixed-size client is stretched to its frame; clicks must be mapped
+        // back through the stretch before they reach surface-local input regions.
+        let mut wm = WindowManager::new();
+        let out = wm.add_output("out", Rect { x: 0, y: 0, width: 1920, height: 1080 });
+        let id = wm.add_window(out, "craft", "doc").expect("window");
+        let win = wm.windows.get_mut(&id).unwrap();
+        win.target_rect = Rect { x: 100, y: 100, width: 200, height: 200 };
+        win.rect = win.target_rect;
+        win.mapped = true;
+        win.fill_scale = (0.5, 0.5);
+        win.input_region = super::InputRegion {
+            rects: Some(vec![(true, Rect { x: 190, y: 190, width: 20, height: 20 })]),
+        };
+
+        let hit = wm.surface_under((200.0, 200.0));
+        assert_eq!(hit.map(|(wid, _)| wid), Some(id));
+        assert_eq!(hit.unwrap().1, (200.0, 200.0));
+        assert!(wm.surface_under((150.0, 150.0)).is_none());
     }
 
     #[test]
