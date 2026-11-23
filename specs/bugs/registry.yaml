@@ -585,3 +585,27 @@ bug-2026-11-24-size-negotiation:
     Cycle 1 (5306de7) bounded and paced the resends but could not force a
     fixed-size client to resize. Cycle 2 added compositor-side stretch to fill
     the frame in both directions; see stretch_followup above.
+
+bug-2026-11-24-tiled-state:
+  id: BUG-2026-11-24-TILED-STATE
+  title: Tiled windows lack xdg tiled states, so winit clients override the frame size
+  date: "2026-11-24"
+  severity: medium
+  priority: medium
+  status: open
+  scope: wayland
+  reported_by: operator_observation
+  security_impact: none
+  file: specs/bugs/BUG-2026-11-24-TILED-STATE.md
+  description: |
+    DeckCraft fills its frame in Hyprland but stays at 1440x900 under eswm.
+    Hyprland sends all four XDG_TOPLEVEL_STATE_TILED_* bits for v2+ toplevels;
+    eswm sends only Activated/Maximized/Fullscreen. winit 0.30.13 honors
+    request_inner_size() only when the last configure is stateless, so eswm's
+    untagged configures let the app override the compositor size. Stretch hides
+    the symptom but the client still renders at the wrong size.
+  verify: |
+    cargo test --bin eswm xdg_state; cargo test --bin eswm mode_sent;
+    cargo test --bin eswm xdg_configure_state; cargo clippy --all-targets;
+    cargo test; cargo build. Live DRM UAT: deckcraft fills natively and a GTK
+    client keeps correct CSD behavior.
