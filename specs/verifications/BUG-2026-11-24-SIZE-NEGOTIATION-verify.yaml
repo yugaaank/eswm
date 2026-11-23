@@ -76,6 +76,21 @@ gates:
   build:
     passed: true
     command: "cargo build"
+generalize_sweep:
+  defect_class: "render path assumes the committed buffer matches the configured frame"
+  grep_pattern: "render_elements_from_surface_tree|surface_under\\(|target_rect\\.x - window\\.xdg_offset"
+  sweep_scope: src/udev.rs, src/main.rs, src/wm.rs
+  match_count: 4
+  patched_in_pr:
+    - "src/udev.rs:2938 — border/titlebar render loop passes stretch and wraps elements with with_stretch"
+    - "src/udev.rs:2980 — no-border render loop does the same; popup branch keeps scale 1"
+    - "src/main.rs:299 — placed_windows render origin scales xdg_offset and carries fill_scale"
+    - "src/wm.rs:971 — surface_under inverts the stretch before input-region hit-testing"
+  tracked_issues: []
+  note: >-
+    Both render loops are mutually exclusive (`if border_size > 0 ... else`),
+    so there is no double-stretch. The bigpowers verify-generalize-sweep.sh
+    helper is not present in this repo; sweep was performed manually.
 log: /tmp/opencode/stretch-fix-preflight.log
 hardware_uat:
   status: pending_operator
