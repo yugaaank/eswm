@@ -501,3 +501,60 @@ bug-2026-11-22t151200-ab24-import-node-hint:
     Consider-level (non-blocking, logged not fixed): dmabuf_sources is a startup
     snapshot and not refreshed on GPU hot-unplug; duplicate-source edge case
     when scanout_render_node is None; test fixture naming nit.
+
+bug-2026-11-24-size-negotiation:
+  id: BUG-2026-11-24-SIZE-NEGOTIATION
+  title: Tiled frames stay unfilled because undersized commits are accepted as fitting
+  severity: high
+  status: fixed
+  reported_by: operator_observation
+  date: "2026-11-24T00:00:00+05:30"
+  priority: high
+  scope: rendering
+  security_impact: none
+  files:
+    - src/main.rs
+    - src/wm.rs
+    - src/clip.rs
+  files_changed:
+    - src/main.rs
+    - src/wm.rs
+    - src/clip.rs
+  risk_level: low
+  approach: "Two-way size negotiation with a padded resend budget; reset only on an exact match"
+  commit_message: "fix(wm): re-assert the frame size on undersized commits and pace resends"
+  description: |
+    Storyteller Craft apps (winit/egui) map at a fixed 1440x900. eswm only
+    re-sent the configure when the committed buffer was LARGER than
+    target_rect, so an undersized commit was treated as fitting: a larger
+    tiled frame stayed part-blank and a smaller frame showed only a cropped
+    fragment. Separately, resends were issued once per commit, so three
+    queued commits could spend the whole retry budget in 0.5 ms before the
+    client processed the first configure.
+  fix_plan: |
+    1. Rename the one-way oversize policy to size negotiation: SizeAction
+       (Resend, ResetBudget, Throttled, None), MAX_SIZE_RESENDS, size_action,
+       Window::size_resends + last_size_resend.
+    2. Any mismatch (oversized or undersized) asks for a configure; only an
+       exact match resets the budget.
+    3. Ignore a zero-sized target (not laid out) and a zero-sized buffer.
+    4. Defer resends closer than SIZE_RESEND_INTERVAL (100 ms); deferred
+       commits do not spend budget.
+    5. Commit handler logs the direction of the mismatch and dispatches all
+       four outcomes explicitly.
+  verify: |
+    cargo test --bin eswm size_action; cargo test --bin eswm size_resend;
+    cargo test --bin eswm clip_; cargo clippy --all-targets; cargo test;
+    cargo build. Live DRM UAT: tile deckcraft in frames above and below
+    1440x900; grep 're-sending size' (max 3 per window, >= 100 ms apart).
+  relation: |
+    Extends BUG-2026-11-21-DMABUF-IMPORT (oversize direction only) and
+    BUG-2026-11-22-OVERSIZE-RETRY-CAP (budget semantics). The reported
+    clip-vs-xdg_offset mismatch was re-checked and is not a defect: the clip
+    is anchored to the window-geometry rect, so CSD content lands exactly on
+    the frame and only outside decoration is trimmed.
+  hardware_uat: pending_operator
+  followup: |
+    Undersized content is still not scaled; a client that refuses every
+    configure keeps its cropped/blank appearance, but that is now bounded and
+    logged instead of silent.

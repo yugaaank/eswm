@@ -853,26 +853,39 @@ impl CompositorHandler for State {
 
             // BUG-2026-11-21-DMABUF-IMPORT (bug B): Electron/Chromium can commit
             // a default-sized buffer before honouring the size we configured,
-            // letting content spill past the frame. If the buffer is bigger than
-            // the target rect, ask again (bounded retries). A fitting commit
-            // resets the budget.
+            // letting content spill past the frame. BUG-2026-11-24: an
+            // undersized commit is just as wrong (blank frame). Ask again on any
+            // mismatch, bounded by a budget and paced so a burst of queued
+            // commits cannot spend it before the client reacts.
             let buffer_size = with_renderer_surface_state(surface, |state| state.buffer_size())
                 .flatten()
                 .map(|size| (size.w.max(0) as u32, size.h.max(0) as u32));
             if let (Some(buffer), Some(window)) = (buffer_size, self.wm.window(id)) {
                 let target = window.target_rect;
-                let attempts = window.oversize_configures;
-                match wm::oversize_action(target, buffer, attempts) {
-                    wm::OversizeAction::Resend => {
+                let resends = window.size_resends;
+                let since_last = window.last_size_resend.map(|at| at.elapsed());
+                match wm::size_action(target, buffer, resends, since_last) {
+                    wm::SizeAction::Resend => {
+                        let direction = if buffer.0 > target.width || buffer.1 > target.height {
+                            ">"
+                        } else {
+                            "<"
+                        };
                         tracing::info!(
-                            "client committed {}x{} > configured {}x{}; re-sending size",
-                            buffer.0, buffer.1, target.width, target.height
+                            "client committed {}x{} {} configured {}x{}; re-sending size",
+                            buffer.0, buffer.1, direction, target.width, target.height
                         );
-                        self.wm.note_oversize_commit(id);
+                        self.wm.note_size_resend(id);
                         crate::apply_layout(self);
                     }
-                    wm::OversizeAction::ResetBudget => self.wm.clear_oversize(id),
-                    wm::OversizeAction::None => {}
+                    wm::SizeAction::ResetBudget => self.wm.clear_size_resends(id),
+                    wm::SizeAction::Throttled => {
+                        tracing::debug!(
+                            "client committed {}x{} vs configured {}x{}; resend throttled",
+                            buffer.0, buffer.1, target.width, target.height
+                        );
+                    }
+                    wm::SizeAction::None => {}
                 }
             }
         }
