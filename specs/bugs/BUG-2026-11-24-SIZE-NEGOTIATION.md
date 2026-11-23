@@ -1,6 +1,6 @@
 ---
 bug_id: BUG-2026-11-24-SIZE-NEGOTIATION
-status: in-progress
+status: fixed
 severity: high
 scope: rendering
 title: Tiled frames stay unfilled because undersized commits are accepted as fitting
@@ -8,7 +8,7 @@ title: Tiled frames stay unfilled because undersized commits are accepted as fit
 
 # BUG-2026-11-24-SIZE-NEGOTIATION — Tiled frames stay unfilled because undersized commits are accepted as fitting
 
-**Status:** in progress (analysis 2026-11-24)
+**Status:** fixed on main as 5306de7 (merge of f6bf838); live DRM UAT pending operator
 **Severity:** high (windows never fill their tiled frame; content is cropped)
 **Reported by:** operator (live DRM session, 2026-11-23 19:25 local)
 **Discovered in:** `~/.local/state/eswm/eswm.log.old`, `~/.config/deckcraft/logs/deckcraft.log`
