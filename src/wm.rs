@@ -2650,6 +2650,28 @@ mod tests {
         assert!(manager.window(left).unwrap().target_rect.width > manager.window(right).unwrap().target_rect.width);
     }
 
+    // e10s02t8: reset restores every split input on the output in one pass.
+    #[test]
+    fn reset_tiling_splits_restores_defaults() {
+        let (mut manager, output) = manager();
+        let master = manager.add_window(output, "kitty", "master").unwrap();
+        let top = manager.add_window(output, "kitty", "top").unwrap();
+
+        manager.set_master_ratio(output, 0.2);
+        manager.set_stack_weights(output, vec![4.0, 1.0]);
+        manager.set_equal_weights(output, vec![9.0, 1.0], vec![8.0, 2.0]);
+        assert!((manager.output(output).unwrap().splits.master_ratio - 0.2).abs() < f64::EPSILON);
+
+        manager.reset_tiling_splits(output);
+        let splits = &manager.output(output).unwrap().splits;
+        assert!((splits.master_ratio - 0.6).abs() < f64::EPSILON);
+        assert!(splits.stack_weights.is_empty());
+        assert!(splits.col_weights.is_empty());
+        assert!(splits.row_weights.is_empty());
+        assert_eq!(manager.window(master).unwrap().target_rect.width, 1149);
+        assert_eq!(manager.window(top).unwrap().target_rect.height, 538);
+    }
+
     #[test]
     fn workspace_move_keeps_windows_separate() {
         let (mut manager, output) = manager();
