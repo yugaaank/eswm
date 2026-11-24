@@ -2195,6 +2195,30 @@ mod tests {
         assert_eq!(manager.window(master).unwrap().target_rect.width, 287);
     }
 
+    // e10s02t4: stack heights are layout inputs on the output. Default weights
+    // reproduce the old equal split; explicit weights redistribute pixels while
+    // keeping the 15% floor so the small side stays usable.
+    #[test]
+    fn stack_weights_drive_master_stack_heights() {
+        let (mut manager, output) = manager();
+        let _master = manager.add_window(output, "kitty", "master").unwrap();
+        let top = manager.add_window(output, "kitty", "top").unwrap();
+        let bottom = manager.add_window(output, "kitty", "bottom").unwrap();
+
+        // Empty weights = old equal stack: 1076px inner height / 2 = 538.
+        assert_eq!(manager.window(top).unwrap().target_rect.height, 538);
+        assert_eq!(manager.window(bottom).unwrap().target_rect.y, 540);
+
+        manager.set_stack_weights(output, vec![3.0, 1.0]);
+        assert_eq!(manager.window(top).unwrap().target_rect.height, 807);
+        assert_eq!(manager.window(bottom).unwrap().target_rect.y, 809);
+        assert_eq!(manager.window(bottom).unwrap().target_rect.height, 269);
+
+        // A 1000:1 weight must not flatten the small window to zero.
+        manager.set_stack_weights(output, vec![1000.0, 1.0]);
+        assert!(manager.window(bottom).unwrap().target_rect.height >= 161);
+    }
+
     #[test]
     fn workspace_move_keeps_windows_separate() {
         let (mut manager, output) = manager();
