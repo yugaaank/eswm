@@ -1716,6 +1716,17 @@ impl WindowManager {
         self.arrange_output(output);
     }
 
+    /// e10s02t4: relative heights of the Master-layout stack column. An empty
+    /// vector means equal heights, preserving the pre-e10 layout exactly.
+    pub fn set_stack_weights(&mut self, output: OutputId, weights: Vec<f64>) {
+        let Some(state) = self.outputs.get_mut(&output) else {
+            return;
+        };
+        state.splits.stack_weights = weights;
+        self.dirty = true;
+        self.arrange_output(output);
+    }
+
     pub fn arrange_output(&mut self, output: OutputId) {
         if !self.dirty {
             return;
@@ -1823,19 +1834,32 @@ impl WindowManager {
                     // titlebar height so a lower window's titlebar doesn't
                     // overlap the window above it.
                     let gap_v = inner_gap as i32 + tb_h;
-                    let total_gap_v = gap_v * (stack.len() - 1) as i32;
-                    let cell_h = (inner.height as i32 - total_gap_v) / stack.len() as i32;
-                    for (index, id) in stack.iter().enumerate() {
-                        let top = inner.y + (index as i32 * (cell_h + gap_v));
+                    let heights = if output_state.splits.stack_weights.is_empty() {
+                        // Keep the pre-e10 integer-division layout byte-for-byte:
+                        // it drops the remainder instead of handing it out.
+                        let cell_h = (inner.height as i32 - gap_v * (stack.len() - 1) as i32)
+                            / stack.len() as i32;
+                        vec![cell_h as u32; stack.len()]
+                    } else {
+                        weighted_split(
+                            inner.height,
+                            gap_v.max(0) as u32,
+                            &output_state.splits.stack_weights,
+                            MIN_SPLIT_SHARE,
+                        )
+                    };
+                    let mut top = inner.y;
+                    for (id, height) in stack.iter().zip(heights) {
                         self.set_target_rect(
                             *id,
                             Rect {
                                 x: stack_x,
                                 y: top,
                                 width: stack_w,
-                                height: cell_h as u32,
+                                height,
                             },
                         );
+                        top += height as i32 + gap_v;
                     }
                 }
             }
