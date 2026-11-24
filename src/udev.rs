@@ -1366,6 +1366,13 @@ fn process_shortcut(state: &mut State, mods: &ModifiersState, keysym: KeysymHand
 const BTN_LEFT: u32 = 0x110;
 const BTN_RIGHT: u32 = 0x111;
 
+/// A compositor-owned drag eats its initiating press and matching release.
+/// Forwarding either lets the app start its own drag (hello, file selection)
+/// while eswm moves the window. Other buttons still belong to the client.
+fn drag_consumes_button(drag: Option<DragState>, button: u32) -> bool {
+    drag.is_some_and(|drag| drag.button == button)
+}
+
 /// Recompute pointer (hover/drag) focus from `pos` and return the surface-local
 /// hit for `Pointer.motion`, or None when over empty space.
 /// If a popup has an active grab, all pointer events go to the popup surface.
@@ -1405,17 +1412,18 @@ fn pointer_focus(state: &mut State, pos: Point<f64, Logical>) -> Option<(wl_surf
         }
 
         crate::prune_dead_windows(state);
-        let dragging = state.udev.as_ref().unwrap().drag;
-        let hit = if let Some(drag) = dragging {
-            let id = drag.window;
-            let rect = state.wm.window(id)?.target_rect;
-            Some((id, Point::from((rect.x as f64, rect.y as f64))))
-        } else {
-            state
-                .wm
-                .surface_under((pos.x, pos.y))
-                .map(|(id, local)| (id, Point::from((pos.x - local.0, pos.y - local.1))))
-        };
+        // While eswm owns a drag, the client must not see motion either: it
+        // would keep updating its own drag-selection as the window slides.
+        if state.udev.as_ref().unwrap().drag.is_some() {
+            if let Some(udev) = state.udev.as_mut() {
+                udev.pointer_focus = None;
+            }
+            return None;
+        }
+        let hit = state
+            .wm
+            .surface_under((pos.x, pos.y))
+            .map(|(id, local)| (id, Point::from((pos.x - local.0, pos.y - local.1))));
         let Some((id, origin)) = hit else {
             if let Some(udev) = state.udev.as_mut() {
                 udev.pointer_focus = None;
@@ -1699,6 +1707,10 @@ impl State {
                 let button_state =
                     smithay::reexports::wayland_server::protocol::wl_pointer::ButtonState::from(event.state());
                 crate::prune_dead_windows(self);
+                // Whether this button belongs to a compositor drag and must not
+                // be delivered to any client surface. Early-return paths (popups,
+                // dock) forward their own events and never reach the assignment.
+                let swallow_client_button: bool;
                 if button_state
                     == smithay::reexports::wayland_server::protocol::wl_pointer::ButtonState::Pressed
                 {
@@ -1822,6 +1834,9 @@ impl State {
                                 }
                             }
                         }
+                    // Any drag started above belongs to eswm, not the client.
+                    swallow_client_button =
+                        drag_consumes_button(self.udev.as_ref().unwrap().drag, button);
                     // Dock bar click-to-focus / toggle-minimize (bottom strip of primary output).
                     let dec = self.decoration.lock().unwrap();
                     let dock_height = dec.dock_height;
@@ -1900,23 +1915,27 @@ impl State {
                         keyboard_focus_set(self, Some(id));
                     }
                 } else {
-                    // release: end drag if it matches this button
-                    let active = self.udev.as_ref().unwrap().drag.map(|drag| drag.button);
-                    if active == Some(button) {
+                    // release: end drag if it matches this button, and swallow the
+                    // matching client-facing release (its press was swallowed too).
+                    swallow_client_button =
+                        drag_consumes_button(self.udev.as_ref().unwrap().drag, button);
+                    if swallow_client_button {
                         self.udev.as_mut().unwrap().drag = None;
                     }
                 }
-                let pointer = self.seat.get_pointer().unwrap();
-                pointer.button(
-                    self,
-                    &ButtonEvent {
-                        button,
-                        state: button_state.try_into().unwrap(),
-                        serial: SCOUNTER.next_serial(),
-                        time: event.time_msec(),
-                    },
-                );
-                pointer.frame(self);
+                if !swallow_client_button {
+                    let pointer = self.seat.get_pointer().unwrap();
+                    pointer.button(
+                        self,
+                        &ButtonEvent {
+                            button,
+                            state: button_state.try_into().unwrap(),
+                            serial: SCOUNTER.next_serial(),
+                            time: event.time_msec(),
+                        },
+                    );
+                    pointer.frame(self);
+                }
             }
             InputEvent::PointerAxis { event, .. } => {
                 let horizontal_amount = event
@@ -3577,6 +3596,24 @@ enum DeviceAddError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // BUG-2026-11-24-SUPER-DRAG-LEAK: the compositor must swallow the button
+    // that starts a move/resize drag. Otherwise the app sees its own click and
+    // starts selecting files while eswm moves the window — two drivers, one
+    // pointer, and nobody agreed who was steering.
+    #[test]
+    fn super_drag_consumes_only_its_own_button() {
+        let drag = DragState {
+            window: 1,
+            mode: DragMode::Move,
+            start: Point::from((0.0, 0.0)),
+            orig_rect: wm::Rect { x: 0, y: 0, width: 100, height: 100 },
+            button: BTN_LEFT,
+        };
+        assert!(drag_consumes_button(Some(drag), BTN_LEFT));
+        assert!(!drag_consumes_button(Some(drag), BTN_RIGHT), "other buttons still belong to the app");
+        assert!(!drag_consumes_button(None, BTN_LEFT));
+    }
 
     #[test]
     fn idle_frame_skips_render_timer() {
