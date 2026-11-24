@@ -14,6 +14,7 @@ mod control;
 mod edid;
 mod ipc;
 mod lua_state;
+mod rounding;
 mod udev;
 mod wm;
 use ipc::Ipc;
