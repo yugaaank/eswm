@@ -38,6 +38,7 @@ es.bind("Super+Alt+Backspace", "quit")
 
 -- Window decorations (border size/gaps/colors, corner radius, titlebar)
 es.dsp.set_border_size(2)
+es.dsp.set_min_window_size(200, 150)             -- min (width, height) in px for resized/moved windows
 es.dsp.set_outer_gap(10)
 es.dsp.set_inner_gap(10)
 es.dsp.set_border_color_focused(0, 200, 0, 255)   -- green

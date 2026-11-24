@@ -9,7 +9,7 @@ tasks:
   verify: cargo test --bin eswm resize_edge_at
   risk: P1
   security: none
-  status: failing
+  status: passing
   allure:
     severity: high
     categories: [e10-resize, floating, unit]
@@ -18,16 +18,16 @@ tasks:
   verify: cargo test --bin eswm resize_rect
   risk: P1
   security: none
-  status: failing
+  status: passing
   allure:
     severity: high
     categories: [e10-resize, floating, unit]
 - id: e10s01t3
   description: 'Carry edge in DragState and route DragMode::Resize through resize_rect; keep Super+RMB as SouthEast shortcut'
-  verify: cargo test --bin eswm resize_rect
+  verify: cargo test --bin eswm drag_rect
   risk: P1
   security: none
-  status: failing
+  status: passing
   allure:
     severity: high
     categories: [e10-resize, floating, input]
@@ -36,7 +36,7 @@ tasks:
   verify: cargo build
   risk: P1
   security: none
-  status: failing
+  status: passing
   allure:
     severity: high
     categories: [e10-resize, floating, input]
@@ -45,7 +45,7 @@ tasks:
   verify: cargo test --bin eswm resize_edge
   risk: P2
   security: none
-  status: failing
+  status: passing
   allure:
     severity: normal
     categories: [e10-resize, floating, cursor]
@@ -54,7 +54,7 @@ tasks:
   verify: cargo test --bin eswm drag_threshold
   risk: P2
   security: none
-  status: failing
+  status: passing
   allure:
     severity: normal
     categories: [e10-resize, floating, input]
@@ -63,7 +63,7 @@ tasks:
   verify: cargo test --bin eswm min_window_size
   risk: P2
   security: none
-  status: failing
+  status: passing
   allure:
     severity: normal
     categories: [e10-resize, floating, config]
@@ -72,7 +72,7 @@ tasks:
   verify: cargo clippy --all-targets && cargo test && cargo build
   risk: P1
   security: none
-  status: failing
+  status: passing
   allure:
     severity: high
     categories: [e10-resize, floating, preflight]

@@ -1,0 +1,47 @@
+story_id: e10s01
+verified_at: "2026-11-24T08:11:03Z"
+verifier: develop-tdd
+risk: P2
+branch: e10s01-floating-resize
+head: 7e71e41f6cf4a2964fd6bf7487bc0c2b6c142033
+phases:
+  branch_check:
+    passed: true
+    branch: e10s01-floating-resize
+    note: "Created from local main after preflight was green (198 tests). Lock e10s01 acquired in specs/agent-locks.yaml."
+  preflight:
+    passed: true
+    command: "cargo clippy --all-targets && cargo test && cargo build"
+  task_verification:
+    t1: {command: "cargo test --bin eswm resize_edge_at", passed: true, result: "1 passed — 8 handles, 6px padding, free titlebar stays a move handle"}
+    t2: {command: "cargo test --bin eswm resize_rect", passed: true, result: "1 passed — left/top origin shifts, min/max clamps, u32 underflow guard"}
+    t3: {command: "cargo test --bin eswm drag_rect", passed: true, result: "1 passed — DragState carries edge; Move ignores it; Super+RMB stays SouthEast"}
+    t4: {command: "cargo build", passed: true, result: "Plain press order: titlebar buttons -> edges -> titlebar move; outer_frame shared with hit-testing"}
+    t5: {command: "cargo test --bin eswm resize_edge", passed: true, result: "2 passed — four Xcursor icons cover eight handles; named-cursor buffers loaded and cached by name"}
+    t6: {command: "cargo test --bin eswm drag_threshold", passed: true, result: "1 passed — no geometry under 3px, latch once armed, cancelled drag never moves; only_escape test guards the keysym"}
+    t7: {command: "cargo test --bin eswm min_window_size", passed: true, result: "2 passed — constants/defaults agree; Lua setter validates nonzero/<=4096 and stores into DecorationConfig"}
+    t8: {command: "cargo clippy --all-targets && cargo test && cargo build", passed: true, result: "206 passed, clippy warning-free, build green (/tmp/opencode/e10s01-final-preflight.log)"}
+  terminal_verdict:
+    command: "cargo clippy --all-targets && cargo test && cargo build"
+    exit_code: 0
+    note: "Single contiguous run at HEAD 7e71e41: clippy 0 warnings, 206 passed, build 0."
+  manual:
+    passed: false
+    pending: true
+    reason: "Live DRM UAT is operator-run from a TTY. The DRM/libseat backend must not be started inside an existing Wayland/X11 session (VT grab). Eight-handle checklist: specs/verifications/uat-2026-11-24-e10s01-live-drm.md."
+    checklist: specs/verifications/uat-2026-11-24-e10s01-live-drm.md
+    automated_proxy: "resize_edge_at, resize_rect, drag_rect, resize_cursor_icon, drag_threshold and min_window_size unit tests cover the geometry, gating and validation. They cannot prove cursor appearance or client-visible resize on real hardware."
+  security_scan:
+    skipped: true
+    reason: "All eight tasks marked security: none — no IPC, auth, data-loss or untrusted-input surface beyond existing pointer/keyboard handling."
+  blind_spot_check:
+    skipped: true
+    reason: "scripts/check-blind-spots.sh not present (same as e09s01 record)."
+  gaps:
+    closed: false
+    notes:
+      - "Live DRM UAT pending operator; no waiver recorded."
+      - "t3 ledger verify corrected from resize_rect to drag_rect during t8 bookkeeping — the planned filter matched only the t2 test, not the edge-carrying drag test."
+      - "Escape cancel keeps DragState alive with cancelled=true until button release so the initiating press and matching release stay swallowed; pointer_focus already suppresses motion while drag.is_some()."
+      - "set_min_window_size accepts 1..=4096; values above 4096 are rejected because they cannot fit a real output and would pin every drag to a work-area corner."
+      - "Super+RMB intentionally retains the old bottom-right resize shortcut for compatibility."

@@ -135,6 +135,13 @@ struct DragState {
     start: Point<f64, Logical>,
     orig_rect: wm::Rect,
     button: u32,
+    /// Grabbed frame edge. Ignored for Move; Super+RMB stays SouthEast.
+    edge: wm::ResizeEdge,
+    /// True once DRAG_THRESHOLD of travel is crossed; stays true after.
+    armed: bool,
+    /// Escape pressed: keep the record until button release so the release is
+    /// still swallowed, but never touch geometry again (e10s01t6).
+    cancelled: bool,
 }
 
 pub struct UdevData {
@@ -148,8 +155,10 @@ pub struct UdevData {
     pub gpus: GpuManager<GbmGlesBackend<GlesRenderer, DrmDeviceFd>>,
     pub backends: HashMap<DrmNode, BackendData>,
     pub dmabuf_state: Option<(DmabufState, DmabufGlobal)>,
-    cursor_images: Vec<xcursor::parser::Image>,
-    cursor_buffer: Option<(MemoryRenderBuffer, (f64, f64))>, // (buffer, hotspot)
+    cursor_images: HashMap<&'static str, Vec<xcursor::parser::Image>>,
+    /// Cached named cursor. The name is part of the key so switching from an
+    /// arrow to a resize icon actually repaints instead of reusing the arrow.
+    cursor_buffer: Option<(&'static str, MemoryRenderBuffer, (f64, f64))>,
     /// Latest cursor image requested by a client (e08s03t6).
     pub cursor_image: smithay::input::pointer::CursorImageStatus,
     /// Cache of titlebar background render buffers keyed by (window_id, rect, color, titlebar_height)
@@ -281,19 +290,25 @@ impl DmabufHandler for State {
 }
 delegate_dmabuf!(State);
 
-fn load_cursor_images() -> Vec<xcursor::parser::Image> {
-    let name = std::env::var("XCURSOR_THEME").ok().unwrap_or_else(|| "default".into());
-    match xcursor::CursorTheme::load(&name)
-        .load_icon("default")
-        .map(std::fs::read)
-        .and_then(|r| r.ok().and_then(|d| xcursor::parser::parse_xcursor(&d)))
-    {
-        Some(icons) if !icons.is_empty() => icons,
-        _ => {
-            warn!("no xcursor theme found, cursor will be invisible");
-            Vec::new()
+fn load_cursor_images() -> HashMap<&'static str, Vec<xcursor::parser::Image>> {
+    let theme_name = std::env::var("XCURSOR_THEME").ok().unwrap_or_else(|| "default".into());
+    let theme = xcursor::CursorTheme::load(&theme_name);
+    let mut images = HashMap::new();
+    // "default" is the fallback for client-requested icons we do not load.
+    for name in std::iter::once("default").chain(RESIZE_CURSOR_NAMES) {
+        let loaded = theme
+            .load_icon(name)
+            .and_then(|path| std::fs::read(path).ok())
+            .and_then(|data| xcursor::parser::parse_xcursor(&data))
+            .unwrap_or_default();
+        if !loaded.is_empty() {
+            images.insert(name, loaded);
         }
     }
+    if !images.contains_key("default") {
+        warn!("no xcursor theme found, cursor will be invisible");
+    }
+    images
 }
 
 pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
@@ -1344,6 +1359,14 @@ fn process_shortcut(state: &mut State, mods: &ModifiersState, keysym: KeysymHand
     };
     let raw = raw_sym.raw();
 
+    // e10s01t6: Escape is the drag's "never mind" — restore geometry and let
+    // go, before any config keybind gets a chance to also fire. Tiny detail:
+    // Escape only matters while a drag is live, so a plain Escape still reaches
+    // the client untouched.
+    if is_drag_cancel_key(raw) && cancel_active_drag(state) {
+        return FilterResult::Intercept(());
+    }
+
     // Always-on built-ins (emergency quit, VT switch) take precedence and cannot be removed.
     if let Some(kb) = builtin_shortcut(mods, raw) {
         return execute_keybind(state, &kb);
@@ -1363,8 +1386,72 @@ fn process_shortcut(state: &mut State, mods: &ModifiersState, keysym: KeysymHand
 }
 
 // Linux input event codes for mouse buttons
+use smithay::input::pointer::{CursorIcon, CursorImageStatus};
+
 const BTN_LEFT: u32 = 0x110;
 const BTN_RIGHT: u32 = 0x111;
+/// Invisible grab zone outside a frame so edges are easy to catch (e10s01).
+const RESIZE_HANDLE_PADDING: i32 = 6;
+/// Logical pixels of travel before a move/resize drag engages (e10s01t6).
+/// Below this a press is a click — the window must not jump on a twitchy hand.
+const DRAG_THRESHOLD: f64 = 3.0;
+
+/// Escape is the universal "never mind" for an in-flight drag (e10s01t6).
+fn is_drag_cancel_key(raw_sym: u32) -> bool {
+    raw_sym == xkbcommon::xkb::keysyms::KEY_Escape
+}
+/// Xcursor names loaded at startup; the four dual arrows cover eight handles.
+const RESIZE_CURSOR_NAMES: [&str; 4] = ["ns-resize", "ew-resize", "nesw-resize", "nwse-resize"];
+
+/// Xcursor icon for a grabbed handle (e10s01t5).
+fn resize_cursor_icon(edge: wm::ResizeEdge) -> CursorIcon {
+    use wm::ResizeEdge::*;
+    match edge {
+        North | South => CursorIcon::NsResize,
+        East | West => CursorIcon::EwResize,
+        NorthEast | SouthWest => CursorIcon::NeswResize,
+        NorthWest | SouthEast => CursorIcon::NwseResize,
+    }
+}
+
+/// Point the compositor cursor at the hovered handle, or keep the icon of the
+/// handle being dragged. A plain pointer over free space gets the default icon.
+fn update_resize_cursor(state: &mut State) {
+    let Some(udev) = state.udev.as_ref() else { return };
+    let pos = udev.pointer_location;
+    let drag = udev.drag;
+    let hovered = if drag.is_some() {
+        drag.filter(|d| matches!(d.mode, DragMode::Resize))
+            .map(|d| resize_cursor_icon(d.edge))
+    } else {
+        let bs = state.wm.border_size();
+        let tb = state.decoration.lock().unwrap().titlebar_height;
+        state
+            .wm
+            .window_at((pos.x, pos.y), bs)
+            .and_then(|id| state.wm.window(id))
+            .filter(|w| {
+                w.mode.placement == wm::Placement::Floating
+                    && w.mode.presentation == wm::Presentation::Normal
+            })
+            .and_then(|w| {
+                wm::resize_edge_at(
+                    wm::outer_frame(w.target_rect, bs, tb),
+                    (pos.x, pos.y),
+                    RESIZE_HANDLE_PADDING,
+                )
+            })
+            .map(resize_cursor_icon)
+    };
+    let status = hovered
+        .map(CursorImageStatus::Named)
+        .unwrap_or_else(CursorImageStatus::default_named);
+    if let Some(udev) = state.udev.as_mut()
+        && udev.cursor_image != status {
+            udev.cursor_image = status;
+            state.redraw_needed = true;
+        }
+}
 
 /// A compositor-owned drag eats its initiating press and matching release.
 /// Forwarding either lets the app start its own drag (hello, file selection)
@@ -1554,19 +1641,87 @@ pub fn keyboard_focus_set_layer(state: &mut State) {
     }
 }
 
+/// Pure geometry for an in-flight drag. Output clamping stays in drag_update.
+fn drag_rect(
+    drag: DragState,
+    pos: Point<f64, Logical>,
+    min: (u32, u32),
+    max: (u32, u32),
+) -> wm::Rect {
+    let dx = pos.x - drag.start.x;
+    let dy = pos.y - drag.start.y;
+    match drag.mode {
+        DragMode::Move => wm::Rect {
+            x: drag.orig_rect.x + dx as i32,
+            y: drag.orig_rect.y + dy as i32,
+            ..drag.orig_rect
+        },
+        DragMode::Resize => wm::resize_rect(drag.orig_rect, drag.edge, dx, dy, min, max),
+    }
+}
+
+/// Geometry a drag should apply, or None while it is still a click / cancelled
+/// (e10s01t6). Pure so the threshold gate is testable without a compositor State.
+fn drag_rect_if_armed(
+    drag: DragState,
+    pos: Point<f64, Logical>,
+    min: (u32, u32),
+    max: (u32, u32),
+    threshold: f64,
+) -> Option<wm::Rect> {
+    if drag.cancelled {
+        return None;
+    }
+    let dx = pos.x - drag.start.x;
+    let dy = pos.y - drag.start.y;
+    let past = dx * dx + dy * dy >= threshold * threshold;
+    if drag.armed || past {
+        Some(drag_rect(drag, pos, min, max))
+    } else {
+        None
+    }
+}
+
+/// Escape drops an in-flight drag and restores its starting rect (e10s01t6).
+/// The DragState is kept until button release so the matching release stays
+/// swallowed — otherwise the app gets an orphan release and looks confused.
+fn cancel_active_drag(state: &mut State) -> bool {
+    let Some(drag) = state.udev.as_ref().and_then(|u| u.drag) else {
+        return false;
+    };
+    if drag.cancelled {
+        return true;
+    }
+    if state.wm.set_window_rect(drag.window, drag.orig_rect) {
+        crate::apply_layout(state);
+    }
+    if let Some(udev) = state.udev.as_mut() {
+        if let Some(d) = udev.drag.as_mut() {
+            d.cancelled = true;
+        }
+        udev.cursor_image = CursorImageStatus::default_named();
+    }
+    state.redraw_needed = true;
+    true
+}
+
 /// Advance an in-flight move/resize and return the dragged window id.
 fn drag_update(state: &mut State, pos: Point<f64, Logical>) -> Option<wm::WindowId> {
     let drag = state.udev.as_ref().unwrap().drag?;
-    let dx = pos.x - drag.start.x;
-    let dy = pos.y - drag.start.y;
-    let mut rect = match drag.mode {
-        DragMode::Move => wm::Rect { x: drag.orig_rect.x + dx as i32, y: drag.orig_rect.y + dy as i32, ..drag.orig_rect },
-        DragMode::Resize => wm::Rect {
-            width: (drag.orig_rect.width as f64 + dx).max(200.0) as u32,
-            height: (drag.orig_rect.height as f64 + dy).max(150.0) as u32,
-            ..drag.orig_rect
-        },
+    // e10s01t7: min sizes come from the shared config so es.dsp.set_min_window_size
+    // takes effect on the very next motion event. max(1) guards a zero-valued
+    // config from ever reaching the clamp math.
+    let (min_w, min_h) = {
+        let dec = state.decoration.lock().unwrap();
+        (dec.min_window_width.max(1), dec.min_window_height.max(1))
     };
+    let mut rect = drag_rect_if_armed(drag, pos, (min_w, min_h), (u32::MAX, u32::MAX), DRAG_THRESHOLD)?;
+    // Crossed the threshold: latch it so later motion keeps tracking even if
+    // the pointer wobbles back inside the dead zone.
+    if !drag.armed
+        && let Some(d) = state.udev.as_mut().and_then(|u| u.drag.as_mut()) {
+            d.armed = true;
+        }
     // Keep the window on its output: an unbounded drag could wrap the i32
     // geometry used by hit-testing and leave the window unclickable.
     if let Some(geometry) = state
@@ -1577,12 +1732,12 @@ fn drag_update(state: &mut State, pos: Point<f64, Logical>) -> Option<wm::Window
     {
         rect.x = rect
             .x
-            .clamp(geometry.x, (geometry.x + geometry.width as i32 - 200).max(geometry.x));
+            .clamp(geometry.x, (geometry.x + geometry.width as i32 - min_w as i32).max(geometry.x));
         rect.y = rect
             .y
-            .clamp(geometry.y, (geometry.y + geometry.height as i32 - 150).max(geometry.y));
-        rect.width = rect.width.clamp(200, geometry.width.max(200));
-        rect.height = rect.height.clamp(150, geometry.height.max(150));
+            .clamp(geometry.y, (geometry.y + geometry.height as i32 - min_h as i32).max(geometry.y));
+        rect.width = rect.width.clamp(min_w, geometry.width.max(min_w));
+        rect.height = rect.height.clamp(min_h, geometry.height.max(min_h));
     }
     if state.wm.set_window_rect(drag.window, rect) {
         crate::apply_layout(state);
@@ -1651,6 +1806,7 @@ impl State {
                 ));
                 self.udev.as_mut().unwrap().pointer_location = pointer_location;
                 drag_update(self, pointer_location);
+                update_resize_cursor(self);
                 self.redraw_needed = true;
                 // Diagnostics: ~1 Hz pointer position in the log (helps spot a
                 // stuck/invisible cursor); drop when focus is stable.
@@ -1683,6 +1839,7 @@ impl State {
                 let serial = SCOUNTER.next_serial();
                 self.udev.as_mut().unwrap().pointer_location = location;
                 drag_update(self, location);
+                update_resize_cursor(self);
                 // Same-class sibling of the freeze above: moving the pointer is
                 // the user waiting for a new cursor pixel. Without this flag the
                 // location updates in memory and no flip is ever queued, so an
@@ -1787,53 +1944,73 @@ impl State {
                         pointer.frame(self);
                         return;
                     }
-                    // Super+button starts a move/resize drag on a floating window
-                    if mods.logo && (button == BTN_LEFT || button == BTN_RIGHT)
-                        && let Some(id) = self.wm.window_at((location.x, location.y), self.wm.border_size())
+                    let titlebar_height = self.decoration.lock().unwrap().titlebar_height;
+                    if mods.logo && (button == BTN_LEFT || button == BTN_RIGHT) {
+                        // Super+drag keeps the old shortcut: left moves, right
+                        // resizes from the bottom-right corner.
+                        if let Some(id) = self.wm.window_at((location.x, location.y), self.wm.border_size())
                             && self.wm.window(id).map(|w| w.mode.placement == wm::Placement::Floating && w.mode.presentation == wm::Presentation::Normal).unwrap_or(false) {
                                 let rect = self.wm.window(id).unwrap().target_rect;
                                 self.udev.as_mut().unwrap().drag = Some(DragState {
                                     window: id,
-                                    mode: if button == BTN_LEFT {
-                                        DragMode::Move
-                                    } else {
-                                        DragMode::Resize
-                                    },
+                                    mode: if button == BTN_LEFT { DragMode::Move } else { DragMode::Resize },
                                     start: location,
                                     orig_rect: rect,
                                     button,
+                                    edge: wm::ResizeEdge::SouthEast,
+                                    armed: false,
+                                    cancelled: false,
                                 });
                             }
-                    // Titlebar button clicks: close / maximize / minimize.
-                    // Clicking the titlebar itself (not a button) drags a floating window.
-                    let titlebar_height = self.decoration.lock().unwrap().titlebar_height;
-                    if titlebar_height > 0
-                        && let Some(id) = self.wm.window_at((location.x, location.y), self.wm.border_size()) {
-                            let window = self.wm.window(id).unwrap();
-                            let rect = window.target_rect;
-                            let mode = window.mode;
-                            let tb = titlebar_height as f64;
-                            // Titlebar is drawn above the client surface: y in [rect.y - tb, rect.y)
-                            let in_titlebar = location.y >= rect.y as f64 - tb && location.y < rect.y as f64
-                                && location.x >= rect.x as f64 && location.x < rect.x as f64 + rect.width as f64;
-                            if in_titlebar {
-                                match wm::titlebar_button_at(rect, titlebar_height, location.x) {
-                                    Some(button) => apply_titlebar_action(self, id, button),
-                                    None if mode.placement == wm::Placement::Floating && mode.presentation == wm::Presentation::Normal => {
-                                        // Titlebar drag: start move on floating window
-                                        let rect = self.wm.window(id).unwrap().target_rect;
-                                        self.udev.as_mut().unwrap().drag = Some(DragState {
-                                            window: id,
-                                            mode: DragMode::Move,
-                                            start: location,
-                                            orig_rect: rect,
-                                            button,
-                                        });
-                                    }
-                                    None => {}
-                                }
+                    } else if let Some(id) = self.wm.window_at((location.x, location.y), self.wm.border_size())
+                        && let Some(window) = self.wm.window(id) {
+                        // Priority on a plain press: titlebar buttons, then frame
+                        // edges, then the free titlebar (move). Buttons win so the
+                        // 6px grab zone can never swallow close/maximize/minimize.
+                        let rect = window.target_rect;
+                        let mode = window.mode;
+                        let tb = titlebar_height as f64;
+                        let in_titlebar = location.y >= rect.y as f64 - tb && location.y < rect.y as f64
+                            && location.x >= rect.x as f64 && location.x < rect.x as f64 + rect.width as f64;
+                        let titlebar_button = if in_titlebar && titlebar_height > 0 {
+                            wm::titlebar_button_at(rect, titlebar_height, location.x)
+                        } else {
+                            None
+                        };
+                        if let Some(tb_button) = titlebar_button {
+                            apply_titlebar_action(self, id, tb_button);
+                        } else if mode.placement == wm::Placement::Floating
+                            && mode.presentation == wm::Presentation::Normal {
+                            let frame = wm::outer_frame(rect, self.wm.border_size(), titlebar_height);
+                            if let Some(edge) = wm::resize_edge_at(
+                                frame,
+                                (location.x, location.y),
+                                RESIZE_HANDLE_PADDING,
+                            ) {
+                                self.udev.as_mut().unwrap().drag = Some(DragState {
+                                    window: id,
+                                    mode: DragMode::Resize,
+                                    start: location,
+                                    orig_rect: rect,
+                                    button,
+                                    edge,
+                                    armed: false,
+                                    cancelled: false,
+                                });
+                            } else if in_titlebar {
+                                self.udev.as_mut().unwrap().drag = Some(DragState {
+                                    window: id,
+                                    mode: DragMode::Move,
+                                    start: location,
+                                    orig_rect: rect,
+                                    button,
+                                    edge: wm::ResizeEdge::SouthEast,
+                                    armed: false,
+                                    cancelled: false,
+                                });
                             }
                         }
+                    }
                     // Any drag started above belongs to eswm, not the client.
                     swallow_client_button =
                         drag_consumes_button(self.udev.as_ref().unwrap().drag, button);
@@ -1923,6 +2100,7 @@ impl State {
                         self.udev.as_mut().unwrap().drag = None;
                     }
                 }
+                update_resize_cursor(self);
                 if !swallow_client_button {
                     let pointer = self.seat.get_pointer().unwrap();
                     pointer.button(
@@ -2712,47 +2890,45 @@ impl State {
                 );
                 cursor_elements.extend(tree.into_iter().map(EswmRenderElements::Surface));
             }
-        } else if cursor_decision == crate::CursorRenderDecision::XcursorFallback
-            && let Some((buffer, hotspot)) = udev.cursor_buffer.clone() {
-            let pos = (pointer_location - Point::from(hotspot))
-                .to_physical(Scale::from(output.current_scale().fractional_scale()))
-                .to_i32_round();
-            // shortcut: cursor buffer import failure just drops the cursor for a frame
-            if let Ok(cursor) = MemoryRenderBufferRenderElement::from_buffer(
-                &mut renderer,
-                pos,
-                &buffer,
-                None,
-                None,
-                None,
-                Kind::Cursor,
-            ) {
-                cursor_elements.push(EswmRenderElements::Cursor(cursor));
-            }
-        } else if !udev.cursor_images.is_empty() {
-            let img = udev.cursor_images[0].clone();
-            let buf = MemoryRenderBuffer::from_slice(
-                &img.pixels_rgba,
-                Fourcc::Argb8888,
-                (img.width as i32, img.height as i32),
-                1,
-                Transform::Normal,
-                None,
-            );
-            udev.cursor_buffer = Some((buf.clone(), (img.xhot as f64, img.yhot as f64)));
-            let pos = (pointer_location - Point::from((img.xhot as f64, img.yhot as f64)))
-                .to_physical(Scale::from(output.current_scale().fractional_scale()))
-                .to_i32_round();
-            if let Ok(cursor) = MemoryRenderBufferRenderElement::from_buffer(
-                &mut renderer,
-                pos,
-                &buf,
-                None,
-                None,
-                None,
-                Kind::Cursor,
-            ) {
-                cursor_elements.push(EswmRenderElements::Cursor(cursor));
+        } else if cursor_decision == crate::CursorRenderDecision::XcursorFallback {
+            // e10s01t5: pick the named icon buffer. Client-requested names we
+            // did not load fall back to the default arrow.
+            let requested = match &udev.cursor_image {
+                CursorImageStatus::Named(icon) => icon.name(),
+                _ => "default",
+            };
+            let name = [requested, "default"].into_iter()
+                .find(|n| udev.cursor_images.get(*n).is_some_and(|v| !v.is_empty()))
+                .unwrap_or("default");
+            if let Some(img) = udev.cursor_images.get(name).and_then(|v| v.first()).cloned() {
+                let hotspot = (img.xhot as f64, img.yhot as f64);
+                if udev.cursor_buffer.as_ref().is_none_or(|(n, _, _)| *n != name) {
+                    let buf = MemoryRenderBuffer::from_slice(
+                        &img.pixels_rgba,
+                        Fourcc::Argb8888,
+                        (img.width as i32, img.height as i32),
+                        1,
+                        Transform::Normal,
+                        None,
+                    );
+                    udev.cursor_buffer = Some((name, buf, hotspot));
+                }
+                let (_, buffer, hotspot) = udev.cursor_buffer.clone().unwrap();
+                let pos = (pointer_location - Point::from(hotspot))
+                    .to_physical(Scale::from(output.current_scale().fractional_scale()))
+                    .to_i32_round();
+                // shortcut: cursor buffer import failure just drops the cursor for a frame
+                if let Ok(cursor) = MemoryRenderBufferRenderElement::from_buffer(
+                    &mut renderer,
+                    pos,
+                    &buffer,
+                    None,
+                    None,
+                    None,
+                    Kind::Cursor,
+                ) {
+                    cursor_elements.push(EswmRenderElements::Cursor(cursor));
+                }
             }
         }
 
@@ -3609,10 +3785,107 @@ mod tests {
             start: Point::from((0.0, 0.0)),
             orig_rect: wm::Rect { x: 0, y: 0, width: 100, height: 100 },
             button: BTN_LEFT,
+            edge: wm::ResizeEdge::SouthEast,
+            armed: false,
+            cancelled: false,
         };
         assert!(drag_consumes_button(Some(drag), BTN_LEFT));
         assert!(!drag_consumes_button(Some(drag), BTN_RIGHT), "other buttons still belong to the app");
         assert!(!drag_consumes_button(None, BTN_LEFT));
+    }
+
+    // e10s01t3: the grabbed edge travels with the drag. Resize must use it
+    // instead of the old bottom-right-only growth; move must ignore it.
+    #[test]
+    fn drag_rect_resize_follows_the_carried_edge() {
+        let orig = wm::Rect { x: 100, y: 200, width: 300, height: 200 };
+        let bounds = (200, 150);
+        let limit = (u32::MAX, u32::MAX);
+        let drag = |mode, edge| DragState {
+            window: 1,
+            mode,
+            start: Point::from((100.0, 200.0)),
+            orig_rect: orig,
+            button: BTN_LEFT,
+            edge,
+            armed: false,
+            cancelled: false,
+        };
+        let at = Point::from((60.0, 170.0));
+
+        assert_eq!(
+            drag_rect(drag(DragMode::Resize, wm::ResizeEdge::NorthWest), at, bounds, limit),
+            wm::Rect { x: 60, y: 170, width: 340, height: 230 }
+        );
+        assert_eq!(
+            drag_rect(drag(DragMode::Move, wm::ResizeEdge::SouthEast), at, bounds, limit),
+            wm::Rect { x: 60, y: 170, width: 300, height: 200 }
+        );
+    }
+
+    // e10s01t6: a click must not jerk the window on a one-pixel twitch. The
+    // drag only engages after 3px of travel; Escape cancels and restores.
+    #[test]
+    fn drag_threshold_gates_geometry_and_escape_cancels() {
+        let orig = wm::Rect { x: 100, y: 100, width: 300, height: 200 };
+        let start = Point::from((100.0, 100.0));
+        let mk = |armed: bool, cancelled: bool| DragState {
+            window: 1,
+            mode: DragMode::Move,
+            start,
+            orig_rect: orig,
+            button: BTN_LEFT,
+            edge: wm::ResizeEdge::SouthEast,
+            armed,
+            cancelled,
+        };
+        let limits = (u32::MAX, u32::MAX);
+
+        // Two pixels: still a click, geometry untouched.
+        let two_px = Point::from((102.0, 100.0));
+        assert_eq!(
+            drag_rect_if_armed(mk(false, false), two_px, limits, limits, DRAG_THRESHOLD),
+            None
+        );
+        // Three pixels: engage, applying the full delta.
+        let three_px = Point::from((103.0, 100.0));
+        assert_eq!(
+            drag_rect_if_armed(mk(false, false), three_px, limits, limits, DRAG_THRESHOLD),
+            Some(wm::Rect { x: 103, y: 100, width: 300, height: 200 })
+        );
+        // Once armed, even a 1px move tracks the pointer.
+        assert_eq!(
+            drag_rect_if_armed(mk(true, false), two_px, limits, limits, DRAG_THRESHOLD),
+            Some(wm::Rect { x: 102, y: 100, width: 300, height: 200 })
+        );
+        // Escape: no geometry change however far the pointer travels.
+        assert_eq!(
+            drag_rect_if_armed(mk(true, true), Point::from((400.0, 400.0)), limits, limits, DRAG_THRESHOLD),
+            None
+        );
+    }
+
+    #[test]
+    fn only_escape_cancels_a_drag() {
+        let esc = xkbcommon::xkb::keysyms::KEY_Escape;
+        assert!(is_drag_cancel_key(esc));
+        assert!(!is_drag_cancel_key(xkbcommon::xkb::keysyms::KEY_a));
+    }
+
+    // e10s01t5: eight handles need only four Xcursor icons. Mapping them from
+    // one place keeps the hover cursor and the dragged cursor identical.
+    #[test]
+    fn resize_edge_cursor_icons_cover_all_handles() {
+        use wm::ResizeEdge::*;
+        let name = |e| resize_cursor_icon(e).name();
+        assert_eq!(name(North), "ns-resize");
+        assert_eq!(name(South), "ns-resize");
+        assert_eq!(name(East), "ew-resize");
+        assert_eq!(name(West), "ew-resize");
+        assert_eq!(name(NorthEast), "nesw-resize");
+        assert_eq!(name(SouthWest), "nesw-resize");
+        assert_eq!(name(NorthWest), "nwse-resize");
+        assert_eq!(name(SouthEast), "nwse-resize");
     }
 
     #[test]

@@ -389,6 +389,127 @@ pub fn titlebar_button_at(rect: Rect, titlebar_height: u32, x: f64) -> Option<Ti
     }
 }
 
+/// Which frame edge a resize drag grabbed (e10s01). One enum drives hit
+/// testing, rect math, cursor choice and their tests, so none can drift.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResizeEdge {
+    North,
+    South,
+    East,
+    West,
+    NorthEast,
+    NorthWest,
+    SouthEast,
+    SouthWest,
+}
+
+/// Resolve the resize handle under `point` on an outer frame `rect`.
+///
+/// `padding` is an invisible grab zone outside the frame. Corners win over
+/// edges. A point in the free interior (including the titlebar) returns None
+/// so a titlebar press stays a move drag — otherwise grabbing the titlebar
+/// would silently resize the window. Reality check: users notice that.
+pub fn resize_edge_at(rect: Rect, point: (f64, f64), padding: i32) -> Option<ResizeEdge> {
+    if rect.width == 0 || rect.height == 0 {
+        return None;
+    }
+    let pad = padding.max(0) as f64;
+    let left = rect.x as f64;
+    let top = rect.y as f64;
+    let right = left + rect.width as f64;
+    let bottom = top + rect.height as f64;
+    let (px, py) = point;
+    if px < left - pad || px > right + pad || py < top - pad || py > bottom + pad {
+        return None;
+    }
+    // Shrink the near-edge zone on tiny frames so opposite edges cannot both
+    // claim the same point.
+    let pad_x = pad.min(rect.width as f64 / 2.0);
+    let pad_y = pad.min(rect.height as f64 / 2.0);
+    let west = px <= left + pad_x;
+    let east = px >= right - pad_x;
+    let north = py <= top + pad_y;
+    let south = py >= bottom - pad_y;
+
+    match (north, south, west, east) {
+        (true, _, true, _) => Some(ResizeEdge::NorthWest),
+        (true, _, _, true) => Some(ResizeEdge::NorthEast),
+        (_, true, true, _) => Some(ResizeEdge::SouthWest),
+        (_, true, _, true) => Some(ResizeEdge::SouthEast),
+        (true, _, _, _) => Some(ResizeEdge::North),
+        (_, true, _, _) => Some(ResizeEdge::South),
+        (_, _, true, _) => Some(ResizeEdge::West),
+        (_, _, _, true) => Some(ResizeEdge::East),
+        _ => None,
+    }
+}
+
+/// Apply a pointer delta to `orig` for the grabbed `edge`.
+///
+/// West/North drags move the origin while the opposite edge stays pinned.
+/// All math is i64 so a huge delta cannot underflow the u32 Rect fields.
+/// `min`/`max` are (width, height) size bounds, not screen coordinates.
+pub fn resize_rect(
+    orig: Rect,
+    edge: ResizeEdge,
+    dx: f64,
+    dy: f64,
+    min: (u32, u32),
+    max: (u32, u32),
+) -> Rect {
+    use ResizeEdge::*;
+    let min_w = min.0.max(1) as i64;
+    let min_h = min.1.max(1) as i64;
+    let max_w = (max.0 as i64).max(min_w);
+    let max_h = (max.1 as i64).max(min_h);
+    let right = orig.x as i64 + orig.width as i64;
+    let bottom = orig.y as i64 + orig.height as i64;
+    let int_range = |v: i64| v.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+
+    let (width, x) = match edge {
+        West | NorthWest | SouthWest => {
+            let w = ((orig.width as f64 - dx).round() as i64).clamp(min_w, max_w);
+            (w, right - w)
+        }
+        East | NorthEast | SouthEast => {
+            let w = ((orig.width as f64 + dx).round() as i64).clamp(min_w, max_w);
+            (w, orig.x as i64)
+        }
+        North | South => (orig.width as i64, orig.x as i64),
+    };
+    let (height, y) = match edge {
+        North | NorthEast | NorthWest => {
+            let h = ((orig.height as f64 - dy).round() as i64).clamp(min_h, max_h);
+            (h, bottom - h)
+        }
+        South | SouthEast | SouthWest => {
+            let h = ((orig.height as f64 + dy).round() as i64).clamp(min_h, max_h);
+            (h, orig.y as i64)
+        }
+        East | West => (orig.height as i64, orig.y as i64),
+    };
+
+    Rect {
+        x: int_range(x),
+        y: int_range(y),
+        width: width as u32,
+        height: height as u32,
+    }
+}
+
+/// Full outer frame rectangle (borders on all sides + titlebar above).
+/// Shared by hit-testing and resize-edge detection so they cannot drift.
+pub fn outer_frame(target: Rect, border_size: u32, titlebar_height: u32) -> Rect {
+    let bs = border_size as i32;
+    let tb = titlebar_height as i32;
+    Rect {
+        x: target.x - bs,
+        y: target.y - bs - tb,
+        width: (target.width as i32 + 2 * bs).max(0) as u32,
+        height: (target.height as i32 + 2 * bs + tb).max(0) as u32,
+    }
+}
+
 /// Compute the border frame for a window's target_rect.
 /// The frame extends `border_size` pixels outward on all sides, plus
 /// `titlebar_height` pixels upward from the top edge.
@@ -434,9 +555,14 @@ pub fn border_frame(
     }
 }
 
+/// Compositor-side minimum window size (e10s01t7). These are the defaults;
+/// `es.dsp.set_min_window_size` overrides them through DecorationConfig.
+pub const MIN_WINDOW_WIDTH: u32 = 200;
+pub const MIN_WINDOW_HEIGHT: u32 = 150;
+
 /// Window decoration values shared between the Lua config API and the WM.
 /// Lua mutates these via `es.dsp.set_*`; the renderer reads them each frame.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct DecorationConfig {
     /// Outer gap (px) between tiled windows and the output edge.
     pub outer: u32,
@@ -461,11 +587,21 @@ pub struct DecorationConfig {
     /// Dock bar height (px). eswm draws a simple dock bar at the bottom of the
     /// output when > 0; reserved from the work area so tiled windows stay clear.
     pub dock_height: u32,
+    /// Minimum window width/height (px) enforced by move/resize drags
+    /// (e10s01t7). Defaults to MIN_WINDOW_WIDTH/HEIGHT; Lua can override.
+    pub min_window_width: u32,
+    pub min_window_height: u32,
     /// Default wm mode for newly spawned windows:
     /// Tiling = tiled by default, Floating = floating by default.
     pub wm_mode: WmMode,
     /// Tiling layout algorithm for the output this decoration is applied to.
     pub tiling_layout: TilingLayout,
+}
+
+impl Default for DecorationConfig {
+    fn default() -> Self {
+        Self::standard()
+    }
 }
 
 impl DecorationConfig {
@@ -481,6 +617,8 @@ impl DecorationConfig {
             titlebar_color_focused: [200, 200, 200, 255],
             titlebar_color_unfocused: [60, 60, 60, 255],
             dock_height: 0,
+            min_window_width: MIN_WINDOW_WIDTH,
+            min_window_height: MIN_WINDOW_HEIGHT,
             wm_mode: WmMode::Tiling,
             tiling_layout: TilingLayout::Master,
         }
@@ -999,7 +1137,6 @@ impl WindowManager {
         let primary = self.primary_output_id()?;
         let output_state = self.outputs.get(&primary)?;
         let workspace = self.workspaces.get(&output_state.active_workspace)?;
-        let bs = border_size as i32;
         let focused = workspace.focused;
         let mut ordered: Vec<WindowId> = Vec::new();
         if let Some(f) = focused {
@@ -1015,15 +1152,9 @@ impl WindowManager {
             if !window.mapped || window.minimized {
                 continue;
             }
-            // Hit test against target_rect expanded by border size (border is part of window)
-            // and titlebar height (titlebar sits above the client surface).
-            let tb = self.titlebar_height as i32;
-            let r = Rect {
-                x: window.target_rect.x - bs,
-                y: window.target_rect.y - bs - tb,
-                width: window.target_rect.width.saturating_add(2 * border_size),
-                height: window.target_rect.height.saturating_add(2 * border_size + tb as u32),
-            };
+            // Hit test the outer frame (borders + titlebar), the same rect the
+            // renderer draws and the resize-edge detector uses.
+            let r = outer_frame(window.target_rect, border_size, self.titlebar_height);
             if r.width == 0 || r.height == 0 {
                 continue;
             }
@@ -1699,8 +1830,95 @@ pub fn equal_split(
 
 #[cfg(test)]
 mod tests {
-    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation, size_action, SizeAction, fill_scale, MAX_SIZE_RESENDS, SIZE_RESEND_INTERVAL};
+    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation, size_action, SizeAction, fill_scale, MAX_SIZE_RESENDS, SIZE_RESEND_INTERVAL, ResizeEdge, resize_edge_at, resize_rect, MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT};
     use std::time::Duration;
+
+    // e10s01t1: hit-testing, rect math and cursors must all agree on which
+    // edge is moving. Free titlebar space is a move handle, not a resize one —
+    // otherwise grabbing the titlebar would silently resize the window.
+    #[test]
+    fn resize_edge_at_maps_frame_edges_corners_and_padding() {
+        let frame = Rect { x: 100, y: 50, width: 200, height: 100 };
+        let pad = 6;
+        let (mx, my) = (200.0, 100.0);
+
+        assert_eq!(resize_edge_at(frame, (mx, 50.0), pad), Some(ResizeEdge::North));
+        assert_eq!(resize_edge_at(frame, (mx, 150.0), pad), Some(ResizeEdge::South));
+        assert_eq!(resize_edge_at(frame, (100.0, my), pad), Some(ResizeEdge::West));
+        assert_eq!(resize_edge_at(frame, (300.0, my), pad), Some(ResizeEdge::East));
+
+        assert_eq!(resize_edge_at(frame, (100.0, 50.0), pad), Some(ResizeEdge::NorthWest));
+        assert_eq!(resize_edge_at(frame, (300.0, 50.0), pad), Some(ResizeEdge::NorthEast));
+        assert_eq!(resize_edge_at(frame, (100.0, 150.0), pad), Some(ResizeEdge::SouthWest));
+        assert_eq!(resize_edge_at(frame, (300.0, 150.0), pad), Some(ResizeEdge::SouthEast));
+
+        // Invisible grab zone outside the frame.
+        assert_eq!(resize_edge_at(frame, (96.0, my), pad), Some(ResizeEdge::West));
+        assert_eq!(resize_edge_at(frame, (304.0, my), pad), Some(ResizeEdge::East));
+        assert_eq!(resize_edge_at(frame, (mx, 46.0), pad), Some(ResizeEdge::North));
+        assert_eq!(resize_edge_at(frame, (mx, 154.0), pad), Some(ResizeEdge::South));
+
+        // Free titlebar / client area and beyond the grab zone: no handle.
+        assert_eq!(resize_edge_at(frame, (mx, 65.0), pad), None);
+        assert_eq!(resize_edge_at(frame, (150.0, my), pad), None);
+        assert_eq!(resize_edge_at(frame, (93.0, my), pad), None);
+    }
+
+    // e10s01t7: min-size defaults live in one place; the Lua setter overrides
+    // them at runtime, so both standard() and default() must start consistent.
+    #[test]
+    fn min_window_size_defaults_match_constants() {
+        assert_eq!(MIN_WINDOW_WIDTH, 200);
+        assert_eq!(MIN_WINDOW_HEIGHT, 150);
+        let dec = super::DecorationConfig::standard();
+        assert_eq!(dec.min_window_width, MIN_WINDOW_WIDTH);
+        assert_eq!(dec.min_window_height, MIN_WINDOW_HEIGHT);
+        assert_eq!(super::DecorationConfig::default().min_window_width, MIN_WINDOW_WIDTH);
+        assert_eq!(super::DecorationConfig::default().min_window_height, MIN_WINDOW_HEIGHT);
+    }
+
+    // e10s01t2: left/top drags move the origin while the opposite edge stays
+    // pinned. Clamps must survive huge deltas without u32 underflow.
+    #[test]
+    fn resize_rect_moves_grabbed_edge_and_clamps() {
+        let r = Rect { x: 100, y: 200, width: 300, height: 200 };
+        let min = (MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT);
+        let max = (1000, 800);
+
+        assert_eq!(resize_rect(r, ResizeEdge::East, 40.0, 999.0, min, max),
+                   Rect { x: 100, y: 200, width: 340, height: 200 });
+        assert_eq!(resize_rect(r, ResizeEdge::South, 999.0, 30.0, min, max),
+                   Rect { x: 100, y: 200, width: 300, height: 230 });
+
+        assert_eq!(resize_rect(r, ResizeEdge::West, -40.0, 0.0, min, max),
+                   Rect { x: 60, y: 200, width: 340, height: 200 });
+        assert_eq!(resize_rect(r, ResizeEdge::North, 0.0, -30.0, min, max),
+                   Rect { x: 100, y: 170, width: 300, height: 230 });
+        assert_eq!(resize_rect(r, ResizeEdge::NorthWest, -40.0, -30.0, min, max),
+                   Rect { x: 60, y: 170, width: 340, height: 230 });
+
+        // Shrink clamps keep the right/bottom edges pinned.
+        assert_eq!(resize_rect(r, ResizeEdge::West, 10_000.0, 0.0, min, max),
+                   Rect { x: 200, y: 200, width: 200, height: 200 });
+        assert_eq!(resize_rect(r, ResizeEdge::North, 0.0, 10_000.0, min, max),
+                   Rect { x: 100, y: 250, width: 300, height: 150 });
+
+        // Grow clamps.
+        assert_eq!(resize_rect(r, ResizeEdge::East, 10_000.0, 0.0, min, max),
+                   Rect { x: 100, y: 200, width: 1000, height: 200 });
+        assert_eq!(resize_rect(r, ResizeEdge::South, 0.0, 10_000.0, min, max),
+                   Rect { x: 100, y: 200, width: 300, height: 800 });
+
+        // Tiny original, huge negative delta: min wins, no u32 underflow.
+        let tiny = Rect { x: 0, y: 0, width: 1, height: 1 };
+        // Dragging west/north inward (positive delta) yields a negative
+        // intermediate width — the min clamp must catch it before the u32 cast.
+        assert_eq!(resize_rect(tiny, ResizeEdge::NorthWest, 10_000.0, 10_000.0, min, max),
+                   Rect { x: -199, y: -149, width: 200, height: 150 });
+
+        // Fractional deltas land on whole pixels.
+        assert_eq!(resize_rect(r, ResizeEdge::East, 10.6, 0.0, min, max).width, 311);
+    }
 
     fn manager() -> (WindowManager, u64) {
         let mut manager = WindowManager::new();
