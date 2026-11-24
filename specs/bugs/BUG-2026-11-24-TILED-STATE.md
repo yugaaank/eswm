@@ -1,6 +1,6 @@
 ---
 bug_id: BUG-2026-11-24-TILED-STATE
-status: open
+status: fixed
 severity: medium
 scope: wayland
 title: Tiled windows lack xdg tiled states, so winit clients override the frame size
@@ -8,7 +8,7 @@ title: Tiled windows lack xdg tiled states, so winit clients override the frame 
 
 # BUG-2026-11-24-TILED-STATE — Tiled windows lack xdg tiled states, so winit clients override the frame size
 
-**Status:** open (follow-up to `BUG-2026-11-24-SIZE-NEGOTIATION`)
+**Status:** fixed on main as 3cad093 (merge of bfe7243); live DRM UAT pending operator
 **Severity:** medium (fixed-size clients render via compositor stretch instead of
 resizing natively; input and damage need inverse mapping)
 **Reported by:** operator observation: "but when i open deck craft in hyprland it opens full size"
@@ -128,7 +128,7 @@ stateless so they can still be resized by the user.
 
 ## Resolution
 
-**Fixed:** 2026-11-24 (branch `fix/tiled-states`, merge pending)
+**Fixed:** 2026-11-24 on main as 3cad093 (merge of bfe7243)
 **Root cause confirmed:** eswm's xdg configures carried no tiled state, so
 winit treated them as stateless and re-applied DeckCraft's own 1440x900 request.
 **Fix applied:** `ClientMode::sends_tiled_state()` plus a pure

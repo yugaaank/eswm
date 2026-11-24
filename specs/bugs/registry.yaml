@@ -593,6 +593,8 @@ bug-2026-11-24-tiled-state:
   severity: medium
   priority: medium
   status: fixed
+  fixed_in: 3cad093
+  fixed_date: "2026-11-24"
   scope: wayland
   reported_by: operator_observation
   risk_level: medium
