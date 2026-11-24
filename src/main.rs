@@ -2627,6 +2627,26 @@ mod tests {
         assert_eq!(wm::ClientMode::new(wm::Placement::Floating, wm::Presentation::Normal).xdg_state_flags(), (false, false));
     }
 
+    #[test]
+    fn xdg_configure_state_marks_tiled_windows_only() {
+        assert_eq!(
+            toplevel_configure_state(wm::ClientMode::tiled(), true),
+            ToplevelConfigureState { activated: true, maximized: false, fullscreen: false, tiled: true }
+        );
+        assert_eq!(
+            toplevel_configure_state(wm::ClientMode::floating(), false),
+            ToplevelConfigureState { activated: false, maximized: false, fullscreen: false, tiled: false }
+        );
+        assert_eq!(
+            toplevel_configure_state(wm::ClientMode::maximized(), true),
+            ToplevelConfigureState { activated: true, maximized: true, fullscreen: false, tiled: false }
+        );
+        assert_eq!(
+            toplevel_configure_state(wm::ClientMode::fullscreen(), true),
+            ToplevelConfigureState { activated: true, maximized: false, fullscreen: true, tiled: false }
+        );
+    }
+
     // e08s04t3 — the configure-needed check depends on mode_sent; verify the
     // marker follows mode transitions (a real xdg client fixture is unavailable).
     #[test]
