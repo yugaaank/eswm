@@ -28,9 +28,11 @@ phases:
     exit_code: 0
     note: "Single contiguous run at HEAD 7be87bb: clippy warning-free, 219 passed, build green."
   manual:
-    passed: false
-    pending: true
-    reason: "Live DRM UAT is operator-run from a TTY. The DRM/libseat backend must not be started inside an existing Wayland/X11 session (VT grab). Checklist: specs/verifications/uat-2026-11-24-e10s02-live-drm.md."
+    passed: true
+    pending: false
+    verified_at: "2026-11-24T12:36:03Z"
+    verified_by: operator
+    reason: "Operator ran the live DRM checklist from a TTY and reported all e10s02 checks working: Master/Equal split drags, 15% floors, persistence across windows/workspaces/output resize, reset, per-edge cursors, and client resize."
     checklist: specs/verifications/uat-2026-11-24-e10s02-live-drm.md
     automated_proxy: "Pure split math, rect geometry, hit-testing and reset dispatch are unit-tested. Unit tests cannot prove real pointer feel, cursor appearance on hardware, or client-visible reconfiguration after a split drag."
   security_scan:
@@ -42,7 +44,7 @@ phases:
   gaps:
     closed: false
     notes:
-      - "Live DRM UAT pending operator; no waiver recorded."
+      - "Live DRM UAT passed by operator 2026-11-24T12:36:03Z; all checklist items reported working."
       - "Default Master geometry stays byte-identical: the equal-stack path still uses integer division, while explicit weights use weighted_split. This preserves the legacy gap_between_stack_windows rects exactly."
       - "Splits live on Output, not per window, because arrange_output owns every tiled rect and would erase overrides."
       - "reset_tiling_splits resets all four split inputs on the primary output in one pass; Lua and keybind share CompCmd::ResetTilingSplits with the control socket."
