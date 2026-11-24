@@ -2158,7 +2158,7 @@ pub fn equal_split(
 
 #[cfg(test)]
 mod tests {
-    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation, size_action, SizeAction, fill_scale, MAX_SIZE_RESENDS, SIZE_RESEND_INTERVAL, ResizeEdge, resize_edge_at, resize_rect, MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT, TilingSplits, clamp_master_ratio, normalize_weights, MIN_SPLIT_SHARE, weighted_split, SplitAxis, tiling_split_edge_at};
+    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation, size_action, SizeAction, fill_scale, MAX_SIZE_RESENDS, SIZE_RESEND_INTERVAL, ResizeEdge, resize_edge_at, resize_rect, MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT, TilingSplits, clamp_master_ratio, normalize_weights, MIN_SPLIT_SHARE, weighted_split, SplitAxis, TilingSplitEdge, tiling_split_edge_at};
     use std::time::Duration;
 
     // e10s02t1: splits live on the output so they survive re-arrangement.
@@ -2428,6 +2428,37 @@ mod tests {
         // Outer frame and window centres are not split boundaries.
         assert!(tiling_split_edge_at(&rects, (2.0, 300.0), 6.0).is_none());
         assert!(tiling_split_edge_at(&rects, (1400.0, 300.0), 6.0).is_none());
+    }
+
+    // e10s02t7: one adjust_split entry point moves whichever split the edge
+    // names, and the 15% floor survives a violent drag.
+    #[test]
+    fn adjust_split_clamps_master_stack_and_grid() {
+        let (mut manager, output) = manager();
+        let master = manager.add_window(output, "kitty", "master").unwrap();
+        let top = manager.add_window(output, "kitty", "top").unwrap();
+        let bottom = manager.add_window(output, "kitty", "bottom").unwrap();
+
+        let vertical = TilingSplitEdge { axis: SplitAxis::Vertical, first: master, second: top };
+        manager.adjust_split(output, vertical, 100.0);
+        assert!(manager.window(master).unwrap().target_rect.width > 1149);
+        manager.adjust_split(output, vertical, 10000.0);
+        assert_eq!(manager.window(master).unwrap().target_rect.width, 1628);
+        assert!(manager.window(top).unwrap().target_rect.width >= 287);
+
+        let horizontal = TilingSplitEdge { axis: SplitAxis::Horizontal, first: top, second: bottom };
+        manager.adjust_split(output, horizontal, 50.0);
+        assert!(manager.window(top).unwrap().target_rect.height > 538);
+        assert!(manager.window(bottom).unwrap().target_rect.height < 538);
+        manager.adjust_split(output, horizontal, -10000.0);
+        assert!(manager.window(top).unwrap().target_rect.height >= 161);
+
+        manager.set_tiling_layout(TilingLayout::Equal);
+        let left = manager.add_window(output, "kitty", "left").unwrap();
+        let right = manager.add_window(output, "kitty", "right").unwrap();
+        let grid = TilingSplitEdge { axis: SplitAxis::Vertical, first: left, second: right };
+        manager.adjust_split(output, grid, 100.0);
+        assert!(manager.window(left).unwrap().target_rect.width > manager.window(right).unwrap().target_rect.width);
     }
 
     #[test]
