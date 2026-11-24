@@ -63,6 +63,14 @@ impl ClientMode {
         }
     }
 
+    /// Whether this mode should advertise xdg tiled states to the client.
+    /// Only a genuinely tiled, normal-presentation window is tiled; maximized
+    /// and fullscreen windows already carry authoritative non-stateless flags.
+    // Hyprland has been saying this out loud for years; eswm was just shy.
+    pub fn sends_tiled_state(self) -> bool {
+        self.placement == Placement::Tiled && self.presentation == Presentation::Normal
+    }
+
     /// Legacy mode name for IPC/Lua compatibility.
     pub fn mode_name(self) -> &'static str {
         match self.presentation {
