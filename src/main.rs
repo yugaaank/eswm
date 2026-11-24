@@ -1258,6 +1258,25 @@ fn apply_decoration_to_wm(state: &mut State) {
     state.wm.set_tiling_layout(tiling_layout);
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ToplevelConfigureState {
+    activated: bool,
+    maximized: bool,
+    fullscreen: bool,
+    tiled: bool,
+}
+
+/// The xdg toplevel states that describe where the compositor placed a window.
+fn toplevel_configure_state(mode: wm::ClientMode, focused: bool) -> ToplevelConfigureState {
+    let (maximized, fullscreen) = mode.xdg_state_flags();
+    ToplevelConfigureState {
+        activated: focused,
+        maximized,
+        fullscreen,
+        tiled: mode.sends_tiled_state(),
+    }
+}
+
 // M5: push target rects to clients as xdg_toplevel size configures, then mark applied.
 pub(crate) fn apply_layout(state: &mut State) {
     apply_decoration_to_wm(state);
@@ -1283,31 +1302,46 @@ pub(crate) fn apply_layout(state: &mut State) {
         let rect_changed = target_valid && window.rect != target;
         // e08s04t3: a mode change must reach the client even when the rect is
         // unchanged (e.g. maximize into an already-full-sized window).
-        let mode_changed = window.mode_sent != Some(window.mode.presentation);
+        let mode_changed = window.mode_sent != Some(window.mode);
         if !rect_changed && !needs_activation && !mode_changed {
             continue;
         }
         if let Some(toplevel) = toplevel_for_window(state, id) {
             tracing::debug!("configuring window id={id:?} -> {}x{} at {},{}", target.width, target.height, target.x, target.y);
-            let (maximized, fullscreen) = window.mode.xdg_state_flags();
+            let flags = toplevel_configure_state(window.mode, window.focused);
             toplevel.with_pending_state(|st| {
                 if target_valid {
                     st.size = Some((target.width.max(1) as i32, target.height.max(1) as i32).into());
                 }
-                if window.focused {
+                if flags.activated {
                     st.states.set(xdg_toplevel::State::Activated);
                 } else {
                     st.states.unset(xdg_toplevel::State::Activated);
                 }
-                if maximized {
+                if flags.maximized {
                     st.states.set(xdg_toplevel::State::Maximized);
                 } else {
                     st.states.unset(xdg_toplevel::State::Maximized);
                 }
-                if fullscreen {
+                if flags.fullscreen {
                     st.states.set(xdg_toplevel::State::Fullscreen);
                 } else {
                     st.states.unset(xdg_toplevel::State::Fullscreen);
+                }
+                // Hyprland tells every tiled client all four directions, so
+                // winit stops treating our configure as a polite suggestion.
+                let tiled = [
+                    xdg_toplevel::State::TiledLeft,
+                    xdg_toplevel::State::TiledRight,
+                    xdg_toplevel::State::TiledTop,
+                    xdg_toplevel::State::TiledBottom,
+                ];
+                for state in tiled {
+                    if flags.tiled {
+                        st.states.set(state);
+                    } else {
+                        st.states.unset(state);
+                    }
                 }
             });
             toplevel.send_pending_configure();
@@ -1315,7 +1349,7 @@ pub(crate) fn apply_layout(state: &mut State) {
                 state.wm.set_rect(id, target);
             }
             state.wm.set_activated_sent(id, window.focused);
-            state.wm.set_mode_sent(id, window.mode.presentation);
+            state.wm.set_mode_sent(id, window.mode);
         }
     }
     // e06s03: keep wl_keyboard focus in sync with state changes via policy,
@@ -2627,6 +2661,26 @@ mod tests {
         assert_eq!(wm::ClientMode::new(wm::Placement::Floating, wm::Presentation::Normal).xdg_state_flags(), (false, false));
     }
 
+    #[test]
+    fn xdg_configure_state_marks_tiled_windows_only() {
+        assert_eq!(
+            toplevel_configure_state(wm::ClientMode::tiled(), true),
+            ToplevelConfigureState { activated: true, maximized: false, fullscreen: false, tiled: true }
+        );
+        assert_eq!(
+            toplevel_configure_state(wm::ClientMode::floating(), false),
+            ToplevelConfigureState { activated: false, maximized: false, fullscreen: false, tiled: false }
+        );
+        assert_eq!(
+            toplevel_configure_state(wm::ClientMode::maximized(), true),
+            ToplevelConfigureState { activated: true, maximized: true, fullscreen: false, tiled: false }
+        );
+        assert_eq!(
+            toplevel_configure_state(wm::ClientMode::fullscreen(), true),
+            ToplevelConfigureState { activated: true, maximized: false, fullscreen: true, tiled: false }
+        );
+    }
+
     // e08s04t3 — the configure-needed check depends on mode_sent; verify the
     // marker follows mode transitions (a real xdg client fixture is unavailable).
     #[test]
@@ -2635,10 +2689,23 @@ mod tests {
         let output_id = state.wm.primary_output_id().unwrap();
         let id = state.wm.add_window(output_id, "app", "App").unwrap();
         assert_eq!(state.wm.window(id).unwrap().mode_sent, None);
-        state.wm.set_mode_sent(id, wm::Presentation::Maximized);
-        assert_eq!(state.wm.window(id).unwrap().mode_sent, Some(wm::Presentation::Maximized));
+        state.wm.set_mode_sent(id, wm::ClientMode::maximized());
+        assert_eq!(state.wm.window(id).unwrap().mode_sent, Some(wm::ClientMode::maximized()));
         // A transition to a different mode changes the marker again.
-        state.wm.set_mode_sent(id, wm::Presentation::Fullscreen);
-        assert_eq!(state.wm.window(id).unwrap().mode_sent, Some(wm::Presentation::Fullscreen));
+        state.wm.set_mode_sent(id, wm::ClientMode::fullscreen());
+        assert_eq!(state.wm.window(id).unwrap().mode_sent, Some(wm::ClientMode::fullscreen()));
+    }
+
+    #[test]
+    fn apply_layout_mode_sent_tracks_placement_changes() {
+        let mut state = test_state();
+        let output_id = state.wm.primary_output_id().unwrap();
+        let id = state.wm.add_window(output_id, "app", "App").unwrap();
+        state.wm.set_mode_sent(id, wm::ClientMode::tiled());
+        assert_eq!(state.wm.window(id).unwrap().mode_sent, Some(wm::ClientMode::tiled()));
+        // A floating<->tiled switch with the same rectangle must still send a
+        // configure, because the tiled state bits are placement-dependent.
+        state.wm.set_mode_sent(id, wm::ClientMode::floating());
+        assert_eq!(state.wm.window(id).unwrap().mode_sent, Some(wm::ClientMode::floating()));
     }
 }

@@ -592,11 +592,22 @@ bug-2026-11-24-tiled-state:
   date: "2026-11-24"
   severity: medium
   priority: medium
-  status: open
+  status: fixed
   scope: wayland
   reported_by: operator_observation
+  risk_level: medium
   security_impact: none
   file: specs/bugs/BUG-2026-11-24-TILED-STATE.md
+  files_changed:
+    - src/wm.rs
+    - src/main.rs
+  approach: >-
+    Derive all xdg toplevel state bits from one pure helper keyed on the full
+    ClientMode. Tiled normal windows advertise all four Tiled states so winit
+    treats the configure as authoritative; mode_sent tracks placement as well
+    as presentation so a tiled<->floating switch always sends a configure.
+  commit_message: "fix(wayland): send tiled xdg states for tiled windows"
+  hardware_uat: pending_operator
   description: |
     DeckCraft fills its frame in Hyprland but stays at 1440x900 under eswm.
     Hyprland sends all four XDG_TOPLEVEL_STATE_TILED_* bits for v2+ toplevels;

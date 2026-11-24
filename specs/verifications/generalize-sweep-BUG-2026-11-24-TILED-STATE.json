@@ -1,0 +1,23 @@
+{
+  "defect_class": "incomplete-xdg-configure-state",
+  "grep_pattern": "xdg_state_flags|states\\.set\\(xdg_toplevel::State|sends_tiled_state",
+  "match_count": 2,
+  "sweep_scope": "src/**/*.rs",
+  "matches": [
+    {
+      "file": "src/main.rs",
+      "site": "toplevel_created fallback configure (no window registered)",
+      "disposition": "not_applicable",
+      "reason": "No ClientMode exists when no output is present; only Activated is meaningful."
+    },
+    {
+      "file": "src/main.rs",
+      "site": "apply_layout configure",
+      "disposition": "patched_in_pr"
+    }
+  ],
+  "patched_in_pr": [
+    "src/main.rs::apply_layout now derives all xdg state bits from toplevel_configure_state"
+  ],
+  "tracked_issues": []
+}

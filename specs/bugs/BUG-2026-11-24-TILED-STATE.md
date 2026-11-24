@@ -128,4 +128,22 @@ stateless so they can still be resized by the user.
 
 ## Resolution
 
-<!-- filled in by validate-fix -->
+**Fixed:** 2026-11-24 (branch `fix/tiled-states`, merge pending)
+**Root cause confirmed:** eswm's xdg configures carried no tiled state, so
+winit treated them as stateless and re-applied DeckCraft's own 1440x900 request.
+**Fix applied:** `ClientMode::sends_tiled_state()` plus a pure
+`toplevel_configure_state()` helper now drive all xdg state bits; tiled normal
+windows get all four `Tiled*` states, and `mode_sent` tracks full `ClientMode`
+so a placement-only change still triggers a configure.
+**Hardening added:** the configure state is derived in one pure, tested helper;
+the sent-mode marker now includes placement, so the state cannot silently go
+stale when a window switches between tiled and floating.
+**Evidence:** `cargo clippy --all-targets && cargo test (196 passed) && cargo
+build` green on branch (`/tmp/opencode/tiled-state-branch-preflight.log`);
+defect-class sweep recorded in
+`specs/verifications/generalize-sweep-BUG-2026-11-24-TILED-STATE.json`.
+**Commits:** `4af1add` (RED), `bd62d52` (GREEN), `f7180cb` (RED), `fe093ea`
+(GREEN), `98b8ec9` (RED), `bfe7243` (GREEN).
+**Live DRM UAT:** pending operator — verify deckcraft now fills its frame
+natively (no stretch needed) and a GTK client keeps correct CSD behavior. CI
+unverified per operator skip precedent.
