@@ -161,6 +161,41 @@ mod tests {
     }
 
     #[test]
+    fn rounded_rect_pixels_are_premultiplied_rgba() {
+        // An antialiased pixel must store rgb * a / 255, not raw rgb: smithay
+        // blends with ONE, ONE_MINUS_SRC_ALPHA.
+        let px = rounded_rect_pixels(20, 20, [200, 100, 50, 255], Corners::all(5));
+        let a = rounded_alpha(1, 1, 20, 20, Corners::all(5));
+        assert!(a > 0 && a < 255, "expected a partial pixel, got {a}");
+        let idx = ((1 * 20 + 1) * 4) as usize;
+        assert_eq!(px[idx + 3], a);
+        assert_eq!(px[idx], (200u16 * a as u16 / 255) as u8);
+        assert_eq!(px[idx + 1], (100u16 * a as u16 / 255) as u8);
+        assert_eq!(px[idx + 2], (50u16 * a as u16 / 255) as u8);
+    }
+
+    #[test]
+    fn rounded_border_pixels_paints_client_corner_and_leaves_hole_clear() {
+        // 20x20 frame with a 12x12 hole at (4,4): the ring is 4px thick.
+        let px = rounded_border_pixels(
+            20, 20, 4, 4, 12, 12, [255, 0, 0, 255], Corners::all(6), Corners::all(2),
+        );
+        let at = |x: usize, y: usize| -> [u8; 4] {
+            let i = (y * 20 + x) * 4;
+            [px[i], px[i + 1], px[i + 2], px[i + 3]]
+        };
+        // Centre of the hole shows the client: fully transparent.
+        assert_eq!(at(10, 10), [0, 0, 0, 0]);
+        // Straight border edge is opaque border colour.
+        assert_eq!(at(2, 10), [255, 0, 0, 255]);
+        // Inside the hole but outside its rounded mask is the wedge that
+        // covers the client's square corner: border colour, opaque.
+        assert_eq!(at(4, 4), [255, 0, 0, 255]);
+        // Outside the outer arc: transparent.
+        assert_eq!(at(0, 0), [0, 0, 0, 0]);
+    }
+
+    #[test]
     fn rounded_alpha_fades_across_the_arc() {
         let c = Corners::all(5);
         // The 2px band around the arc must contain partial coverage, not a
