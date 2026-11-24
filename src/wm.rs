@@ -2556,6 +2556,14 @@ mod tests {
     }
 
     #[test]
+    fn only_tiled_normal_windows_advertise_tiled_state() {
+        assert!(ClientMode::tiled().sends_tiled_state());
+        assert!(!ClientMode::floating().sends_tiled_state());
+        assert!(!ClientMode::maximized().sends_tiled_state());
+        assert!(!ClientMode::fullscreen().sends_tiled_state());
+    }
+
+    #[test]
     fn client_mode_name_matches_legacy_window_mode_names() {
         assert_eq!(ClientMode::new(Placement::Tiled, Presentation::Normal).mode_name(), "tiled");
         assert_eq!(ClientMode::new(Placement::Floating, Presentation::Normal).mode_name(), "floating");
