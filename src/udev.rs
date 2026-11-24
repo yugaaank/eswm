@@ -135,6 +135,8 @@ struct DragState {
     start: Point<f64, Logical>,
     orig_rect: wm::Rect,
     button: u32,
+    /// Grabbed frame edge. Ignored for Move; Super+RMB stays SouthEast.
+    edge: wm::ResizeEdge,
 }
 
 pub struct UdevData {
@@ -1554,19 +1556,29 @@ pub fn keyboard_focus_set_layer(state: &mut State) {
     }
 }
 
+/// Pure geometry for an in-flight drag. Output clamping stays in drag_update.
+fn drag_rect(
+    drag: DragState,
+    pos: Point<f64, Logical>,
+    min: (u32, u32),
+    max: (u32, u32),
+) -> wm::Rect {
+    let dx = pos.x - drag.start.x;
+    let dy = pos.y - drag.start.y;
+    match drag.mode {
+        DragMode::Move => wm::Rect {
+            x: drag.orig_rect.x + dx as i32,
+            y: drag.orig_rect.y + dy as i32,
+            ..drag.orig_rect
+        },
+        DragMode::Resize => wm::resize_rect(drag.orig_rect, drag.edge, dx, dy, min, max),
+    }
+}
+
 /// Advance an in-flight move/resize and return the dragged window id.
 fn drag_update(state: &mut State, pos: Point<f64, Logical>) -> Option<wm::WindowId> {
     let drag = state.udev.as_ref().unwrap().drag?;
-    let dx = pos.x - drag.start.x;
-    let dy = pos.y - drag.start.y;
-    let mut rect = match drag.mode {
-        DragMode::Move => wm::Rect { x: drag.orig_rect.x + dx as i32, y: drag.orig_rect.y + dy as i32, ..drag.orig_rect },
-        DragMode::Resize => wm::Rect {
-            width: (drag.orig_rect.width as f64 + dx).max(200.0) as u32,
-            height: (drag.orig_rect.height as f64 + dy).max(150.0) as u32,
-            ..drag.orig_rect
-        },
-    };
+    let mut rect = drag_rect(drag, pos, (200, 150), (u32::MAX, u32::MAX));
     // Keep the window on its output: an unbounded drag could wrap the i32
     // geometry used by hit-testing and leave the window unclickable.
     if let Some(geometry) = state
@@ -1802,6 +1814,9 @@ impl State {
                                     start: location,
                                     orig_rect: rect,
                                     button,
+                                    // Super+RMB keeps the old bottom-right
+                                    // resize shortcut until edge picking lands.
+                                    edge: wm::ResizeEdge::SouthEast,
                                 });
                             }
                     // Titlebar button clicks: close / maximize / minimize.
@@ -1828,6 +1843,7 @@ impl State {
                                             start: location,
                                             orig_rect: rect,
                                             button,
+                                            edge: wm::ResizeEdge::SouthEast,
                                         });
                                     }
                                     None => {}
@@ -3609,6 +3625,7 @@ mod tests {
             start: Point::from((0.0, 0.0)),
             orig_rect: wm::Rect { x: 0, y: 0, width: 100, height: 100 },
             button: BTN_LEFT,
+            edge: wm::ResizeEdge::SouthEast,
         };
         assert!(drag_consumes_button(Some(drag), BTN_LEFT));
         assert!(!drag_consumes_button(Some(drag), BTN_RIGHT), "other buttons still belong to the app");
