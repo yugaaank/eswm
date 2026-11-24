@@ -36,7 +36,7 @@ tasks:
   verify: cargo test --bin eswm stack_weights
   risk: P1
   security: none
-  status: failing
+  status: passing
   allure:
     severity: high
     categories: [e10-resize, tiling, layout]

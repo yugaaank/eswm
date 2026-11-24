@@ -2243,6 +2243,26 @@ mod tests {
         assert!(manager.window(bottom).unwrap().target_rect.height >= 161);
     }
 
+    // e10s02t5: Equal-layout weights change cell sizes without changing the
+    // chosen grid. Empty weights keep the old integer-division geometry.
+    #[test]
+    fn equal_split_skewed_weights_shift_grid_cells() {
+        let rect = Rect { x: 0, y: 0, width: 1920, height: 1080 };
+        let mut cols = Vec::new();
+        equal_split(&mut cols, &[1, 2], rect, 0, 0, Some(&[3.0, 1.0]), None);
+        assert_eq!(cols[0].1.width, 1440);
+        assert_eq!(cols[1].1.x, 1440);
+        assert_eq!(cols[1].1.width, 480);
+
+        // A tall rect makes the grid 2 rows x 1 column, so row weights apply.
+        let tall = Rect { x: 0, y: 0, width: 540, height: 1080 };
+        let mut rows = Vec::new();
+        equal_split(&mut rows, &[1, 2], tall, 0, 30, None, Some(&[1.0, 3.0]));
+        assert_eq!(rows[0].1.height, 263);
+        assert_eq!(rows[1].1.y, 293);
+        assert_eq!(rows[1].1.height, 787);
+    }
+
     #[test]
     fn workspace_move_keeps_windows_separate() {
         let (mut manager, output) = manager();
