@@ -589,6 +589,98 @@ pub fn resize_edge_at(rect: Rect, point: (f64, f64), padding: i32) -> Option<Res
     }
 }
 
+/// Which way a tiling split boundary runs (e10s02t6).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SplitAxis {
+    /// Boundary between left and right cells; dragged horizontally.
+    Vertical,
+    /// Boundary between upper and lower cells; dragged vertically.
+    Horizontal,
+}
+
+/// An internal boundary between two arranged tiled windows (e10s02t6).
+/// `first` is left/above, `second` is right/below, so `adjust_split` knows
+/// which adjacent weights to move without guessing from window order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TilingSplitEdge {
+    pub axis: SplitAxis,
+    pub first: WindowId,
+    pub second: WindowId,
+}
+
+/// Find the internal split boundary nearest `point`, or None for an outer
+/// frame or window interior (e10s02t6). Pairwise on already-arranged rects:
+/// the same helper covers Master and Equal layouts without knowing the grid.
+pub fn tiling_split_edge_at(
+    rects: &[(WindowId, Rect)],
+    point: (f64, f64),
+    padding: f64,
+) -> Option<TilingSplitEdge> {
+    let pad = padding.max(0.0);
+    let mut best: Option<(f64, TilingSplitEdge)> = None;
+    for i in 0..rects.len() {
+        for j in (i + 1)..rects.len() {
+            let (id_a, a) = rects[i];
+            let (id_b, b) = rects[j];
+            let (a_right, b_right) = (
+                a.x as f64 + a.width as f64,
+                b.x as f64 + b.width as f64,
+            );
+            let (a_bottom, b_bottom) = (
+                a.y as f64 + a.height as f64,
+                b.y as f64 + b.height as f64,
+            );
+            let (b_left, b_top) = (b.x as f64, b.y as f64);
+            let (px, py) = point;
+
+            // Vertical: cells side by side, sharing vertical span.
+            let y_from = (a.y as f64).max(b_top);
+            let y_to = a_bottom.min(b_bottom);
+            if y_to > y_from
+                && py >= y_from - pad
+                && py <= y_to + pad
+                && (b_left - a_right).abs() <= pad * 2.0
+            {
+                let mid = (a_right + b_left) / 2.0;
+                let dist = (px - mid).abs();
+                if dist <= pad {
+                    let edge = if a_right <= b_left {
+                        TilingSplitEdge { axis: SplitAxis::Vertical, first: id_a, second: id_b }
+                    } else {
+                        TilingSplitEdge { axis: SplitAxis::Vertical, first: id_b, second: id_a }
+                    };
+                    if best.is_none_or(|(d, _)| dist < d) {
+                        best = Some((dist, edge));
+                    }
+                }
+            }
+
+            // Horizontal: cells stacked, sharing horizontal span.
+            let x_from = (a.x as f64).max(b_left);
+            let x_to = a_right.min(b_right);
+            if x_to > x_from
+                && px >= x_from - pad
+                && px <= x_to + pad
+                && (b_top - a_bottom).abs() <= pad * 2.0
+            {
+                let mid = (a_bottom + b_top) / 2.0;
+                let dist = (py - mid).abs();
+                if dist <= pad {
+                    let edge = if a_bottom <= b_top {
+                        TilingSplitEdge { axis: SplitAxis::Horizontal, first: id_a, second: id_b }
+                    } else {
+                        TilingSplitEdge { axis: SplitAxis::Horizontal, first: id_b, second: id_a }
+                    };
+                    if best.is_none_or(|(d, _)| dist < d) {
+                        best = Some((dist, edge));
+                    }
+                }
+            }
+        }
+    }
+    best.map(|(_, edge)| edge)
+}
+
 /// Apply a pointer delta to `orig` for the grabbed `edge`.
 ///
 /// West/North drags move the origin while the opposite edge stays pinned.
@@ -2066,7 +2158,7 @@ pub fn equal_split(
 
 #[cfg(test)]
 mod tests {
-    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation, size_action, SizeAction, fill_scale, MAX_SIZE_RESENDS, SIZE_RESEND_INTERVAL, ResizeEdge, resize_edge_at, resize_rect, MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT, TilingSplits, clamp_master_ratio, normalize_weights, MIN_SPLIT_SHARE, weighted_split};
+    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation, size_action, SizeAction, fill_scale, MAX_SIZE_RESENDS, SIZE_RESEND_INTERVAL, ResizeEdge, resize_edge_at, resize_rect, MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT, TilingSplits, clamp_master_ratio, normalize_weights, MIN_SPLIT_SHARE, weighted_split, SplitAxis, tiling_split_edge_at};
     use std::time::Duration;
 
     // e10s02t1: splits live on the output so they survive re-arrangement.
