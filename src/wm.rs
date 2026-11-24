@@ -1830,8 +1830,51 @@ pub fn equal_split(
 
 #[cfg(test)]
 mod tests {
-    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation, size_action, SizeAction, fill_scale, MAX_SIZE_RESENDS, SIZE_RESEND_INTERVAL, ResizeEdge, resize_edge_at, resize_rect, MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT};
+    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation, size_action, SizeAction, fill_scale, MAX_SIZE_RESENDS, SIZE_RESEND_INTERVAL, ResizeEdge, resize_edge_at, resize_rect, MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT, TilingSplits, clamp_master_ratio, normalize_weights, MIN_SPLIT_SHARE};
     use std::time::Duration;
+
+    // e10s02t1: splits live on the output so they survive re-arrangement.
+    // Per-window rect overrides cannot: arrange_output owns tiled geometry and
+    // would erase them on the next dirty pass. Splits are layout inputs.
+    #[test]
+    fn tiling_splits_defaults_are_master_60_percent() {
+        let d = TilingSplits::default();
+        assert!((d.master_ratio - 0.6).abs() < f64::EPSILON);
+        assert!(d.stack_weights.is_empty());
+        assert!(d.col_weights.is_empty());
+        assert!(d.row_weights.is_empty());
+        assert!((MIN_SPLIT_SHARE - 0.15).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn tiling_splits_clamp_master_ratio_keeps_both_sides_usable() {
+        assert!((clamp_master_ratio(0.3) - 0.3).abs() < f64::EPSILON);
+        assert!((clamp_master_ratio(0.0) - MIN_SPLIT_SHARE).abs() < f64::EPSILON);
+        assert!((clamp_master_ratio(1.0) - 0.85).abs() < f64::EPSILON);
+        assert!((clamp_master_ratio(f64::NAN) - 0.6).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn tiling_splits_normalize_weights_fills_clamps_and_sums_to_one() {
+        let w = normalize_weights(&[3.0, 1.0], 4, MIN_SPLIT_SHARE);
+        assert_eq!(w.len(), 4);
+        assert!((w.iter().sum::<f64>() - 1.0).abs() < 1e-9);
+        assert!(w.iter().all(|v| *v >= 0.0));
+        assert!(w[1] > w[0], "explicit small weight must still shrink its cell");
+
+        // A zero/NaN weight gets the floor, not a zero-width cell.
+        let w = normalize_weights(&[0.0, f64::NAN, 1.0], 3, MIN_SPLIT_SHARE);
+        assert!(w.iter().all(|v| *v.is_finite() && *v > 0.0));
+        assert!((w.iter().sum::<f64>() - 1.0).abs() < 1e-9);
+
+        // Too many windows for the floor: the floor degrades to 1/n rather
+        // than demanding more space than exists.
+        let w = normalize_weights(&[], 10, MIN_SPLIT_SHARE);
+        assert_eq!(w.len(), 10);
+        assert!(w.iter().all(|v| (v - 0.1).abs() < 1e-9));
+
+        assert!(normalize_weights(&[], 0, MIN_SPLIT_SHARE).is_empty());
+    }
 
     // e10s01t1: hit-testing, rect math and cursors must all agree on which
     // edge is moving. Free titlebar space is a move handle, not a resize one —
