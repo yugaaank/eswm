@@ -15,7 +15,7 @@ stories:
     title: "Floating resize: 8 handles, constraints, input semantics"
     bcps: 5
     delta: MODIFIED
-    status: pending
+    status: completed
   - id: e10s02
     title: "Tiling resize: split ratios for Master and Equal layouts"
     bcps: 5
