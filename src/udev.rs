@@ -3734,6 +3734,55 @@ mod tests {
         );
     }
 
+    // e10s01t6: a click must not jerk the window on a one-pixel twitch. The
+    // drag only engages after 3px of travel; Escape cancels and restores.
+    #[test]
+    fn drag_threshold_gates_geometry_and_escape_cancels() {
+        let orig = wm::Rect { x: 100, y: 100, width: 300, height: 200 };
+        let start = Point::from((100.0, 100.0));
+        let mk = |armed: bool, cancelled: bool| DragState {
+            window: 1,
+            mode: DragMode::Move,
+            start,
+            orig_rect: orig,
+            button: BTN_LEFT,
+            edge: wm::ResizeEdge::SouthEast,
+            armed,
+            cancelled,
+        };
+        let limits = (u32::MAX, u32::MAX);
+
+        // Two pixels: still a click, geometry untouched.
+        let two_px = Point::from((102.0, 100.0));
+        assert_eq!(
+            drag_rect_if_armed(mk(false, false), two_px, limits, limits, DRAG_THRESHOLD),
+            None
+        );
+        // Three pixels: engage, applying the full delta.
+        let three_px = Point::from((103.0, 100.0));
+        assert_eq!(
+            drag_rect_if_armed(mk(false, false), three_px, limits, limits, DRAG_THRESHOLD),
+            Some(wm::Rect { x: 103, y: 100, width: 300, height: 200 })
+        );
+        // Once armed, even a 1px move tracks the pointer.
+        assert_eq!(
+            drag_rect_if_armed(mk(true, false), two_px, limits, limits, DRAG_THRESHOLD),
+            Some(wm::Rect { x: 102, y: 100, width: 300, height: 200 })
+        );
+        // Escape: no geometry change however far the pointer travels.
+        assert_eq!(
+            drag_rect_if_armed(mk(true, true), Point::from((400.0, 400.0)), limits, limits, DRAG_THRESHOLD),
+            None
+        );
+    }
+
+    #[test]
+    fn only_escape_cancels_a_drag() {
+        let esc = xkbcommon::xkb::keysyms::KEY_Escape;
+        assert!(is_drag_cancel_key(esc));
+        assert!(!is_drag_cancel_key(xkbcommon::xkb::keysyms::KEY_a));
+    }
+
     // e10s01t5: eight handles need only four Xcursor icons. Mapping them from
     // one place keeps the hover cursor and the dragged cursor identical.
     #[test]
