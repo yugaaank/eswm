@@ -1708,7 +1708,14 @@ fn cancel_active_drag(state: &mut State) -> bool {
 /// Advance an in-flight move/resize and return the dragged window id.
 fn drag_update(state: &mut State, pos: Point<f64, Logical>) -> Option<wm::WindowId> {
     let drag = state.udev.as_ref().unwrap().drag?;
-    let mut rect = drag_rect_if_armed(drag, pos, (200, 150), (u32::MAX, u32::MAX), DRAG_THRESHOLD)?;
+    // e10s01t7: min sizes come from the shared config so es.dsp.set_min_window_size
+    // takes effect on the very next motion event. max(1) guards a zero-valued
+    // config from ever reaching the clamp math.
+    let (min_w, min_h) = {
+        let dec = state.decoration.lock().unwrap();
+        (dec.min_window_width.max(1), dec.min_window_height.max(1))
+    };
+    let mut rect = drag_rect_if_armed(drag, pos, (min_w, min_h), (u32::MAX, u32::MAX), DRAG_THRESHOLD)?;
     // Crossed the threshold: latch it so later motion keeps tracking even if
     // the pointer wobbles back inside the dead zone.
     if !drag.armed
@@ -1725,12 +1732,12 @@ fn drag_update(state: &mut State, pos: Point<f64, Logical>) -> Option<wm::Window
     {
         rect.x = rect
             .x
-            .clamp(geometry.x, (geometry.x + geometry.width as i32 - 200).max(geometry.x));
+            .clamp(geometry.x, (geometry.x + geometry.width as i32 - min_w as i32).max(geometry.x));
         rect.y = rect
             .y
-            .clamp(geometry.y, (geometry.y + geometry.height as i32 - 150).max(geometry.y));
-        rect.width = rect.width.clamp(200, geometry.width.max(200));
-        rect.height = rect.height.clamp(150, geometry.height.max(150));
+            .clamp(geometry.y, (geometry.y + geometry.height as i32 - min_h as i32).max(geometry.y));
+        rect.width = rect.width.clamp(min_w, geometry.width.max(min_w));
+        rect.height = rect.height.clamp(min_h, geometry.height.max(min_h));
     }
     if state.wm.set_window_rect(drag.window, rect) {
         crate::apply_layout(state);

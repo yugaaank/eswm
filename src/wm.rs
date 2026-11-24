@@ -555,9 +555,14 @@ pub fn border_frame(
     }
 }
 
+/// Compositor-side minimum window size (e10s01t7). These are the defaults;
+/// `es.dsp.set_min_window_size` overrides them through DecorationConfig.
+pub const MIN_WINDOW_WIDTH: u32 = 200;
+pub const MIN_WINDOW_HEIGHT: u32 = 150;
+
 /// Window decoration values shared between the Lua config API and the WM.
 /// Lua mutates these via `es.dsp.set_*`; the renderer reads them each frame.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct DecorationConfig {
     /// Outer gap (px) between tiled windows and the output edge.
     pub outer: u32,
@@ -582,11 +587,21 @@ pub struct DecorationConfig {
     /// Dock bar height (px). eswm draws a simple dock bar at the bottom of the
     /// output when > 0; reserved from the work area so tiled windows stay clear.
     pub dock_height: u32,
+    /// Minimum window width/height (px) enforced by move/resize drags
+    /// (e10s01t7). Defaults to MIN_WINDOW_WIDTH/HEIGHT; Lua can override.
+    pub min_window_width: u32,
+    pub min_window_height: u32,
     /// Default wm mode for newly spawned windows:
     /// Tiling = tiled by default, Floating = floating by default.
     pub wm_mode: WmMode,
     /// Tiling layout algorithm for the output this decoration is applied to.
     pub tiling_layout: TilingLayout,
+}
+
+impl Default for DecorationConfig {
+    fn default() -> Self {
+        Self::standard()
+    }
 }
 
 impl DecorationConfig {
@@ -602,6 +617,8 @@ impl DecorationConfig {
             titlebar_color_focused: [200, 200, 200, 255],
             titlebar_color_unfocused: [60, 60, 60, 255],
             dock_height: 0,
+            min_window_width: MIN_WINDOW_WIDTH,
+            min_window_height: MIN_WINDOW_HEIGHT,
             wm_mode: WmMode::Tiling,
             tiling_layout: TilingLayout::Master,
         }
@@ -1865,7 +1882,7 @@ mod tests {
     #[test]
     fn resize_rect_moves_grabbed_edge_and_clamps() {
         let r = Rect { x: 100, y: 200, width: 300, height: 200 };
-        let min = (200, 150);
+        let min = (MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT);
         let max = (1000, 800);
 
         assert_eq!(resize_rect(r, ResizeEdge::East, 40.0, 999.0, min, max),

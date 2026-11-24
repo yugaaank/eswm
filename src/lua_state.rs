@@ -68,6 +68,24 @@ fn output_scale_for(value: f64) -> Option<smithay::output::Scale> {
     }
 }
 
+/// Validate `es.dsp.set_min_window_size` inputs (e10s01t7). Zero collapses the
+/// resize clamps; anything past 4096 px cannot fit a real output and would make
+/// output clamping pin every drag to a corner. Keep it boring and bounded.
+fn validate_min_window_size(w: u32, h: u32) -> Result<(u32, u32), mlua::Error> {
+    const MAX_MIN: u32 = 4096;
+    if w == 0 || h == 0 {
+        return Err(mlua::Error::RuntimeError(
+            "min window size must be positive".into(),
+        ));
+    }
+    if w > MAX_MIN || h > MAX_MIN {
+        return Err(mlua::Error::RuntimeError(
+            "min window size too large (max 4096)".into(),
+        ));
+    }
+    Ok((w, h))
+}
+
 /// Initialize a new Lua state with the eswm config API pre-loaded.
 /// Registers `es` table with `bind`, `define_submap`, `dsp`, `config` submodules,
 /// plus `is_file_exists` and `safe_require` helpers.
@@ -281,6 +299,20 @@ pub fn register_api(
         }
     })?;
     dsp_table.set("set_border_size", dsp_set_border_size)?;
+
+    // es.dsp.set_min_window_size(w, h) -> compositor-side minimum window size
+    // (e10s01t7). Stored in the shared DecorationConfig that drag clamps read.
+    let dsp_set_min_window_size = lua.create_function({
+        let decoration = decoration.clone();
+        move |_, (w, h): (u32, u32)| -> Result<(), mlua::Error> {
+            let (w, h) = validate_min_window_size(w, h)?;
+            let mut dec = decoration.lock().unwrap();
+            dec.min_window_width = w;
+            dec.min_window_height = h;
+            Ok(())
+        }
+    })?;
+    dsp_table.set("set_min_window_size", dsp_set_min_window_size)?;
 
     // es.dsp.set_outer_gap(n) -> sets outer gap in px
     let dsp_set_outer_gap = lua.create_function({
