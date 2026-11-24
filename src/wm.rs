@@ -1853,6 +1853,7 @@ impl WindowManager {
         true
     }
 
+    #[allow(dead_code)] // public WM API; tests and future config surfaces use it
     /// e10s02t3: change the Master-layout split ratio for an output. The
     /// ratio is clamped into the usable range and applied on the next arrange
     /// pass. Floor (not round) to stay byte-identical with the old 3/5 split.
@@ -1865,6 +1866,7 @@ impl WindowManager {
         self.arrange_output(output);
     }
 
+    #[allow(dead_code)] // public WM API; tests and future config surfaces use it
     /// e10s02t4: relative heights of the Master-layout stack column. An empty
     /// vector means equal heights, preserving the pre-e10 layout exactly.
     pub fn set_stack_weights(&mut self, output: OutputId, weights: Vec<f64>) {
@@ -1876,6 +1878,7 @@ impl WindowManager {
         self.arrange_output(output);
     }
 
+    #[allow(dead_code)] // public WM API; tests and future config surfaces use it
     /// e10s02t5: relative widths/heights of Equal-layout grid cells. Empty
     /// vectors mean the original equal split.
     pub fn set_equal_weights(&mut self, output: OutputId, cols: Vec<f64>, rows: Vec<f64>) {
