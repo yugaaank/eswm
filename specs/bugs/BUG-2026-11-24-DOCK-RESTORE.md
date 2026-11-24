@@ -1,6 +1,6 @@
 ---
 bug_id: BUG-2026-11-24-DOCK-RESTORE
-status: open
+status: fixed
 severity: high
 scope: input
 title: Clicking a minimized window's dock icon does not restore it
@@ -34,4 +34,16 @@ not get a fresh configure / Activated state from this path.
   behave as restore/focus, not toggle.
 
 ## Resolution
-Pending.
+**Fixed:** 2026-11-24 on branch `fix/dock-restore` (`ee322aa`), local merge pending.
+**Root cause:** `focus_window_or_restore()` gated the restore on `window.mapped`,
+which stays `true` for minimized windows; the explicit `minimized` flag was
+never cleared, so renderer and hit-testing kept skipping the window.
+**Fix:** the restore now keys on `was_minimized`, clears the flag, and re-arranges
+the output. The dock click handler also calls `apply_layout` so the client gets
+fresh xdg states / focus.
+**Hardening:** RED test `dock_restore_unminimizes_a_minimized_window` asserts the
+flag, focus, `focused_id`, and dock entry state after a simulated dock click.
+**Evidence:** `cargo clippy --all-targets && cargo test (197 passed) && cargo build`
+green (`/tmp/opencode/dock-restore-preflight.log`).
+**Live DRM UAT:** pending operator — minimize a window, left-click its dock icon,
+confirm it reappears and takes focus.
