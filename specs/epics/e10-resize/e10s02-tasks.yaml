@@ -72,7 +72,7 @@ tasks:
   verify: cargo test --bin eswm reset_tiling_splits
   risk: P2
   security: none
-  status: failing
+  status: passing
   allure:
     severity: normal
     categories: [e10-resize, tiling, config]
