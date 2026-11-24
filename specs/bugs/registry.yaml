@@ -652,6 +652,30 @@ bug-2026-11-24-tiled-state:
     cargo test; cargo build. Live DRM UAT: deckcraft fills natively and a GTK
     client keeps correct CSD behavior.
 
+bug-2026-11-24-csd-maximized:
+  id: BUG-2026-11-24-CSD-MAXIMIZED
+  title: Tiled CSD clients leave a gap inside the frame because Maximized is not advertised
+  date: "2026-11-24"
+  severity: medium
+  priority: medium
+  status: fixed-on-branch
+  reported_by: operator_observation
+  risk_level: low
+  security_impact: none
+  scope: wayland
+  file: specs/bugs/BUG-2026-11-24-CSD-MAXIMIZED.md
+  files_changed:
+    - src/main.rs
+  approach: >-
+    Pin the Maximized xdg state on tiled normal windows in the pure configure
+    state helper so CSD clients suppress their shadow inset, matching
+    Hyprland's CSD-off behavior. Floating stays stateless; genuine maximized
+    and fullscreen windows keep their exclusive bits.
+  verify: |
+    cargo test --bin eswm xdg_configure_state_marks_tiled_windows_only;
+    cargo clippy --all-targets; cargo test; cargo build. Live DRM UAT: Helium
+    fills the tile frame with no inset gap; GTK decorations stay correct.
+
 bug-2026-11-24-super-drag-leak:
   id: BUG-2026-11-24-SUPER-DRAG-LEAK
   title: Super+drag move/resize leaks button and motion events to the client

@@ -1268,7 +1268,13 @@ struct ToplevelConfigureState {
 
 /// The xdg toplevel states that describe where the compositor placed a window.
 fn toplevel_configure_state(mode: wm::ClientMode, focused: bool) -> ToplevelConfigureState {
-    let (maximized, fullscreen) = mode.xdg_state_flags();
+    let (presentation_maximized, fullscreen) = mode.xdg_state_flags();
+    // BUG-2026-11-24-CSD-MAXIMIZED: pin Maximized on tiled windows so CSD
+    // clients (Helium/GTK) suppress their shadow inset. Hyprland does this
+    // at map time with a comment longer than our whole function. A real
+    // maximized window keeps its own bit; floating stays stateless so the
+    // user can still resize it.
+    let maximized = presentation_maximized || mode.sends_tiled_state();
     ToplevelConfigureState {
         activated: focused,
         maximized,
@@ -2663,9 +2669,12 @@ mod tests {
 
     #[test]
     fn xdg_configure_state_marks_tiled_windows_only() {
+        // BUG-2026-11-24-CSD-MAXIMIZED: Hyprland pins Maximized on every
+        // toplevel to suppress CSD shadows; eswm must do the same for tiled
+        // windows so Helium stops drawing a 10px inset inside our frame.
         assert_eq!(
             toplevel_configure_state(wm::ClientMode::tiled(), true),
-            ToplevelConfigureState { activated: true, maximized: false, fullscreen: false, tiled: true }
+            ToplevelConfigureState { activated: true, maximized: true, fullscreen: false, tiled: true }
         );
         assert_eq!(
             toplevel_configure_state(wm::ClientMode::floating(), false),
