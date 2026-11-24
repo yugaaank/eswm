@@ -1813,7 +1813,7 @@ pub fn equal_split(
 
 #[cfg(test)]
 mod tests {
-    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation, size_action, SizeAction, fill_scale, MAX_SIZE_RESENDS, SIZE_RESEND_INTERVAL, ResizeEdge, resize_edge_at, resize_rect};
+    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation, size_action, SizeAction, fill_scale, MAX_SIZE_RESENDS, SIZE_RESEND_INTERVAL, ResizeEdge, resize_edge_at, resize_rect, MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT};
     use std::time::Duration;
 
     // e10s01t1: hit-testing, rect math and cursors must all agree on which
@@ -1845,6 +1845,19 @@ mod tests {
         assert_eq!(resize_edge_at(frame, (mx, 65.0), pad), None);
         assert_eq!(resize_edge_at(frame, (150.0, my), pad), None);
         assert_eq!(resize_edge_at(frame, (93.0, my), pad), None);
+    }
+
+    // e10s01t7: min-size defaults live in one place; the Lua setter overrides
+    // them at runtime, so both standard() and default() must start consistent.
+    #[test]
+    fn min_window_size_defaults_match_constants() {
+        assert_eq!(MIN_WINDOW_WIDTH, 200);
+        assert_eq!(MIN_WINDOW_HEIGHT, 150);
+        let dec = super::DecorationConfig::standard();
+        assert_eq!(dec.min_window_width, MIN_WINDOW_WIDTH);
+        assert_eq!(dec.min_window_height, MIN_WINDOW_HEIGHT);
+        assert_eq!(super::DecorationConfig::default().min_window_width, MIN_WINDOW_WIDTH);
+        assert_eq!(super::DecorationConfig::default().min_window_height, MIN_WINDOW_HEIGHT);
     }
 
     // e10s01t2: left/top drags move the origin while the opposite edge stays

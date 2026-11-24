@@ -509,7 +509,7 @@ mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
 
-    type TestApi = (Lua, Arc<Mutex<Vec<Keybind>>>, Arc<Mutex<InputConfig>>);
+    type TestApi = (Lua, Arc<Mutex<Vec<Keybind>>>, Arc<Mutex<InputConfig>>, Arc<Mutex<DecorationConfig>>);
     fn test_api() -> TestApi {
         let lua = init().expect("lua init");
         let snapshot = Arc::new(Mutex::new(crate::ipc::Snapshot::default()));
@@ -523,17 +523,17 @@ mod tests {
             snapshot,
             &cmd_tx,
             keybinds.clone(),
-            decoration,
+            decoration.clone(),
             dock_entries,
             input_config.clone(),
         )
         .expect("register api");
-        (lua, keybinds, input_config)
+        (lua, keybinds, input_config, decoration)
     }
 
     #[test]
     fn keybind_parse_stores_xkb_keysym_case_insensitive() {
-        let (lua, keybinds, _input_config) = test_api();
+        let (lua, keybinds, _input_config, _decoration) = test_api();
         lua.load(r#"es.bind("Super+Return", "spawn_terminal")"#)
             .exec()
             .expect("bind return");
@@ -544,6 +544,24 @@ mod tests {
         assert_eq!(kbs.len(), 2);
         assert_eq!(kbs[0].keysym, xkbcommon::xkb::keysyms::KEY_Return);
         assert_eq!(kbs[1].keysym, xkbcommon::xkb::keysyms::KEY_r);
+    }
+
+    // e10s01t7: es.dsp.set_min_window_size stores validated dimensions in the
+    // shared DecorationConfig that the drag clamps read each motion event.
+    #[test]
+    fn min_window_size_setter_validates_and_stores() {
+        let (lua, _keybinds, _input_config, decoration) = test_api();
+        lua.load("es.dsp.set_min_window_size(240, 180)")
+            .exec()
+            .expect("set min window size");
+        assert_eq!(decoration.lock().unwrap().min_window_width, 240);
+        assert_eq!(decoration.lock().unwrap().min_window_height, 180);
+
+        // Zero or absurd sizes would collapse resize math / output clamping.
+        assert!(validate_min_window_size(0, 150).is_err());
+        assert!(validate_min_window_size(200, 0).is_err());
+        assert!(validate_min_window_size(5000, 150).is_err());
+        assert!(validate_min_window_size(200, 150).is_ok());
     }
 
     // e08s03t1 — per-output scale mapping: invalid values must never reach
@@ -609,7 +627,7 @@ mod tests {
     // compositor; invalid keymap/scales must not poison the config.
     #[test]
     fn keymap_config_setters_store_values() {
-        let (lua, _keybinds, input_config) = test_api();
+        let (lua, _keybinds, input_config, _decoration) = test_api();
         lua.load(
             r#"
             es.dsp.set_output_scale("eDP-1", 2.0)
@@ -631,7 +649,7 @@ mod tests {
 
     #[test]
     fn keymap_config_rejects_invalid_values() {
-        let (lua, _keybinds, input_config) = test_api();
+        let (lua, _keybinds, input_config, _decoration) = test_api();
         assert!(lua.load(r#"es.dsp.set_keymap("")"#).exec().is_err());
         assert!(lua.load(r#"es.dsp.set_output_scale("eDP-1", 0)"#).exec().is_err());
         assert!(input_config.lock().unwrap().output_scales.is_empty());
@@ -640,7 +658,7 @@ mod tests {
 
     #[test]
     fn keybind_parse_unknown_key_returns_lua_error() {
-        let (lua, keybinds, _input_config) = test_api();
+        let (lua, keybinds, _input_config, _decoration) = test_api();
         let err = lua
             .load(r#"es.bind("Super+NotARealKey_123", "spawn_terminal")"#)
             .exec()
