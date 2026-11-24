@@ -101,4 +101,37 @@ mod tests {
         );
         assert_eq!(plan.titlebar, Corners::default());
     }
+
+    #[test]
+    fn corner_radii_are_independent() {
+        // A titlebar mask: top corners rounded, bottom corners square.
+        let c = Corners { tl: 5, tr: 5, bl: 0, br: 0 };
+        assert_eq!(rounded_alpha(0, 0, 20, 20, c), 0);
+        assert_eq!(rounded_alpha(19, 0, 20, 20, c), 0);
+        assert_eq!(rounded_alpha(0, 19, 20, 20, c), 255);
+        assert_eq!(rounded_alpha(19, 19, 20, 20, c), 255);
+    }
+
+    #[test]
+    fn rounded_alpha_keeps_the_centre_and_straight_edges_opaque() {
+        let c = Corners::all(5);
+        assert_eq!(rounded_alpha(10, 10, 20, 20, c), 255);
+        assert_eq!(rounded_alpha(10, 0, 20, 20, c), 255);
+        assert_eq!(rounded_alpha(0, 10, 20, 20, c), 255);
+    }
+
+    #[test]
+    fn rounded_alpha_fades_across_the_arc() {
+        let c = Corners::all(5);
+        // The 2px band around the arc must contain partial coverage, not a
+        // binary jump from opaque to transparent.
+        let mut partial = false;
+        for y in 0..6 {
+            for x in 0..6 {
+                let a = rounded_alpha(x, y, 20, 20, c);
+                if a > 0 && a < 255 { partial = true; }
+            }
+        }
+        assert!(partial, "corner arc must have antialiased pixels");
+    }
 }
