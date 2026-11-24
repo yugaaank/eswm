@@ -72,6 +72,46 @@ pub fn ring_plan(
     RingPlan { outer: Corners::all(radius), titlebar, inner }
 }
 
+/// Coverage of pixel `(x, y)` in a `width x height` rectangle with independent
+/// corner radii. Returns 0 outside the rounded shape, 255 well inside, and a
+/// linear 2px antialias band at each arc — the baked equivalent of Hyprland's
+/// `smoothstep` in `rounding.glsl`.
+pub fn rounded_alpha(x: i32, y: i32, width: i32, height: i32, c: Corners) -> u8 {
+    if x < 0 || y < 0 || x >= width || y >= height {
+        return 0;
+    }
+    let left = x < width / 2;
+    let top = y < height / 2;
+    let r = match (left, top) {
+        (true, true) => c.tl,
+        (false, true) => c.tr,
+        (true, false) => c.bl,
+        (false, false) => c.br,
+    };
+    if r == 0 {
+        return 255;
+    }
+    // Distance from the arc's centre, mirrored into the corner quadrant.
+    let cx = if left { r as i32 } else { width - 1 - r as i32 };
+    let cy = if top { r as i32 } else { height - 1 - r as i32 };
+    let dx = x - cx;
+    let dy = y - cy;
+    let outside_x = if left { dx < 0 } else { dx > 0 };
+    let outside_y = if top { dy < 0 } else { dy > 0 };
+    if !outside_x || !outside_y {
+        return 255;
+    }
+    let dist = ((dx as f64).powi(2) + (dy as f64).powi(2)).sqrt();
+    let r = r as f64;
+    if dist <= r - 1.0 {
+        255
+    } else if dist >= r + 1.0 {
+        0
+    } else {
+        ((r + 1.0 - dist) / 2.0 * 255.0).round().clamp(0.0, 255.0) as u8
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
