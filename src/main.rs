@@ -1283,7 +1283,7 @@ pub(crate) fn apply_layout(state: &mut State) {
         let rect_changed = target_valid && window.rect != target;
         // e08s04t3: a mode change must reach the client even when the rect is
         // unchanged (e.g. maximize into an already-full-sized window).
-        let mode_changed = window.mode_sent != Some(window.mode.presentation);
+        let mode_changed = window.mode_sent != Some(window.mode);
         if !rect_changed && !needs_activation && !mode_changed {
             continue;
         }
@@ -1315,7 +1315,7 @@ pub(crate) fn apply_layout(state: &mut State) {
                 state.wm.set_rect(id, target);
             }
             state.wm.set_activated_sent(id, window.focused);
-            state.wm.set_mode_sent(id, window.mode.presentation);
+            state.wm.set_mode_sent(id, window.mode);
         }
     }
     // e06s03: keep wl_keyboard focus in sync with state changes via policy,

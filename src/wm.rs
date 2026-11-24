@@ -158,8 +158,8 @@ pub struct Window {
     pub xdg_offset: (i32, i32),
     /// Focus state last sent to the client as xdg Activated; None = never sent.
     pub activated_sent: Option<bool>,
-    /// Window mode last sent to the client as xdg state flags; None = never sent.
-    pub mode_sent: Option<Presentation>,
+    /// Full window mode last sent to the client as xdg state flags; None = never sent.
+    pub mode_sent: Option<ClientMode>,
     /// Committed wl_surface input region (surface-local). None/default = whole surface.
     pub input_region: InputRegion,
     /// How many size re-configures have been sent because the client committed
@@ -704,10 +704,11 @@ impl WindowManager {
         }
     }
 
-    /// Record the window mode last configured to the client (e08s04t2).
-    pub fn set_mode_sent(&mut self, id: WindowId, presentation: Presentation) {
+    /// Record the full window mode last configured to the client (e08s04t2).
+    /// Placement is part of the xdg state contract, not just presentation.
+    pub fn set_mode_sent(&mut self, id: WindowId, mode: ClientMode) {
         if let Some(window) = self.windows.get_mut(&id) {
-            window.mode_sent = Some(presentation);
+            window.mode_sent = Some(mode);
         }
     }
 
