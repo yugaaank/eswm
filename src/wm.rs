@@ -2161,6 +2161,27 @@ mod tests {
         assert_eq!(manager.window(third).unwrap().target_rect.y, 540);
     }
 
+    // e10s02t3: the default ratio must be byte-identical to the old 3/5 split,
+    // then actually drive the master width when dragged. Integer 3/5 used to
+    // floor 1916 -> 1149; keep that exact result for the default.
+    #[test]
+    fn master_ratio_drives_width_and_defaults_to_three_fifths() {
+        let (mut manager, output) = manager();
+        let master = manager.add_window(output, "kitty", "master").unwrap();
+        let stack = manager.add_window(output, "kitty", "stack").unwrap();
+
+        assert_eq!(manager.window(master).unwrap().target_rect.width, 1149);
+        assert_eq!(manager.window(stack).unwrap().target_rect.x, 1151);
+
+        manager.set_master_ratio(output, 0.3);
+        assert_eq!(manager.window(master).unwrap().target_rect.width, 574);
+        assert_eq!(manager.window(stack).unwrap().target_rect.x, 576);
+
+        // The 15% floor keeps both columns usable.
+        manager.set_master_ratio(output, 0.0);
+        assert_eq!(manager.window(master).unwrap().target_rect.width, 287);
+    }
+
     #[test]
     fn workspace_move_keeps_windows_separate() {
         let (mut manager, output) = manager();
