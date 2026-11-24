@@ -3578,6 +3578,24 @@ enum DeviceAddError {
 mod tests {
     use super::*;
 
+    // BUG-2026-11-24-SUPER-DRAG-LEAK: the compositor must swallow the button
+    // that starts a move/resize drag. Otherwise the app sees its own click and
+    // starts selecting files while eswm moves the window — two drivers, one
+    // pointer, and nobody agreed who was steering.
+    #[test]
+    fn super_drag_consumes_only_its_own_button() {
+        let drag = DragState {
+            window: 1,
+            mode: DragMode::Move,
+            start: Point::from((0.0, 0.0)),
+            orig_rect: wm::Rect { x: 0, y: 0, width: 100, height: 100 },
+            button: BTN_LEFT,
+        };
+        assert!(drag_consumes_button(Some(drag), BTN_LEFT));
+        assert!(!drag_consumes_button(Some(drag), BTN_RIGHT), "other buttons still belong to the app");
+        assert!(!drag_consumes_button(None, BTN_LEFT));
+    }
+
     #[test]
     fn idle_frame_skips_render_timer() {
         assert!(render_timer_delay(false, Duration::from_millis(16)).is_none());
