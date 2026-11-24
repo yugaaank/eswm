@@ -150,8 +150,10 @@ pub struct UdevData {
     pub gpus: GpuManager<GbmGlesBackend<GlesRenderer, DrmDeviceFd>>,
     pub backends: HashMap<DrmNode, BackendData>,
     pub dmabuf_state: Option<(DmabufState, DmabufGlobal)>,
-    cursor_images: Vec<xcursor::parser::Image>,
-    cursor_buffer: Option<(MemoryRenderBuffer, (f64, f64))>, // (buffer, hotspot)
+    cursor_images: HashMap<&'static str, Vec<xcursor::parser::Image>>,
+    /// Cached named cursor. The name is part of the key so switching from an
+    /// arrow to a resize icon actually repaints instead of reusing the arrow.
+    cursor_buffer: Option<(&'static str, MemoryRenderBuffer, (f64, f64))>,
     /// Latest cursor image requested by a client (e08s03t6).
     pub cursor_image: smithay::input::pointer::CursorImageStatus,
     /// Cache of titlebar background render buffers keyed by (window_id, rect, color, titlebar_height)
@@ -283,19 +285,25 @@ impl DmabufHandler for State {
 }
 delegate_dmabuf!(State);
 
-fn load_cursor_images() -> Vec<xcursor::parser::Image> {
-    let name = std::env::var("XCURSOR_THEME").ok().unwrap_or_else(|| "default".into());
-    match xcursor::CursorTheme::load(&name)
-        .load_icon("default")
-        .map(std::fs::read)
-        .and_then(|r| r.ok().and_then(|d| xcursor::parser::parse_xcursor(&d)))
-    {
-        Some(icons) if !icons.is_empty() => icons,
-        _ => {
-            warn!("no xcursor theme found, cursor will be invisible");
-            Vec::new()
+fn load_cursor_images() -> HashMap<&'static str, Vec<xcursor::parser::Image>> {
+    let theme_name = std::env::var("XCURSOR_THEME").ok().unwrap_or_else(|| "default".into());
+    let theme = xcursor::CursorTheme::load(&theme_name);
+    let mut images = HashMap::new();
+    // "default" is the fallback for client-requested icons we do not load.
+    for name in std::iter::once("default").chain(RESIZE_CURSOR_NAMES) {
+        let loaded = theme
+            .load_icon(name)
+            .and_then(|path| std::fs::read(path).ok())
+            .and_then(|data| xcursor::parser::parse_xcursor(&data))
+            .unwrap_or_default();
+        if !loaded.is_empty() {
+            images.insert(name, loaded);
         }
     }
+    if !images.contains_key("default") {
+        warn!("no xcursor theme found, cursor will be invisible");
+    }
+    images
 }
 
 pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
@@ -1365,10 +1373,64 @@ fn process_shortcut(state: &mut State, mods: &ModifiersState, keysym: KeysymHand
 }
 
 // Linux input event codes for mouse buttons
+use smithay::input::pointer::{CursorIcon, CursorImageStatus};
+
 const BTN_LEFT: u32 = 0x110;
 const BTN_RIGHT: u32 = 0x111;
 /// Invisible grab zone outside a frame so edges are easy to catch (e10s01).
 const RESIZE_HANDLE_PADDING: i32 = 6;
+/// Xcursor names loaded at startup; the four dual arrows cover eight handles.
+const RESIZE_CURSOR_NAMES: [&str; 4] = ["ns-resize", "ew-resize", "nesw-resize", "nwse-resize"];
+
+/// Xcursor icon for a grabbed handle (e10s01t5).
+fn resize_cursor_icon(edge: wm::ResizeEdge) -> CursorIcon {
+    use wm::ResizeEdge::*;
+    match edge {
+        North | South => CursorIcon::NsResize,
+        East | West => CursorIcon::EwResize,
+        NorthEast | SouthWest => CursorIcon::NeswResize,
+        NorthWest | SouthEast => CursorIcon::NwseResize,
+    }
+}
+
+/// Point the compositor cursor at the hovered handle, or keep the icon of the
+/// handle being dragged. A plain pointer over free space gets the default icon.
+fn update_resize_cursor(state: &mut State) {
+    let Some(udev) = state.udev.as_ref() else { return };
+    let pos = udev.pointer_location;
+    let drag = udev.drag;
+    let hovered = if drag.is_some() {
+        drag.filter(|d| matches!(d.mode, DragMode::Resize))
+            .map(|d| resize_cursor_icon(d.edge))
+    } else {
+        let bs = state.wm.border_size();
+        let tb = state.decoration.lock().unwrap().titlebar_height;
+        state
+            .wm
+            .window_at((pos.x, pos.y), bs)
+            .and_then(|id| state.wm.window(id))
+            .filter(|w| {
+                w.mode.placement == wm::Placement::Floating
+                    && w.mode.presentation == wm::Presentation::Normal
+            })
+            .and_then(|w| {
+                wm::resize_edge_at(
+                    wm::outer_frame(w.target_rect, bs, tb),
+                    (pos.x, pos.y),
+                    RESIZE_HANDLE_PADDING,
+                )
+            })
+            .map(resize_cursor_icon)
+    };
+    let status = hovered
+        .map(CursorImageStatus::Named)
+        .unwrap_or_else(CursorImageStatus::default_named);
+    if let Some(udev) = state.udev.as_mut()
+        && udev.cursor_image != status {
+            udev.cursor_image = status;
+            state.redraw_needed = true;
+        }
+}
 
 /// A compositor-owned drag eats its initiating press and matching release.
 /// Forwarding either lets the app start its own drag (hello, file selection)
@@ -1665,6 +1727,7 @@ impl State {
                 ));
                 self.udev.as_mut().unwrap().pointer_location = pointer_location;
                 drag_update(self, pointer_location);
+                update_resize_cursor(self);
                 self.redraw_needed = true;
                 // Diagnostics: ~1 Hz pointer position in the log (helps spot a
                 // stuck/invisible cursor); drop when focus is stable.
@@ -1697,6 +1760,7 @@ impl State {
                 let serial = SCOUNTER.next_serial();
                 self.udev.as_mut().unwrap().pointer_location = location;
                 drag_update(self, location);
+                update_resize_cursor(self);
                 // Same-class sibling of the freeze above: moving the pointer is
                 // the user waiting for a new cursor pixel. Without this flag the
                 // location updates in memory and no flip is ever queued, so an
@@ -1951,6 +2015,7 @@ impl State {
                         self.udev.as_mut().unwrap().drag = None;
                     }
                 }
+                update_resize_cursor(self);
                 if !swallow_client_button {
                     let pointer = self.seat.get_pointer().unwrap();
                     pointer.button(
@@ -2740,47 +2805,45 @@ impl State {
                 );
                 cursor_elements.extend(tree.into_iter().map(EswmRenderElements::Surface));
             }
-        } else if cursor_decision == crate::CursorRenderDecision::XcursorFallback
-            && let Some((buffer, hotspot)) = udev.cursor_buffer.clone() {
-            let pos = (pointer_location - Point::from(hotspot))
-                .to_physical(Scale::from(output.current_scale().fractional_scale()))
-                .to_i32_round();
-            // shortcut: cursor buffer import failure just drops the cursor for a frame
-            if let Ok(cursor) = MemoryRenderBufferRenderElement::from_buffer(
-                &mut renderer,
-                pos,
-                &buffer,
-                None,
-                None,
-                None,
-                Kind::Cursor,
-            ) {
-                cursor_elements.push(EswmRenderElements::Cursor(cursor));
-            }
-        } else if !udev.cursor_images.is_empty() {
-            let img = udev.cursor_images[0].clone();
-            let buf = MemoryRenderBuffer::from_slice(
-                &img.pixels_rgba,
-                Fourcc::Argb8888,
-                (img.width as i32, img.height as i32),
-                1,
-                Transform::Normal,
-                None,
-            );
-            udev.cursor_buffer = Some((buf.clone(), (img.xhot as f64, img.yhot as f64)));
-            let pos = (pointer_location - Point::from((img.xhot as f64, img.yhot as f64)))
-                .to_physical(Scale::from(output.current_scale().fractional_scale()))
-                .to_i32_round();
-            if let Ok(cursor) = MemoryRenderBufferRenderElement::from_buffer(
-                &mut renderer,
-                pos,
-                &buf,
-                None,
-                None,
-                None,
-                Kind::Cursor,
-            ) {
-                cursor_elements.push(EswmRenderElements::Cursor(cursor));
+        } else if cursor_decision == crate::CursorRenderDecision::XcursorFallback {
+            // e10s01t5: pick the named icon buffer. Client-requested names we
+            // did not load fall back to the default arrow.
+            let requested = match &udev.cursor_image {
+                CursorImageStatus::Named(icon) => icon.name(),
+                _ => "default",
+            };
+            let name = [requested, "default"].into_iter()
+                .find(|n| udev.cursor_images.get(*n).is_some_and(|v| !v.is_empty()))
+                .unwrap_or("default");
+            if let Some(img) = udev.cursor_images.get(name).and_then(|v| v.first()).cloned() {
+                let hotspot = (img.xhot as f64, img.yhot as f64);
+                if udev.cursor_buffer.as_ref().is_none_or(|(n, _, _)| *n != name) {
+                    let buf = MemoryRenderBuffer::from_slice(
+                        &img.pixels_rgba,
+                        Fourcc::Argb8888,
+                        (img.width as i32, img.height as i32),
+                        1,
+                        Transform::Normal,
+                        None,
+                    );
+                    udev.cursor_buffer = Some((name, buf, hotspot));
+                }
+                let (_, buffer, hotspot) = udev.cursor_buffer.clone().unwrap();
+                let pos = (pointer_location - Point::from(hotspot))
+                    .to_physical(Scale::from(output.current_scale().fractional_scale()))
+                    .to_i32_round();
+                // shortcut: cursor buffer import failure just drops the cursor for a frame
+                if let Ok(cursor) = MemoryRenderBufferRenderElement::from_buffer(
+                    &mut renderer,
+                    pos,
+                    &buffer,
+                    None,
+                    None,
+                    None,
+                    Kind::Cursor,
+                ) {
+                    cursor_elements.push(EswmRenderElements::Cursor(cursor));
+                }
             }
         }
 
