@@ -1699,8 +1699,39 @@ pub fn equal_split(
 
 #[cfg(test)]
 mod tests {
-    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation, size_action, SizeAction, fill_scale, MAX_SIZE_RESENDS, SIZE_RESEND_INTERVAL};
+    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation, size_action, SizeAction, fill_scale, MAX_SIZE_RESENDS, SIZE_RESEND_INTERVAL, ResizeEdge, resize_edge_at};
     use std::time::Duration;
+
+    // e10s01t1: hit-testing, rect math and cursors must all agree on which
+    // edge is moving. Free titlebar space is a move handle, not a resize one —
+    // otherwise grabbing the titlebar would silently resize the window.
+    #[test]
+    fn resize_edge_at_maps_frame_edges_corners_and_padding() {
+        let frame = Rect { x: 100, y: 50, width: 200, height: 100 };
+        let pad = 6;
+        let (mx, my) = (200.0, 100.0);
+
+        assert_eq!(resize_edge_at(frame, (mx, 50.0), pad), Some(ResizeEdge::North));
+        assert_eq!(resize_edge_at(frame, (mx, 150.0), pad), Some(ResizeEdge::South));
+        assert_eq!(resize_edge_at(frame, (100.0, my), pad), Some(ResizeEdge::West));
+        assert_eq!(resize_edge_at(frame, (300.0, my), pad), Some(ResizeEdge::East));
+
+        assert_eq!(resize_edge_at(frame, (100.0, 50.0), pad), Some(ResizeEdge::NorthWest));
+        assert_eq!(resize_edge_at(frame, (300.0, 50.0), pad), Some(ResizeEdge::NorthEast));
+        assert_eq!(resize_edge_at(frame, (100.0, 150.0), pad), Some(ResizeEdge::SouthWest));
+        assert_eq!(resize_edge_at(frame, (300.0, 150.0), pad), Some(ResizeEdge::SouthEast));
+
+        // Invisible grab zone outside the frame.
+        assert_eq!(resize_edge_at(frame, (96.0, my), pad), Some(ResizeEdge::West));
+        assert_eq!(resize_edge_at(frame, (304.0, my), pad), Some(ResizeEdge::East));
+        assert_eq!(resize_edge_at(frame, (mx, 46.0), pad), Some(ResizeEdge::North));
+        assert_eq!(resize_edge_at(frame, (mx, 154.0), pad), Some(ResizeEdge::South));
+
+        // Free titlebar / client area and beyond the grab zone: no handle.
+        assert_eq!(resize_edge_at(frame, (mx, 65.0), pad), None);
+        assert_eq!(resize_edge_at(frame, (150.0, my), pad), None);
+        assert_eq!(resize_edge_at(frame, (93.0, my), pad), None);
+    }
 
     fn manager() -> (WindowManager, u64) {
         let mut manager = WindowManager::new();
