@@ -2635,10 +2635,23 @@ mod tests {
         let output_id = state.wm.primary_output_id().unwrap();
         let id = state.wm.add_window(output_id, "app", "App").unwrap();
         assert_eq!(state.wm.window(id).unwrap().mode_sent, None);
-        state.wm.set_mode_sent(id, wm::Presentation::Maximized);
-        assert_eq!(state.wm.window(id).unwrap().mode_sent, Some(wm::Presentation::Maximized));
+        state.wm.set_mode_sent(id, wm::ClientMode::maximized());
+        assert_eq!(state.wm.window(id).unwrap().mode_sent, Some(wm::ClientMode::maximized()));
         // A transition to a different mode changes the marker again.
-        state.wm.set_mode_sent(id, wm::Presentation::Fullscreen);
-        assert_eq!(state.wm.window(id).unwrap().mode_sent, Some(wm::Presentation::Fullscreen));
+        state.wm.set_mode_sent(id, wm::ClientMode::fullscreen());
+        assert_eq!(state.wm.window(id).unwrap().mode_sent, Some(wm::ClientMode::fullscreen()));
+    }
+
+    #[test]
+    fn apply_layout_mode_sent_tracks_placement_changes() {
+        let mut state = test_state();
+        let output_id = state.wm.primary_output_id().unwrap();
+        let id = state.wm.add_window(output_id, "app", "App").unwrap();
+        state.wm.set_mode_sent(id, wm::ClientMode::tiled());
+        assert_eq!(state.wm.window(id).unwrap().mode_sent, Some(wm::ClientMode::tiled()));
+        // A floating<->tiled switch with the same rectangle must still send a
+        // configure, because the tiled state bits are placement-dependent.
+        state.wm.set_mode_sent(id, wm::ClientMode::floating());
+        assert_eq!(state.wm.window(id).unwrap().mode_sent, Some(wm::ClientMode::floating()));
     }
 }
