@@ -127,9 +127,9 @@ pub fn rounded_rect_pixels(
             let mask = rounded_alpha(x, y, width, height, corners);
             let a = color[3] as u16 * mask as u16 / 255;
             pixels.extend_from_slice(&[
-                (color[0] as u16 * a as u16 / 255) as u8,
-                (color[1] as u16 * a as u16 / 255) as u8,
-                (color[2] as u16 * a as u16 / 255) as u8,
+                (color[0] as u16 * a / 255) as u8,
+                (color[1] as u16 * a / 255) as u8,
+                (color[2] as u16 * a / 255) as u8,
                 a as u8,
             ]);
         }
@@ -172,14 +172,29 @@ pub fn rounded_border_pixels(
             };
             let a = color[3] as u16 * mask as u16 / 255;
             pixels.extend_from_slice(&[
-                (color[0] as u16 * a as u16 / 255) as u8,
-                (color[1] as u16 * a as u16 / 255) as u8,
-                (color[2] as u16 * a as u16 / 255) as u8,
+                (color[0] as u16 * a / 255) as u8,
+                (color[1] as u16 * a / 255) as u8,
+                (color[2] as u16 * a / 255) as u8,
                 a as u8,
             ]);
         }
     }
     pixels
+}
+
+/// Identity of a cached decoration buffer. `scale` is part of the key so a
+/// monitor-scale change rebuilds the rasterised arc instead of stretching a
+/// buffer made for the old scale.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct DecorationBufferKey {
+    pub window: u64,
+    pub width: i32,
+    pub height: i32,
+    pub radius: u32,
+    pub border: u32,
+    pub titlebar: u32,
+    pub color: [u8; 4],
+    pub scale: i32,
 }
 
 #[cfg(test)]
@@ -213,6 +228,17 @@ mod tests {
     }
 
     #[test]
+    fn buffer_cache_key_tracks_output_scale() {
+        let base = DecorationBufferKey {
+            window: 1, width: 100, height: 40, radius: 12,
+            border: 2, titlebar: 24, color: [200, 200, 200, 255], scale: 1,
+        };
+        assert_eq!(base, DecorationBufferKey { scale: 1, ..base });
+        assert_ne!(base, DecorationBufferKey { scale: 2, ..base });
+        assert_ne!(base, DecorationBufferKey { radius: 8, ..base });
+    }
+
+    #[test]
     fn corner_radii_are_independent() {
         // A titlebar mask: top corners rounded, bottom corners square.
         let c = Corners { tl: 5, tr: 5, bl: 0, br: 0 };
@@ -237,7 +263,7 @@ mod tests {
         let px = rounded_rect_pixels(20, 20, [200, 100, 50, 255], Corners::all(5));
         let a = rounded_alpha(1, 1, 20, 20, Corners::all(5));
         assert!(a > 0 && a < 255, "expected a partial pixel, got {a}");
-        let idx = ((1 * 20 + 1) * 4) as usize;
+        let idx = 21 * 4;
         assert_eq!(px[idx + 3], a);
         assert_eq!(px[idx], (200u16 * a as u16 / 255) as u8);
         assert_eq!(px[idx + 1], (100u16 * a as u16 / 255) as u8);

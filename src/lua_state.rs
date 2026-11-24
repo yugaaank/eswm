@@ -334,7 +334,8 @@ pub fn register_api(
     })?;
     dsp_table.set("set_inner_gap", dsp_set_inner_gap)?;
 
-    // es.dsp.set_corner_radius(n) -> sets corner radius in px (stored; renderer clipping TBD)
+    // es.dsp.set_corner_radius(n) -> rounds the border ring and titlebar arcs;
+    // 0 disables rounding, and a zero border width leaves no ring to round.
     let dsp_set_corner_radius = lua.create_function({
         let decoration = decoration.clone();
         move |_, radius: u32| -> Result<(), mlua::Error> {

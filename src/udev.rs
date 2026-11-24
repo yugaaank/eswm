@@ -87,7 +87,7 @@ use tracing::{debug, error, info, trace, warn};
 use smithay_drm_extras::drm_scanner::{DrmScanEvent, DrmScanner};
 
 use crate::{send_frames_surface_tree, State, clip::ClippedSurfaceElement, wm, ipc, lua_state};
-use crate::wm::{Rect, border_frame};
+use crate::wm::border_frame;
 
 type UdevRenderer<'a> = MultiRenderer<
     'a,
@@ -168,7 +168,11 @@ pub struct UdevData {
     pub cursor_image: smithay::input::pointer::CursorImageStatus,
     /// Cache of titlebar background render buffers keyed by (window_id, rect, color, titlebar_height)
     /// to avoid reallocating per-frame buffers for static windows.
-    titlebar_buffer_cache: HashMap<(u64, Rect, [u8; 4], u32), MemoryRenderBuffer>,
+    titlebar_buffer_cache: HashMap<crate::rounding::DecorationBufferKey, MemoryRenderBuffer>,
+    /// Cached rounded border rings. One buffer per window/geometry/colour/scale,
+    /// rebuilt only when one of those changes. A square window uses the cheap
+    /// SolidColorRenderElement strips instead and never touches this cache.
+    border_buffer_cache: HashMap<crate::rounding::DecorationBufferKey, MemoryRenderBuffer>,
     pub pointer_location: Point<f64, Logical>,
     /// Modifiers seen on the last key event (used to detect Super for drags)
     last_mods: ModifiersState,
@@ -374,6 +378,7 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         cursor_image: smithay::input::pointer::CursorImageStatus::default_named(),
         cursor_buffer: None,
         titlebar_buffer_cache: HashMap::new(),
+        border_buffer_cache: HashMap::new(),
         pointer_location: (0.0, 0.0).into(),
         last_mods: ModifiersState::default(),
         pointer_focus: None,
@@ -3221,9 +3226,15 @@ impl State {
         let titlebar_color_focused = self.wm.titlebar_color_focused();
         let titlebar_color_unfocused = self.wm.titlebar_color_unfocused();
         let dec = self.decoration.lock().unwrap();
-        let _corner_radius = dec.corner_radius;
+        let corner_radius = dec.corner_radius;
         let titlebar_height = dec.titlebar_height;
         drop(dec);
+        // Rounded arcs are rasterised on the output's physical pixel grid,
+        // then declared at logical size — the same trick smithay's own
+        // surface elements use. Radius/border are scaled before mask
+        // generation so the arc never softens at 2x.
+        let output_scale = output.current_scale().integer_scale().max(1);
+        let scale_u = output_scale as u32;
         // Titlebar height and border size are independent: a titlebar can be
         // drawn even when the border is disabled (border_size == 0). The titlebar
         // strip overlaps the top of the client surface by design (the client
@@ -3253,6 +3264,63 @@ impl State {
                 // because SolidColorRenderElement is cheap to construct).
                 if !is_popup && mode.presentation != wm::Presentation::Fullscreen && border_size > 0 {
                     let color = if *focused { &color_focused } else { &color_unfocused };
+                    let plan = crate::rounding::ring_plan(
+                        corner_radius, border_size, titlebar_height, false, is_popup,
+                    );
+                    if plan.outer.tl > 0 {
+                        // One cached ring replaces the four strips. Its hole
+                        // spans the titlebar band and the client; the wedges
+                        // over their square corners carry the border colour.
+                        let frame = border_frame(*rect, border_size, titlebar_height);
+                        let key = crate::rounding::DecorationBufferKey {
+                            window: *id,
+                            width: frame.top.width as i32,
+                            height: (frame.bottom.y + border_size as i32 - frame.top.y),
+                            radius: corner_radius,
+                            border: border_size,
+                            titlebar: titlebar_height,
+                            color: *color,
+                            scale: output_scale,
+                        };
+                        let scaled_radius = corner_radius * scale_u;
+                        let scaled_border = border_size * scale_u;
+                        let ring = udev.border_buffer_cache
+                            .entry(key)
+                            .or_insert_with(|| {
+                                let fw = frame.top.width as i32 * output_scale;
+                                let fh = key.height * output_scale;
+                                // Hole is (bs, bs) from the frame origin in
+                                // logical px; scale it into the pixel grid.
+                                let hole_x = scaled_border as i32;
+                                let hole_y = scaled_border as i32;
+                                let hole_w = fw - 2 * scaled_border as i32;
+                                let hole_h = fh - 2 * scaled_border as i32;
+                                let outer = crate::rounding::Corners::all(scaled_radius);
+                                let inner = crate::rounding::Corners::all(
+                                    scaled_radius.saturating_sub(scaled_border),
+                                );
+                                let pixels = crate::rounding::rounded_border_pixels(
+                                    fw, fh, hole_x, hole_y, hole_w, hole_h,
+                                    *color, outer, inner,
+                                );
+                                MemoryRenderBuffer::from_slice(
+                                    &pixels, Fourcc::Abgr8888, (fw, fh),
+                                    output_scale, Transform::Normal, None,
+                                )
+                            })
+                            .clone();
+                        if let Ok(elem) = MemoryRenderBufferRenderElement::from_buffer(
+                            &mut renderer,
+                            Point::<f64, Physical>::from((frame.top.x as f64, frame.top.y as f64)),
+                            &ring,
+                            None,
+                            None,
+                            Some(Size::from((frame.top.width as i32, key.height))),
+                            Kind::Unspecified,
+                        ) {
+                            border_elements.push(EswmRenderElements::Cursor(elem));
+                        }
+                    } else {
                     let color32f = Color32F::new(
                         color[0] as f32 / 255.0,
                         color[1] as f32 / 255.0,
@@ -3306,6 +3374,7 @@ impl State {
                         color32f,
                         Kind::Unspecified,
                     )));
+                    }
                 }
                 // Borders pushed first -> index 0 -> drawn last -> on top (capture titlebar edges).
                 elements.extend(border_elements);
@@ -3347,16 +3416,44 @@ impl State {
                     draw_button(btn_x, rect.y as f64 - titlebar_height as f64 + 1.0, [200, 200, 0, 255], btn_size); // maximize
                     btn_x -= btn_size as f64 + btn_gap as f64;
                     draw_button(btn_x, rect.y as f64 - titlebar_height as f64 + 1.0, [100, 100, 100, 255], btn_size); // minimize
-                    // Titlebar background buffer - cached by (window_id, rect, color, titlebar_height)
+                    // Titlebar buffer: [R,G,B,A] premultiplied and uploaded as
+                    // Abgr8888 (GL RGBA). Its top corners follow the ring's
+                    // inner arc; the scale is baked into the rasterisation.
                     let tb_buf = {
-                        let tb_cache_key = (*id, *rect, tb_px, tb_h);
+                        let tb_cache_key = crate::rounding::DecorationBufferKey {
+                            window: *id,
+                            width: tb_w as i32,
+                            height: tb_h as i32,
+                            radius: corner_radius,
+                            border: border_size,
+                            titlebar: titlebar_height,
+                            color: tb_px,
+                            scale: output_scale,
+                        };
                         udev.titlebar_buffer_cache.entry(tb_cache_key).or_insert_with(|| {
-                            let mut tb_pix = Vec::with_capacity((tb_w * tb_h * 4) as usize);
-                            for _ in 0..(tb_w * tb_h) {
-                                tb_pix.extend_from_slice(&tb_px);
-                            }
+                            let plan = crate::rounding::ring_plan(
+                                corner_radius, border_size, titlebar_height, false, false,
+                            );
+                            let pw = tb_w as i32 * output_scale;
+                            let ph = tb_h as i32 * output_scale;
+                            let tb_pix = if plan.titlebar == crate::rounding::Corners::default() {
+                                let mut flat = Vec::with_capacity((pw * ph * 4) as usize);
+                                for _ in 0..(pw * ph) { flat.extend_from_slice(&tb_px); }
+                                flat
+                            } else {
+                                let corners = crate::rounding::Corners {
+                                    tl: plan.titlebar.tl * scale_u,
+                                    tr: plan.titlebar.tr * scale_u,
+                                    bl: plan.titlebar.bl * scale_u,
+                                    br: plan.titlebar.br * scale_u,
+                                };
+                                crate::rounding::rounded_rect_pixels(
+                                    pw, ph, tb_px, corners,
+                                )
+                            };
                             MemoryRenderBuffer::from_slice(
-                                &tb_pix, Fourcc::Argb8888, (tb_w as i32, tb_h as i32), 1, Transform::Normal, None,
+                                &tb_pix, Fourcc::Abgr8888, (pw, ph),
+                                output_scale, Transform::Normal, None,
                             )
                         }).clone()
                     };
@@ -3367,7 +3464,10 @@ impl State {
                         &mut renderer,
                         Point::from((rect.x as f64, rect.y as f64 - titlebar_height as f64)),
                         &tb_buf,
-                        None, None, None, Kind::Unspecified,
+                        None,
+                        None,
+                        Some(Size::from((tb_w as i32, tb_h as i32))),
+                        Kind::Unspecified,
                     ) {
                         elements.push(EswmRenderElements::Cursor(elem));
                     }
