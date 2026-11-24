@@ -255,6 +255,83 @@ pub struct Workspace {
     pub focused: Option<WindowId>,
 }
 
+/// Adjustable layout inputs for one output (e10s02). Stored on the output, not
+/// the window: `arrange_output` owns every tiled rect and would erase a
+/// per-window override on the next pass. Weights are kept flat and normalized
+/// on every arrangement so adding/removing windows cannot leave a stale length.
+#[derive(Clone, Debug)]
+pub struct TilingSplits {
+    /// Width share of the master column in the Master layout.
+    pub master_ratio: f64,
+    /// Relative heights of the stack column (Master layout).
+    pub stack_weights: Vec<f64>,
+    /// Relative widths of Equal-layout grid columns.
+    pub col_weights: Vec<f64>,
+    /// Relative heights of Equal-layout grid rows.
+    pub row_weights: Vec<f64>,
+}
+
+/// Smallest share any single split side may keep (e10s02). Keeps a dragged
+/// boundary from collapsing a window into an unusable sliver.
+pub const MIN_SPLIT_SHARE: f64 = 0.15;
+const MAX_MASTER_RATIO: f64 = 1.0 - MIN_SPLIT_SHARE;
+const MASTER_RATIO_DEFAULT: f64 = 0.6;
+
+/// Clamp a master ratio into [MIN_SPLIT_SHARE, MAX_MASTER_RATIO]. NaN falls
+/// back to the default — a poisoned ratio would make every rect NaN and
+/// silently hide the whole layout. Infinity is clamped by the same bounds.
+pub fn clamp_master_ratio(ratio: f64) -> f64 {
+    if ratio.is_nan() {
+        MASTER_RATIO_DEFAULT
+    } else {
+        ratio.clamp(MIN_SPLIT_SHARE, MAX_MASTER_RATIO)
+    }
+}
+
+/// Normalize `weights` to exactly n entries summing to 1.0 (e10s02t1).
+/// Missing entries start neutral; non-finite or below-floor entries get the
+/// floor. The floor degrades to 1/n when there are too many entries for it to
+/// be satisfiable, so seven stack windows still get valid, visible cells.
+pub fn normalize_weights(weights: &[f64], n: usize, min_share: f64) -> Vec<f64> {
+    if n == 0 {
+        return Vec::new();
+    }
+    let floor = min_share.max(0.0).min(1.0 / n as f64);
+    let mut out: Vec<f64> = (0..n)
+        .map(|i| match weights.get(i).copied() {
+            Some(v) if v.is_finite() && v >= floor => v,
+            _ => floor,
+        })
+        .collect();
+    let total: f64 = out.iter().sum();
+    if !total.is_finite() || total <= 0.0 {
+        out.fill(1.0 / n as f64);
+        return out;
+    }
+    for v in &mut out {
+        *v /= total;
+    }
+    out
+}
+
+impl Default for TilingSplits {
+    fn default() -> Self {
+        Self::standard()
+    }
+}
+
+impl TilingSplits {
+    /// Defaults are chosen so the existing 3/5 Master layout is unchanged.
+    pub fn standard() -> Self {
+        Self {
+            master_ratio: MASTER_RATIO_DEFAULT,
+            stack_weights: Vec::new(),
+            col_weights: Vec::new(),
+            row_weights: Vec::new(),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Output {
     pub id: OutputId,
@@ -262,6 +339,9 @@ pub struct Output {
     pub geometry: Rect,
     pub active_workspace: WorkspaceId,
     pub tiling_layout: TilingLayout,
+    /// Per-output split ratios (e10s02). Survives re-arrangement, workspace
+    /// switches and output resizes for the lifetime of the session.
+    pub splits: TilingSplits,
 }
 
 /// A single entry in the dock: one window on the active workspace, either
@@ -656,6 +736,7 @@ impl WindowManager {
                 geometry,
                 active_workspace: workspace,
                 tiling_layout: TilingLayout::default(),
+                splits: TilingSplits::standard(),
             },
         );
         self.dirty = true;
@@ -1856,7 +1937,7 @@ mod tests {
 
     #[test]
     fn tiling_splits_normalize_weights_fills_clamps_and_sums_to_one() {
-        let w = normalize_weights(&[3.0, 1.0], 4, MIN_SPLIT_SHARE);
+        let w = normalize_weights(&[1.0, 3.0], 4, MIN_SPLIT_SHARE);
         assert_eq!(w.len(), 4);
         assert!((w.iter().sum::<f64>() - 1.0).abs() < 1e-9);
         assert!(w.iter().all(|v| *v >= 0.0));
@@ -1864,7 +1945,7 @@ mod tests {
 
         // A zero/NaN weight gets the floor, not a zero-width cell.
         let w = normalize_weights(&[0.0, f64::NAN, 1.0], 3, MIN_SPLIT_SHARE);
-        assert!(w.iter().all(|v| *v.is_finite() && *v > 0.0));
+        assert!(w.iter().all(|v| v.is_finite() && *v > 0.0));
         assert!((w.iter().sum::<f64>() - 1.0).abs() < 1e-9);
 
         // Too many windows for the floor: the floor degrades to 1/n rather
