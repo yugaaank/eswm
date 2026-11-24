@@ -1704,6 +1704,18 @@ impl WindowManager {
         true
     }
 
+    /// e10s02t3: change the Master-layout split ratio for an output. The
+    /// ratio is clamped into the usable range and applied on the next arrange
+    /// pass. Floor (not round) to stay byte-identical with the old 3/5 split.
+    pub fn set_master_ratio(&mut self, output: OutputId, ratio: f64) {
+        let Some(state) = self.outputs.get_mut(&output) else {
+            return;
+        };
+        state.splits.master_ratio = clamp_master_ratio(ratio);
+        self.dirty = true;
+        self.arrange_output(output);
+    }
+
     pub fn arrange_output(&mut self, output: OutputId) {
         if !self.dirty {
             return;
@@ -1785,7 +1797,8 @@ impl WindowManager {
                 let master_width = if tiled.len() == 1 {
                     inner.width
                 } else {
-                    ((inner.width as u64 * 3) / 5) as u32
+                    let ratio = output_state.splits.master_ratio;
+                    ((inner.width as f64 * ratio).floor() as u64) as u32
                 };
                 self.set_target_rect(
                     tiled[0],
