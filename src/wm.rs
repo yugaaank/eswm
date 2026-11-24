@@ -444,6 +444,59 @@ pub fn resize_edge_at(rect: Rect, point: (f64, f64), padding: i32) -> Option<Res
     }
 }
 
+/// Apply a pointer delta to `orig` for the grabbed `edge`.
+///
+/// West/North drags move the origin while the opposite edge stays pinned.
+/// All math is i64 so a huge delta cannot underflow the u32 Rect fields.
+/// `min`/`max` are (width, height) size bounds, not screen coordinates.
+pub fn resize_rect(
+    orig: Rect,
+    edge: ResizeEdge,
+    dx: f64,
+    dy: f64,
+    min: (u32, u32),
+    max: (u32, u32),
+) -> Rect {
+    use ResizeEdge::*;
+    let min_w = min.0.max(1) as i64;
+    let min_h = min.1.max(1) as i64;
+    let max_w = (max.0 as i64).max(min_w);
+    let max_h = (max.1 as i64).max(min_h);
+    let right = orig.x as i64 + orig.width as i64;
+    let bottom = orig.y as i64 + orig.height as i64;
+    let int_range = |v: i64| v.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+
+    let (width, x) = match edge {
+        West | NorthWest | SouthWest => {
+            let w = ((orig.width as f64 - dx).round() as i64).clamp(min_w, max_w);
+            (w, right - w)
+        }
+        East | NorthEast | SouthEast => {
+            let w = ((orig.width as f64 + dx).round() as i64).clamp(min_w, max_w);
+            (w, orig.x as i64)
+        }
+        North | South => (orig.width as i64, orig.x as i64),
+    };
+    let (height, y) = match edge {
+        North | NorthEast | NorthWest => {
+            let h = ((orig.height as f64 - dy).round() as i64).clamp(min_h, max_h);
+            (h, bottom - h)
+        }
+        South | SouthEast | SouthWest => {
+            let h = ((orig.height as f64 + dy).round() as i64).clamp(min_h, max_h);
+            (h, orig.y as i64)
+        }
+        East | West => (orig.height as i64, orig.y as i64),
+    };
+
+    Rect {
+        x: int_range(x),
+        y: int_range(y),
+        width: width as u32,
+        height: height as u32,
+    }
+}
+
 /// Compute the border frame for a window's target_rect.
 /// The frame extends `border_size` pixels outward on all sides, plus
 /// `titlebar_height` pixels upward from the top edge.
@@ -1822,7 +1875,9 @@ mod tests {
 
         // Tiny original, huge negative delta: min wins, no u32 underflow.
         let tiny = Rect { x: 0, y: 0, width: 1, height: 1 };
-        assert_eq!(resize_rect(tiny, ResizeEdge::NorthWest, -10_000.0, -10_000.0, min, max),
+        // Dragging west/north inward (positive delta) yields a negative
+        // intermediate width — the min clamp must catch it before the u32 cast.
+        assert_eq!(resize_rect(tiny, ResizeEdge::NorthWest, 10_000.0, 10_000.0, min, max),
                    Rect { x: -199, y: -149, width: 200, height: 150 });
 
         // Fractional deltas land on whole pixels.
