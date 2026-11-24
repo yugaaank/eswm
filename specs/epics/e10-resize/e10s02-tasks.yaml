@@ -1,7 +1,7 @@
 spec: specs/epics/e10-resize/e10s02-tiling-resize.md
 story_id: e10s02
 title: 'Tiling resize: split ratios for Master and Equal layouts'
-status: failing
+status: completed
 bcps: 5
 tasks:
 - id: e10s02t1

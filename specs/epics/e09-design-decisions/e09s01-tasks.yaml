@@ -1,7 +1,7 @@
 spec: specs/epics/e09-design-decisions/e09s01-window-state-model.md
 story_id: e09s01
 title: 'Window state model: ClientMode, mapped/minimized, single focus with MRU'
-status: failing
+status: completed
 bcps: 3
 tasks:
 - id: e09s01t1

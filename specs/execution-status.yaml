@@ -5,4 +5,5 @@ e05-core-loop-rendering: completed
 e06-input-focus: completed
 e07-spawn-keybinds: completed
 e08-panics-correctness: completed
-e09-design-decisions: pending
+e09-design-decisions: in_progress
+e10-resize: completed

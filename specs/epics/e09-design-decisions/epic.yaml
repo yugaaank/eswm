@@ -1,7 +1,7 @@
 id: e09
 slug: design-decisions
 title: Design Decisions (Window Model, Outputs, IPC, Lua)
-status: pending
+status: in_progress
 wsjf_rank: 8
 bcps_total: 8
 core_value: |

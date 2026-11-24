@@ -1,7 +1,7 @@
 spec: specs/epics/e10-resize/e10s01-floating-resize.md
 story_id: e10s01
 title: 'Floating resize: 8 handles, constraints, input semantics'
-status: failing
+status: completed
 bcps: 5
 tasks:
 - id: e10s01t1

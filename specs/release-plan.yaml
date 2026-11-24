@@ -77,7 +77,7 @@ epics:
     slug: design-decisions
     title: Design Decisions (Window Model, Outputs, IPC, Lua)
     wsjf_rank: 8
-    status: pending
+    status: in_progress
     stories: []
     description: |
       Settle shapes that leak into IPC JSON, Lua API and Tacit backend: window
@@ -89,7 +89,7 @@ epics:
     slug: resize
     title: Resize Windows (Floating Handles + Tiling Splits)
     wsjf_rank: 9
-    status: pending
+    status: completed
     stories: []
     description: |
       Floating windows gain eight directional resize handles, compositor-side
