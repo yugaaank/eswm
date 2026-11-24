@@ -1754,7 +1754,7 @@ pub fn equal_split(
 
 #[cfg(test)]
 mod tests {
-    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation, size_action, SizeAction, fill_scale, MAX_SIZE_RESENDS, SIZE_RESEND_INTERVAL, ResizeEdge, resize_edge_at};
+    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation, size_action, SizeAction, fill_scale, MAX_SIZE_RESENDS, SIZE_RESEND_INTERVAL, ResizeEdge, resize_edge_at, resize_rect};
     use std::time::Duration;
 
     // e10s01t1: hit-testing, rect math and cursors must all agree on which
@@ -1786,6 +1786,47 @@ mod tests {
         assert_eq!(resize_edge_at(frame, (mx, 65.0), pad), None);
         assert_eq!(resize_edge_at(frame, (150.0, my), pad), None);
         assert_eq!(resize_edge_at(frame, (93.0, my), pad), None);
+    }
+
+    // e10s01t2: left/top drags move the origin while the opposite edge stays
+    // pinned. Clamps must survive huge deltas without u32 underflow.
+    #[test]
+    fn resize_rect_moves_grabbed_edge_and_clamps() {
+        let r = Rect { x: 100, y: 200, width: 300, height: 200 };
+        let min = (200, 150);
+        let max = (1000, 800);
+
+        assert_eq!(resize_rect(r, ResizeEdge::East, 40.0, 999.0, min, max),
+                   Rect { x: 100, y: 200, width: 340, height: 200 });
+        assert_eq!(resize_rect(r, ResizeEdge::South, 999.0, 30.0, min, max),
+                   Rect { x: 100, y: 200, width: 300, height: 230 });
+
+        assert_eq!(resize_rect(r, ResizeEdge::West, -40.0, 0.0, min, max),
+                   Rect { x: 60, y: 200, width: 340, height: 200 });
+        assert_eq!(resize_rect(r, ResizeEdge::North, 0.0, -30.0, min, max),
+                   Rect { x: 100, y: 170, width: 300, height: 230 });
+        assert_eq!(resize_rect(r, ResizeEdge::NorthWest, -40.0, -30.0, min, max),
+                   Rect { x: 60, y: 170, width: 340, height: 230 });
+
+        // Shrink clamps keep the right/bottom edges pinned.
+        assert_eq!(resize_rect(r, ResizeEdge::West, 10_000.0, 0.0, min, max),
+                   Rect { x: 200, y: 200, width: 200, height: 200 });
+        assert_eq!(resize_rect(r, ResizeEdge::North, 0.0, 10_000.0, min, max),
+                   Rect { x: 100, y: 250, width: 300, height: 150 });
+
+        // Grow clamps.
+        assert_eq!(resize_rect(r, ResizeEdge::East, 10_000.0, 0.0, min, max),
+                   Rect { x: 100, y: 200, width: 1000, height: 200 });
+        assert_eq!(resize_rect(r, ResizeEdge::South, 0.0, 10_000.0, min, max),
+                   Rect { x: 100, y: 200, width: 300, height: 800 });
+
+        // Tiny original, huge negative delta: min wins, no u32 underflow.
+        let tiny = Rect { x: 0, y: 0, width: 1, height: 1 };
+        assert_eq!(resize_rect(tiny, ResizeEdge::NorthWest, -10_000.0, -10_000.0, min, max),
+                   Rect { x: -199, y: -149, width: 200, height: 150 });
+
+        // Fractional deltas land on whole pixels.
+        assert_eq!(resize_rect(r, ResizeEdge::East, 10.6, 0.0, min, max).width, 311);
     }
 
     fn manager() -> (WindowManager, u64) {
