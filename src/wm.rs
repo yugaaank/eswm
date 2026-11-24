@@ -1888,6 +1888,16 @@ impl WindowManager {
         self.arrange_output(output);
     }
 
+    /// e10s02t8: restore all split inputs for an output to their defaults.
+    pub fn reset_tiling_splits(&mut self, output: OutputId) {
+        let Some(state) = self.outputs.get_mut(&output) else {
+            return;
+        };
+        state.splits = TilingSplits::standard();
+        self.dirty = true;
+        self.arrange_output(output);
+    }
+
     /// Tiled windows on `output`'s active workspace, in arrangement order.
     fn arranged_tiled_ids(&self, output: OutputId) -> Vec<WindowId> {
         let Some(workspace_id) = self.outputs.get(&output).map(|o| o.active_workspace) else {
@@ -2656,6 +2666,7 @@ mod tests {
         let (mut manager, output) = manager();
         let master = manager.add_window(output, "kitty", "master").unwrap();
         let top = manager.add_window(output, "kitty", "top").unwrap();
+        let _bottom = manager.add_window(output, "kitty", "bottom").unwrap();
 
         manager.set_master_ratio(output, 0.2);
         manager.set_stack_weights(output, vec![4.0, 1.0]);

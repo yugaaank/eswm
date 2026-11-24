@@ -1264,6 +1264,12 @@ fn execute_keybind(state: &mut State, kb: &lua_state::Keybind) -> FilterResult<(
             }
             crate::apply_layout(state);
         }
+        "reset_tiling_splits" => {
+            if let Some(output) = state.wm.primary_output_id() {
+                state.wm.reset_tiling_splits(output);
+                crate::apply_layout(state);
+            }
+        }
         "exec_cmd" => {
             if let Some(cmd) = &kb.cmd {
                 let _ = crate::spawn_shell_command(cmd);
@@ -1419,34 +1425,65 @@ fn resize_cursor_icon(edge: wm::ResizeEdge) -> CursorIcon {
     }
 }
 
+/// Cursor for a tiling split boundary (e10s02t8): horizontal drags get the
+/// east/west arrows, vertical drags the north/south arrows.
+fn split_cursor_icon(axis: wm::SplitAxis) -> CursorIcon {
+    match axis {
+        wm::SplitAxis::Vertical => CursorIcon::EwResize,
+        wm::SplitAxis::Horizontal => CursorIcon::NsResize,
+    }
+}
+
 /// Point the compositor cursor at the hovered handle, or keep the icon of the
 /// handle being dragged. A plain pointer over free space gets the default icon.
 fn update_resize_cursor(state: &mut State) {
     let Some(udev) = state.udev.as_ref() else { return };
     let pos = udev.pointer_location;
     let drag = udev.drag;
-    let hovered = if drag.is_some() {
-        drag.filter(|d| matches!(d.mode, DragMode::Resize))
-            .map(|d| resize_cursor_icon(d.edge))
-    } else {
-        let bs = state.wm.border_size();
-        let tb = state.decoration.lock().unwrap().titlebar_height;
-        state
-            .wm
-            .window_at((pos.x, pos.y), bs)
-            .and_then(|id| state.wm.window(id))
-            .filter(|w| {
-                w.mode.placement == wm::Placement::Floating
-                    && w.mode.presentation == wm::Presentation::Normal
-            })
-            .and_then(|w| {
-                wm::resize_edge_at(
-                    wm::outer_frame(w.target_rect, bs, tb),
-                    (pos.x, pos.y),
-                    RESIZE_HANDLE_PADDING,
-                )
-            })
-            .map(resize_cursor_icon)
+    let hovered = match drag {
+        Some(d) => match d.mode {
+            DragMode::Resize => Some(resize_cursor_icon(d.edge)),
+            DragMode::TilingSplit => d.split.map(|s| split_cursor_icon(s.axis)),
+            DragMode::Move => None,
+        },
+        None => {
+            // Tiling boundaries win over floating frame handles: a tiled
+            // window has no resize frame of its own.
+            let split = state
+                .wm
+                .window_at((pos.x, pos.y), state.wm.border_size())
+                .and_then(|id| state.wm.window(id))
+                .and_then(|w| {
+                    let rects = state.wm.tiled_split_rects(w.output);
+                    wm::tiling_split_edge_at(
+                        &rects,
+                        (pos.x, pos.y),
+                        RESIZE_HANDLE_PADDING as f64,
+                    )
+                });
+            if let Some(split) = split {
+                Some(split_cursor_icon(split.axis))
+            } else {
+                let bs = state.wm.border_size();
+                let tb = state.decoration.lock().unwrap().titlebar_height;
+                state
+                    .wm
+                    .window_at((pos.x, pos.y), bs)
+                    .and_then(|id| state.wm.window(id))
+                    .filter(|w| {
+                        w.mode.placement == wm::Placement::Floating
+                            && w.mode.presentation == wm::Presentation::Normal
+                    })
+                    .and_then(|w| {
+                        wm::resize_edge_at(
+                            wm::outer_frame(w.target_rect, bs, tb),
+                            (pos.x, pos.y),
+                            RESIZE_HANDLE_PADDING,
+                        )
+                    })
+                    .map(resize_cursor_icon)
+            }
+        }
     };
     let status = hovered
         .map(CursorImageStatus::Named)
@@ -3837,6 +3874,12 @@ enum DeviceAddError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn split_cursor_icon_matches_drag_axis() {
+        assert!(matches!(split_cursor_icon(wm::SplitAxis::Vertical), CursorIcon::EwResize));
+        assert!(matches!(split_cursor_icon(wm::SplitAxis::Horizontal), CursorIcon::NsResize));
+    }
 
     // BUG-2026-11-24-SUPER-DRAG-LEAK: the compositor must swallow the button
     // that starts a move/resize drag. Otherwise the app sees its own click and

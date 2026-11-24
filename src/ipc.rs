@@ -87,6 +87,8 @@ pub enum CompCmd {
     FocusWindow(u64),
     /// eswm dock: toggle minimized (mapped) state of the window with this id
     ToggleMinimize(u64),
+    /// e10s02t8: restore default tiling splits on the primary output
+    ResetTilingSplits,
     /// anything eswm sends before we implement it
     Unsupported(String),
 }
@@ -133,6 +135,12 @@ pub fn apply_cmd(state: &mut State, ipc: &Ipc, cmd: CompCmd) {
         CompCmd::ToggleMinimize(id) => {
             state.wm.toggle_minimize(id);
             crate::apply_layout(state);
+        }
+        CompCmd::ResetTilingSplits => {
+            if let Some(output) = state.wm.primary_output_id() {
+                state.wm.reset_tiling_splits(output);
+                crate::apply_layout(state);
+            }
         }
         CompCmd::Unsupported(_) => {}
     }
