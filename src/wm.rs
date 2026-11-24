@@ -1911,7 +1911,7 @@ pub fn equal_split(
 
 #[cfg(test)]
 mod tests {
-    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation, size_action, SizeAction, fill_scale, MAX_SIZE_RESENDS, SIZE_RESEND_INTERVAL, ResizeEdge, resize_edge_at, resize_rect, MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT, TilingSplits, clamp_master_ratio, normalize_weights, MIN_SPLIT_SHARE};
+    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation, size_action, SizeAction, fill_scale, MAX_SIZE_RESENDS, SIZE_RESEND_INTERVAL, ResizeEdge, resize_edge_at, resize_rect, MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT, TilingSplits, clamp_master_ratio, normalize_weights, MIN_SPLIT_SHARE, weighted_split};
     use std::time::Duration;
 
     // e10s02t1: splits live on the output so they survive re-arrangement.
@@ -1925,6 +1925,30 @@ mod tests {
         assert!(d.col_weights.is_empty());
         assert!(d.row_weights.is_empty());
         assert!((MIN_SPLIT_SHARE - 0.15).abs() < f64::EPSILON);
+    }
+
+    // e10s02t2: one allocation helper serves Master stacks and Equal columns
+    // and rows. Largest-remainder rounding makes the parts sum to the exact
+    // available space — no drifting one-pixel gaps after repeated drags.
+    #[test]
+    fn weighted_split_allocates_equal_skewed_and_clamped() {
+        assert_eq!(weighted_split(1000, 0, &[1.0, 1.0, 1.0], MIN_SPLIT_SHARE), vec![334, 333, 333]);
+        assert_eq!(weighted_split(1000, 10, &[1.0, 1.0], MIN_SPLIT_SHARE), vec![490, 490]);
+        assert_eq!(weighted_split(1000, 0, &[3.0, 1.0], MIN_SPLIT_SHARE), vec![750, 250]);
+        // A zero weight is lifted to the floor instead of collapsing a cell.
+        assert_eq!(weighted_split(1000, 0, &[1000.0, 0.0], MIN_SPLIT_SHARE), vec![850, 150]);
+    }
+
+    #[test]
+    fn weighted_split_handles_degenerate_inputs() {
+        assert!(weighted_split(1000, 0, &[], MIN_SPLIT_SHARE).is_empty());
+        assert_eq!(weighted_split(0, 0, &[1.0, 1.0], MIN_SPLIT_SHARE), vec![0, 0]);
+        // Gaps larger than the total must not underflow into a huge u32.
+        assert_eq!(weighted_split(5, 10, &[1.0, 1.0], MIN_SPLIT_SHARE), vec![0, 0]);
+        let parts = weighted_split(100, 0, &[f64::NAN, 1.0], MIN_SPLIT_SHARE);
+        assert_eq!(parts.len(), 2);
+        assert!(parts.iter().all(|v| v.is_finite()));
+        assert_eq!(parts.iter().sum::<u32>(), 100);
     }
 
     #[test]
