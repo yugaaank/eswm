@@ -1367,6 +1367,8 @@ fn process_shortcut(state: &mut State, mods: &ModifiersState, keysym: KeysymHand
 // Linux input event codes for mouse buttons
 const BTN_LEFT: u32 = 0x110;
 const BTN_RIGHT: u32 = 0x111;
+/// Invisible grab zone outside a frame so edges are easy to catch (e10s01).
+const RESIZE_HANDLE_PADDING: i32 = 6;
 
 /// A compositor-owned drag eats its initiating press and matching release.
 /// Forwarding either lets the app start its own drag (hello, file selection)
@@ -1799,57 +1801,67 @@ impl State {
                         pointer.frame(self);
                         return;
                     }
-                    // Super+button starts a move/resize drag on a floating window
-                    if mods.logo && (button == BTN_LEFT || button == BTN_RIGHT)
-                        && let Some(id) = self.wm.window_at((location.x, location.y), self.wm.border_size())
+                    let titlebar_height = self.decoration.lock().unwrap().titlebar_height;
+                    if mods.logo && (button == BTN_LEFT || button == BTN_RIGHT) {
+                        // Super+drag keeps the old shortcut: left moves, right
+                        // resizes from the bottom-right corner.
+                        if let Some(id) = self.wm.window_at((location.x, location.y), self.wm.border_size())
                             && self.wm.window(id).map(|w| w.mode.placement == wm::Placement::Floating && w.mode.presentation == wm::Presentation::Normal).unwrap_or(false) {
                                 let rect = self.wm.window(id).unwrap().target_rect;
                                 self.udev.as_mut().unwrap().drag = Some(DragState {
                                     window: id,
-                                    mode: if button == BTN_LEFT {
-                                        DragMode::Move
-                                    } else {
-                                        DragMode::Resize
-                                    },
+                                    mode: if button == BTN_LEFT { DragMode::Move } else { DragMode::Resize },
                                     start: location,
                                     orig_rect: rect,
                                     button,
-                                    // Super+RMB keeps the old bottom-right
-                                    // resize shortcut until edge picking lands.
                                     edge: wm::ResizeEdge::SouthEast,
                                 });
                             }
-                    // Titlebar button clicks: close / maximize / minimize.
-                    // Clicking the titlebar itself (not a button) drags a floating window.
-                    let titlebar_height = self.decoration.lock().unwrap().titlebar_height;
-                    if titlebar_height > 0
-                        && let Some(id) = self.wm.window_at((location.x, location.y), self.wm.border_size()) {
-                            let window = self.wm.window(id).unwrap();
-                            let rect = window.target_rect;
-                            let mode = window.mode;
-                            let tb = titlebar_height as f64;
-                            // Titlebar is drawn above the client surface: y in [rect.y - tb, rect.y)
-                            let in_titlebar = location.y >= rect.y as f64 - tb && location.y < rect.y as f64
-                                && location.x >= rect.x as f64 && location.x < rect.x as f64 + rect.width as f64;
-                            if in_titlebar {
-                                match wm::titlebar_button_at(rect, titlebar_height, location.x) {
-                                    Some(button) => apply_titlebar_action(self, id, button),
-                                    None if mode.placement == wm::Placement::Floating && mode.presentation == wm::Presentation::Normal => {
-                                        // Titlebar drag: start move on floating window
-                                        let rect = self.wm.window(id).unwrap().target_rect;
-                                        self.udev.as_mut().unwrap().drag = Some(DragState {
-                                            window: id,
-                                            mode: DragMode::Move,
-                                            start: location,
-                                            orig_rect: rect,
-                                            button,
-                                            edge: wm::ResizeEdge::SouthEast,
-                                        });
-                                    }
-                                    None => {}
-                                }
+                    } else if let Some(id) = self.wm.window_at((location.x, location.y), self.wm.border_size())
+                        && let Some(window) = self.wm.window(id) {
+                        // Priority on a plain press: titlebar buttons, then frame
+                        // edges, then the free titlebar (move). Buttons win so the
+                        // 6px grab zone can never swallow close/maximize/minimize.
+                        let rect = window.target_rect;
+                        let mode = window.mode;
+                        let tb = titlebar_height as f64;
+                        let in_titlebar = location.y >= rect.y as f64 - tb && location.y < rect.y as f64
+                            && location.x >= rect.x as f64 && location.x < rect.x as f64 + rect.width as f64;
+                        let titlebar_button = if in_titlebar && titlebar_height > 0 {
+                            wm::titlebar_button_at(rect, titlebar_height, location.x)
+                        } else {
+                            None
+                        };
+                        if let Some(tb_button) = titlebar_button {
+                            apply_titlebar_action(self, id, tb_button);
+                        } else if mode.placement == wm::Placement::Floating
+                            && mode.presentation == wm::Presentation::Normal {
+                            let frame = wm::outer_frame(rect, self.wm.border_size(), titlebar_height);
+                            if let Some(edge) = wm::resize_edge_at(
+                                frame,
+                                (location.x, location.y),
+                                RESIZE_HANDLE_PADDING,
+                            ) {
+                                self.udev.as_mut().unwrap().drag = Some(DragState {
+                                    window: id,
+                                    mode: DragMode::Resize,
+                                    start: location,
+                                    orig_rect: rect,
+                                    button,
+                                    edge,
+                                });
+                            } else if in_titlebar {
+                                self.udev.as_mut().unwrap().drag = Some(DragState {
+                                    window: id,
+                                    mode: DragMode::Move,
+                                    start: location,
+                                    orig_rect: rect,
+                                    button,
+                                    edge: wm::ResizeEdge::SouthEast,
+                                });
                             }
                         }
+                    }
                     // Any drag started above belongs to eswm, not the client.
                     swallow_client_button =
                         drag_consumes_button(self.udev.as_ref().unwrap().drag, button);

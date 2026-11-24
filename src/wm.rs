@@ -497,6 +497,19 @@ pub fn resize_rect(
     }
 }
 
+/// Full outer frame rectangle (borders on all sides + titlebar above).
+/// Shared by hit-testing and resize-edge detection so they cannot drift.
+pub fn outer_frame(target: Rect, border_size: u32, titlebar_height: u32) -> Rect {
+    let bs = border_size as i32;
+    let tb = titlebar_height as i32;
+    Rect {
+        x: target.x - bs,
+        y: target.y - bs - tb,
+        width: (target.width as i32 + 2 * bs).max(0) as u32,
+        height: (target.height as i32 + 2 * bs + tb).max(0) as u32,
+    }
+}
+
 /// Compute the border frame for a window's target_rect.
 /// The frame extends `border_size` pixels outward on all sides, plus
 /// `titlebar_height` pixels upward from the top edge.
@@ -1107,7 +1120,6 @@ impl WindowManager {
         let primary = self.primary_output_id()?;
         let output_state = self.outputs.get(&primary)?;
         let workspace = self.workspaces.get(&output_state.active_workspace)?;
-        let bs = border_size as i32;
         let focused = workspace.focused;
         let mut ordered: Vec<WindowId> = Vec::new();
         if let Some(f) = focused {
@@ -1123,15 +1135,9 @@ impl WindowManager {
             if !window.mapped || window.minimized {
                 continue;
             }
-            // Hit test against target_rect expanded by border size (border is part of window)
-            // and titlebar height (titlebar sits above the client surface).
-            let tb = self.titlebar_height as i32;
-            let r = Rect {
-                x: window.target_rect.x - bs,
-                y: window.target_rect.y - bs - tb,
-                width: window.target_rect.width.saturating_add(2 * border_size),
-                height: window.target_rect.height.saturating_add(2 * border_size + tb as u32),
-            };
+            // Hit test the outer frame (borders + titlebar), the same rect the
+            // renderer draws and the resize-edge detector uses.
+            let r = outer_frame(window.target_rect, border_size, self.titlebar_height);
             if r.width == 0 || r.height == 0 {
                 continue;
             }
