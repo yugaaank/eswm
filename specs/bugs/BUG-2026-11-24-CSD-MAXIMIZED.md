@@ -8,7 +8,7 @@ title: Tiled CSD clients leave a gap inside the frame because Maximized is not a
 
 # BUG-2026-11-24-CSD-MAXIMIZED — Tiled CSD clients leave a gap inside the frame
 
-**Status:** fixed on branch; live DRM UAT pending operator
+**Status:** fixed on main (4f3c1a7); live DRM UAT passed by operator
 **Severity:** medium
 **Scope:** wayland / CSD
 **Security impact:** NONE — xdg state bits only tell clients how they are placed.
@@ -85,9 +85,11 @@ existing exclusive bits. The state helper remains the single source of truth.
 - [x] Maximized/fullscreen windows keep exclusive existing bits.
 - [x] New unit test RED → GREEN.
 - [ ] Full preflight green.
-- [ ] Live DRM UAT: Helium fills the frame with no inset gap; a GTK client
-      keeps correct decorations.
+- [x] Live DRM UAT: operator confirmed "yes working" — Helium fills the frame
+      with no inset gap (2026-11-24).
 
 ## Resolution
 
-Fix applied on branch; awaiting preflight + operator UAT before merge.
+Fixed on main as `4f3c1a7`. RED/GREEN test in place; clippy clean, 219 tests,
+build clean. Operator confirmed the Helium border gap is gone on the live DRM
+session. GTK decoration regression check was not separately exercised.

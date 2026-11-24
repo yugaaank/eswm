@@ -658,7 +658,8 @@ bug-2026-11-24-csd-maximized:
   date: "2026-11-24"
   severity: medium
   priority: medium
-  status: fixed-on-branch
+  status: fixed
+  fixed_in: 4f3c1a7
   reported_by: operator_observation
   risk_level: low
   security_impact: none
@@ -671,10 +672,13 @@ bug-2026-11-24-csd-maximized:
     state helper so CSD clients suppress their shadow inset, matching
     Hyprland's CSD-off behavior. Floating stays stateless; genuine maximized
     and fullscreen windows keep their exclusive bits.
+  hardware_uat: passed_operator
+  uat_note: "Operator confirmed 'yes working' — Helium fills the tile frame with no inset gap on live DRM."
   verify: |
     cargo test --bin eswm xdg_configure_state_marks_tiled_windows_only;
-    cargo clippy --all-targets; cargo test; cargo build. Live DRM UAT: Helium
-    fills the tile frame with no inset gap; GTK decorations stay correct.
+    cargo clippy --all-targets; cargo test; cargo build. Live DRM UAT passed:
+    Helium fills the tile frame with no inset gap. GTK decoration regression
+    check not separately exercised.
 
 bug-2026-11-24-super-drag-leak:
   id: BUG-2026-11-24-SUPER-DRAG-LEAK
