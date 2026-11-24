@@ -1,0 +1,50 @@
+story_id: e10s02
+verified_at: "2026-11-24T11:04:21Z"
+verifier: develop-tdd
+risk: P1
+branch: e10s02-tiling-resize
+head: 7be87bbe62bb15a7ed1f606d11573f40c24c1e29
+phases:
+  branch_check:
+    passed: true
+    branch: e10s02-tiling-resize
+    note: "Created from local main after e10s01 preflight was green (206 tests). Lock e10s02 acquired in specs/agent-locks.yaml."
+  preflight:
+    passed: true
+    command: "cargo clippy --all-targets && cargo test && cargo build"
+    note: "Final contiguous run at HEAD 7be87bb: warning-free, 219 passed, build green (/tmp/opencode/e10s02-final-preflight.log)."
+  task_verification:
+    t1: {command: "cargo test --bin eswm tiling_splits", passed: true, result: "3 passed — TilingSplits defaults, master clamp, weight normalize/floor"}
+    t2: {command: "cargo test --bin eswm weighted_split", passed: true, result: "2 passed — largest-remainder allocation and degenerate inputs"}
+    t3: {command: "cargo test --bin eswm master_ratio", passed: true, result: "2 passed — default 0.6 reproduces 1149px master; 0.3 and 0.0 floor verified"}
+    t4: {command: "cargo test --bin eswm stack_weights", passed: true, result: "1 passed — 3:1 stack weights, 1000:1 floor; equal default preserved via integer path"}
+    t5: {command: "cargo test --bin eswm equal_split", passed: true, result: "7 passed — skewed column/row weights, all original grid tests unchanged"}
+    t6: {command: "cargo test --bin eswm tiling_split_edge", passed: true, result: "1 passed — internal vertical/horizontal boundaries detected; outer frame and centres rejected"}
+    t7: {command: "cargo test --bin eswm adjust_split", passed: true, result: "1 passed — Master ratio, stack weights and Equal columns move and clamp at 15%"}
+    t8: {command: "cargo test --bin eswm reset_tiling_splits", passed: true, result: "2 passed — WM reset restores defaults; Lua command queues CompCmd::ResetTilingSplits"}
+    t9: {command: "cargo clippy --all-targets && cargo test && cargo build", passed: true, result: "219 passed, 0 warnings, 0 failures, exit 0"}
+  terminal_verdict:
+    command: "cargo clippy --all-targets && cargo test && cargo build"
+    exit_code: 0
+    note: "Single contiguous run at HEAD 7be87bb: clippy warning-free, 219 passed, build green."
+  manual:
+    passed: false
+    pending: true
+    reason: "Live DRM UAT is operator-run from a TTY. The DRM/libseat backend must not be started inside an existing Wayland/X11 session (VT grab). Checklist: specs/verifications/uat-2026-11-24-e10s02-live-drm.md."
+    checklist: specs/verifications/uat-2026-11-24-e10s02-live-drm.md
+    automated_proxy: "Pure split math, rect geometry, hit-testing and reset dispatch are unit-tested. Unit tests cannot prove real pointer feel, cursor appearance on hardware, or client-visible reconfiguration after a split drag."
+  security_scan:
+    skipped: true
+    reason: "All tasks marked security: none — pointer/keyboard input and local Lua/control config only; no new auth, untrusted data or persistence surface."
+  blind_spot_check:
+    skipped: true
+    reason: "scripts/check-blind-spots.sh not present (same precedent as e09s01/e10s01)."
+  gaps:
+    closed: false
+    notes:
+      - "Live DRM UAT pending operator; no waiver recorded."
+      - "Default Master geometry stays byte-identical: the equal-stack path still uses integer division, while explicit weights use weighted_split. This preserves the legacy gap_between_stack_windows rects exactly."
+      - "Splits live on Output, not per window, because arrange_output owns every tiled rect and would erase overrides."
+      - "reset_tiling_splits resets all four split inputs on the primary output in one pass; Lua and keybind share CompCmd::ResetTilingSplits with the control socket."
+      - "Public WM split setters carry allow(dead_code): they are exercised by tests and are the intended API for future config surfaces; pointer drags use adjust_split."
+      - "CI remains unverified; nothing pushed to origin/main."

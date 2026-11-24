@@ -81,7 +81,7 @@ tasks:
   verify: cargo clippy --all-targets && cargo test && cargo build
   risk: P1
   security: none
-  status: failing
+  status: passing
   allure:
     severity: high
     categories: [e10-resize, tiling, preflight]
