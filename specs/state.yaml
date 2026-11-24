@@ -1,7 +1,7 @@
-active_flow: null
+active_flow: fix_bug
 active_epic_id: null
 active_story_id: null
-active_bug_id: null
+active_bug_id: BUG-2026-11-24-LAYER-INPUT
 release:
   target_version: null
   last_tag: null
@@ -12,8 +12,8 @@ epic_cycle:
   next_skill: null
   completed_steps: []
 bug_cycle:
-  current_step: 0
-  completed_steps: []
+  current_step: 4
+  completed_steps: [1, 2, 4]
 git:
   branch: main
   hash: "95a4b32"
@@ -46,8 +46,8 @@ handoff:
     - specs/epics/e09-design-decisions/epic.yaml
     - specs/epics/e09-design-decisions/e09s01-window-state-model.md
     - specs/epics/e09-design-decisions/e09s01-tasks.yaml
-  next_skill: kickoff-branch
-  last_bug: "BUG-2026-11-24-SUPER-DRAG-LEAK LANDED on main as f8d4b4d (merge of ac0314b): compositor drags swallow their own press/release and route motion to no surface, so Super+drag no longer starts client-side file selection. 198 tests + clippy --all-targets + build green (/tmp/opencode/super-drag-leak-preflight.log). Live DRM UAT pending operator."
+  next_skill: null
+  last_bug: "BUG-2026-11-24-LAYER-INPUT LANDED locally on main as the next commit: pointer focus now hit-tests the LayerMap in render z-order (overlay/top above windows, bottom/background below), keeps popup/drag/dock precedence, moves keyboard focus to interactive layers on click, and refreshes focus in PointerAxis. 219 tests + clippy --all-targets + build green (/tmp/opencode/layer-input-preflight.log). Live DRM UAT pending operator."
 decisions:
   - story: e10s02
     note: "Tiling resize landed locally as 95a4b32. Design: TilingSplits on Output survives re-arrangement; master_ratio default 0.6 is byte-identical to the old 3/5 split; normalize_weights lifts only violating weights to the 15% floor; weighted_split uses largest-remainder rounding so parts sum exactly. Master stack keeps the legacy integer-division path when no weights are set, preserving existing gap tests. tiling_split_edge_at works on already-arranged rects, so Master and Equal share one hit-test; adjust_split moves the named pair's weights. Deferred as before: persistence, snap layouts, cross-monitor drag, touch, animations."

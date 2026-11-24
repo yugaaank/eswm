@@ -1447,6 +1447,21 @@ fn update_resize_cursor(state: &mut State) {
             DragMode::Move => None,
         },
         None => {
+            // A bar/launcher covers any window handle behind it; showing a
+            // resize arrow through waybar is the cursor equivalent of a ghost.
+            if [WlrLayer::Overlay, WlrLayer::Top]
+                .into_iter()
+                .any(|band| layer_surface_under(state, pos, band).is_some())
+            {
+                let status = CursorImageStatus::default_named();
+                if let Some(udev) = state.udev.as_mut()
+                    && udev.cursor_image != status
+                {
+                    udev.cursor_image = status;
+                    state.redraw_needed = true;
+                }
+                return;
+            }
             // Tiling boundaries win over floating frame handles: a tiled
             // window has no resize frame of its own.
             let split = state
@@ -1502,6 +1517,51 @@ fn drag_consumes_button(drag: Option<DragState>, button: u32) -> bool {
     drag.is_some_and(|drag| drag.button == button)
 }
 
+/// Hit-test layer-shell surfaces on the primary output, newest-first inside
+/// `band`. Returns the root layer, the concrete surface under the pointer and
+/// that surface's screen origin (what `pointer.motion` needs).
+///
+/// Layer surfaces are ordinary wl_surfaces; the compositor only has to route to
+/// them. Hit-testing windows alone made waybar/fuzzel/notifications an input
+/// black hole — the cursor moved but clicks landed in empty space. This is the
+/// eswm equivalent of instantWM's `layer_surface_in_band`.
+fn layer_surface_under(
+    state: &State,
+    pos: Point<f64, Logical>,
+    band: WlrLayer,
+) -> Option<(
+    smithay::desktop::LayerSurface,
+    wl_surface::WlSurface,
+    Point<f64, Logical>,
+)> {
+    let output = state.primary_output.clone()?;
+    let map = layer_map_for_output(&output);
+    let output_origin = output.current_location().to_f64();
+    // `layers_on` yields map/insertion order; the newest layer sits on top.
+    for layer in map.layers_on(band).rev() {
+        let Some(geom) = map.layer_geometry(layer) else { continue };
+        let rel = pos - output_origin - geom.loc.to_f64();
+        if let Some((surface, loc)) = layer.surface_under(rel, WindowSurfaceType::ALL) {
+            let origin = Point::from((
+                loc.x as f64 + geom.loc.x as f64 + output_origin.x,
+                loc.y as f64 + geom.loc.y as f64 + output_origin.y,
+            ));
+            return Some((layer.clone(), surface, origin));
+        }
+    }
+    None
+}
+
+/// Root layer owning `surface` (top-level, subsurface or popup), if any.
+fn layer_root_for_surface(
+    state: &State,
+    surface: &wl_surface::WlSurface,
+) -> Option<smithay::desktop::LayerSurface> {
+    let output = state.primary_output.clone()?;
+    let map = layer_map_for_output(&output);
+    map.layer_for_surface(surface, WindowSurfaceType::ALL).cloned()
+}
+
 /// Recompute pointer (hover/drag) focus from `pos` and return the surface-local
 /// hit for `Pointer.motion`, or None when over empty space.
 /// If a popup has an active grab, all pointer events go to the popup surface.
@@ -1549,11 +1609,31 @@ fn pointer_focus(state: &mut State, pos: Point<f64, Logical>) -> Option<(wl_surf
             }
             return None;
         }
+        // Overlay/Top layers render above windows, so they get the pointer
+        // first. (Bottom/Background are below windows and fall through.)
+        for band in [WlrLayer::Overlay, WlrLayer::Top] {
+            if let Some((_, surface, origin)) = layer_surface_under(state, pos, band) {
+                if let Some(udev) = state.udev.as_mut() {
+                    udev.pointer_focus = None;
+                }
+                return Some((surface, origin));
+            }
+        }
         let hit = state
             .wm
             .surface_under((pos.x, pos.y))
             .map(|(id, local)| (id, Point::from((pos.x - local.0, pos.y - local.1))));
         let Some((id, origin)) = hit else {
+            // No window under the pointer: Bottom/Background layers (wallpaper,
+            // desktop widgets) are the last surfaces that may want input.
+            for band in [WlrLayer::Bottom, WlrLayer::Background] {
+                if let Some((_, surface, origin)) = layer_surface_under(state, pos, band) {
+                    if let Some(udev) = state.udev.as_mut() {
+                        udev.pointer_focus = None;
+                    }
+                    return Some((surface, origin));
+                }
+            }
             if let Some(udev) = state.udev.as_mut() {
                 udev.pointer_focus = None;
             }
@@ -1952,6 +2032,16 @@ impl State {
                     // still since the layout/workspace under it changed.
                     let serial = SCOUNTER.next_serial();
                     let focus = pointer_focus(self, location);
+                    // A press on an Overlay/Top layer (bar, launcher, OSD) belongs
+                    // to that surface, not to whatever window it happens to cover.
+                    // Without this the click-to-focus path below stole focus from
+                    // the bar and started drags on hidden window handles.
+                    let layer_click = focus
+                        .as_ref()
+                        .and_then(|(surface, _)| layer_root_for_surface(self, surface))
+                        .filter(|layer| {
+                            matches!(layer.layer(), WlrLayer::Overlay | WlrLayer::Top)
+                        });
                     let pointer = self.seat.get_pointer().unwrap();
                     pointer.motion(
                         self,
@@ -2020,179 +2110,198 @@ impl State {
                         pointer.frame(self);
                         return;
                     }
-                    let titlebar_height = self.decoration.lock().unwrap().titlebar_height;
-                    if mods.logo && (button == BTN_LEFT || button == BTN_RIGHT) {
-                        // Super+drag keeps the old shortcut: left moves, right
-                        // resizes from the bottom-right corner.
-                        if let Some(id) = self.wm.window_at((location.x, location.y), self.wm.border_size())
-                            && self.wm.window(id).map(|w| w.mode.placement == wm::Placement::Floating && w.mode.presentation == wm::Presentation::Normal).unwrap_or(false) {
-                                let rect = self.wm.window(id).unwrap().target_rect;
-                                self.udev.as_mut().unwrap().drag = Some(DragState {
-                                    window: id,
-                                    mode: if button == BTN_LEFT { DragMode::Move } else { DragMode::Resize },
-                                    start: location,
-                                    orig_rect: rect,
-                                    button,
-                                    edge: wm::ResizeEdge::SouthEast,
-                                    split: None,
-                                    armed: false,
-                                    cancelled: false,
-                                });
+                    if let Some(layer) = layer_click {
+                        // OnDemand layers (fuzzel, launcher menus) ask for
+                        // keyboard on click; passive bars must leave the app's
+                        // focus alone.
+                        if layer.can_receive_keyboard_focus() {
+                            let surface = layer.wl_surface().clone();
+                            if let Some(keyboard) = self.seat.get_keyboard() {
+                                keyboard.set_focus(self, Some(surface), SCOUNTER.next_serial());
                             }
-                    } else if let Some(id) = self.wm.window_at((location.x, location.y), self.wm.border_size())
-                        && let Some(window) = self.wm.window(id) {
-                        // Priority on a plain press: titlebar buttons, then frame
-                        // edges, then the free titlebar (move). Buttons win so the
-                        // 6px grab zone can never swallow close/maximize/minimize.
-                        let rect = window.target_rect;
-                        let mode = window.mode;
-                        let output = window.output;
-                        let tb = titlebar_height as f64;
-                        let in_titlebar = location.y >= rect.y as f64 - tb && location.y < rect.y as f64
-                            && location.x >= rect.x as f64 && location.x < rect.x as f64 + rect.width as f64;
-                        let titlebar_button = if in_titlebar && titlebar_height > 0 {
-                            wm::titlebar_button_at(rect, titlebar_height, location.x)
-                        } else {
-                            None
-                        };
-                        if let Some(tb_button) = titlebar_button {
-                            apply_titlebar_action(self, id, tb_button);
-                        } else if mode.placement == wm::Placement::Tiled
-                            && mode.presentation == wm::Presentation::Normal {
-                            // Internal boundaries own a 6px grab zone. Outer
-                            // frame and window centres fall through to focus.
-                            let rects = self.wm.tiled_split_rects(output);
-                            if let Some(split) = wm::tiling_split_edge_at(
-                                &rects,
-                                (location.x, location.y),
-                                RESIZE_HANDLE_PADDING as f64,
-                            ) {
-                                self.udev.as_mut().unwrap().drag = Some(DragState {
-                                    window: id,
-                                    mode: DragMode::TilingSplit,
-                                    start: location,
-                                    orig_rect: rect,
-                                    button,
-                                    edge: wm::ResizeEdge::SouthEast,
-                                    split: Some(split),
-                                    armed: false,
-                                    cancelled: false,
-                                });
+                            keyboard_focus_set_layer(self);
+                        }
+                        tracing::debug!(
+                            "click at ({:.0},{:.0}) -> layer {:?}",
+                            location.x,
+                            location.y,
+                            layer.layer()
+                        );
+                    } else {
+                        let titlebar_height = self.decoration.lock().unwrap().titlebar_height;
+                        if mods.logo && (button == BTN_LEFT || button == BTN_RIGHT) {
+                            // Super+drag keeps the old shortcut: left moves, right
+                            // resizes from the bottom-right corner.
+                            if let Some(id) = self.wm.window_at((location.x, location.y), self.wm.border_size())
+                                && self.wm.window(id).map(|w| w.mode.placement == wm::Placement::Floating && w.mode.presentation == wm::Presentation::Normal).unwrap_or(false) {
+                                    let rect = self.wm.window(id).unwrap().target_rect;
+                                    self.udev.as_mut().unwrap().drag = Some(DragState {
+                                        window: id,
+                                        mode: if button == BTN_LEFT { DragMode::Move } else { DragMode::Resize },
+                                        start: location,
+                                        orig_rect: rect,
+                                        button,
+                                        edge: wm::ResizeEdge::SouthEast,
+                                        split: None,
+                                        armed: false,
+                                        cancelled: false,
+                                    });
+                                }
+                        } else if let Some(id) = self.wm.window_at((location.x, location.y), self.wm.border_size())
+                            && let Some(window) = self.wm.window(id) {
+                            // Priority on a plain press: titlebar buttons, then frame
+                            // edges, then the free titlebar (move). Buttons win so the
+                            // 6px grab zone can never swallow close/maximize/minimize.
+                            let rect = window.target_rect;
+                            let mode = window.mode;
+                            let output = window.output;
+                            let tb = titlebar_height as f64;
+                            let in_titlebar = location.y >= rect.y as f64 - tb && location.y < rect.y as f64
+                                && location.x >= rect.x as f64 && location.x < rect.x as f64 + rect.width as f64;
+                            let titlebar_button = if in_titlebar && titlebar_height > 0 {
+                                wm::titlebar_button_at(rect, titlebar_height, location.x)
+                            } else {
+                                None
+                            };
+                            if let Some(tb_button) = titlebar_button {
+                                apply_titlebar_action(self, id, tb_button);
+                            } else if mode.placement == wm::Placement::Tiled
+                                && mode.presentation == wm::Presentation::Normal {
+                                // Internal boundaries own a 6px grab zone. Outer
+                                // frame and window centres fall through to focus.
+                                let rects = self.wm.tiled_split_rects(output);
+                                if let Some(split) = wm::tiling_split_edge_at(
+                                    &rects,
+                                    (location.x, location.y),
+                                    RESIZE_HANDLE_PADDING as f64,
+                                ) {
+                                    self.udev.as_mut().unwrap().drag = Some(DragState {
+                                        window: id,
+                                        mode: DragMode::TilingSplit,
+                                        start: location,
+                                        orig_rect: rect,
+                                        button,
+                                        edge: wm::ResizeEdge::SouthEast,
+                                        split: Some(split),
+                                        armed: false,
+                                        cancelled: false,
+                                    });
+                                }
+                            } else if mode.placement == wm::Placement::Floating
+                                && mode.presentation == wm::Presentation::Normal {
+                                let frame = wm::outer_frame(rect, self.wm.border_size(), titlebar_height);
+                                if let Some(edge) = wm::resize_edge_at(
+                                    frame,
+                                    (location.x, location.y),
+                                    RESIZE_HANDLE_PADDING,
+                                ) {
+                                    self.udev.as_mut().unwrap().drag = Some(DragState {
+                                        window: id,
+                                        mode: DragMode::Resize,
+                                        start: location,
+                                        orig_rect: rect,
+                                        button,
+                                        edge,
+                                        split: None,
+                                        armed: false,
+                                        cancelled: false,
+                                    });
+                                } else if in_titlebar {
+                                    self.udev.as_mut().unwrap().drag = Some(DragState {
+                                        window: id,
+                                        mode: DragMode::Move,
+                                        start: location,
+                                        orig_rect: rect,
+                                        button,
+                                        edge: wm::ResizeEdge::SouthEast,
+                                        split: None,
+                                        armed: false,
+                                        cancelled: false,
+                                    });
+                                }
                             }
-                        } else if mode.placement == wm::Placement::Floating
-                            && mode.presentation == wm::Presentation::Normal {
-                            let frame = wm::outer_frame(rect, self.wm.border_size(), titlebar_height);
-                            if let Some(edge) = wm::resize_edge_at(
-                                frame,
-                                (location.x, location.y),
-                                RESIZE_HANDLE_PADDING,
-                            ) {
-                                self.udev.as_mut().unwrap().drag = Some(DragState {
-                                    window: id,
-                                    mode: DragMode::Resize,
-                                    start: location,
-                                    orig_rect: rect,
-                                    button,
-                                    edge,
-                                    split: None,
-                                    armed: false,
-                                    cancelled: false,
-                                });
-                            } else if in_titlebar {
-                                self.udev.as_mut().unwrap().drag = Some(DragState {
-                                    window: id,
-                                    mode: DragMode::Move,
-                                    start: location,
-                                    orig_rect: rect,
-                                    button,
-                                    edge: wm::ResizeEdge::SouthEast,
-                                    split: None,
-                                    armed: false,
-                                    cancelled: false,
-                                });
+                        }
+                        // Dock bar click-to-focus / toggle-minimize (bottom strip of primary output).
+                        let dec = self.decoration.lock().unwrap();
+                        let dock_height = dec.dock_height;
+                        let dock = self.primary_output.as_ref().and_then(|o| {
+                            let loc = o.current_location();
+                            let size = o.current_mode().map(|m| m.size)?;
+                            Some((
+                                loc.x as f64,
+                                loc.y as f64,
+                                size.w as f64,
+                                size.h as f64,
+                            ))
+                        });
+                        drop(dec);
+                        if dock_height > 0
+                            && let Some((gx, _gy, gw, gh)) = dock {
+                                // Dock strip sits inside the non-exclusive zone (above
+                                // any bottom-anchored layer like waybar), matching the
+                                // render side; work_area already has dock_h subtracted.
+                                let wa_bottom = self
+                                    .wm
+                                    .work_area
+                                    .map(|wa| wa.y as f64 + wa.height as f64)
+                                    .unwrap_or(gh - dock_height as f64);
+                                if location.y >= wa_bottom
+                                    && location.y < wa_bottom + dock_height as f64
+                                    && location.x >= gx
+                                    && location.x < gx + gw
+                                {
+                                    let entries = self.wm.dock_entries();
+                                    let n = entries.len();
+                                    if n > 0 {
+                                        let seg_w = gw / n as f64;
+                                        let idx = ((location.x - gx) / seg_w).floor() as usize;
+                                        let idx = idx.min(n.saturating_sub(1));
+                                        if let Some(entry) = entries.get(idx) {
+                                            if button == BTN_LEFT {
+                                                // Left click: focus, restoring from minimized if needed.
+                                                self.wm.focus_window_or_restore(entry.id);
+                                            } else if button == BTN_RIGHT {
+                                                // Right click: toggle minimize.
+                                                self.wm.toggle_minimize(entry.id);
+                                            }
+                                            // Push the new focus/state to the client. Without this a
+                                            // restored dock window keeps stale xdg states on screen.
+                                            crate::apply_layout(self);
+                                            // Skip normal click-to-focus on windows behind the dock.
+                                            let pointer = self.seat.get_pointer().unwrap();
+                                            pointer.button(
+                                                self,
+                                                &ButtonEvent {
+                                                    button,
+                                                    state: button_state.try_into().unwrap(),
+                                                    serial: SCOUNTER.next_serial(),
+                                                    time: event.time_msec(),
+                                                },
+                                            );
+                                            pointer.frame(self);
+                                            return;
+                                        }
+                                    }
+                                }
                             }
+                        // click to focus + wl_keyboard enter (empty clicks keep focus)
+                        let id = self.wm.window_at((location.x, location.y), self.wm.border_size());
+                        if let Some(id) = id {
+                            self.wm.focus_window(id);
+                        }
+                        let hit_rect = id.and_then(|id| self.wm.window(id)).map(|w| w.target_rect);
+                        tracing::debug!(
+                            "click at ({:.0},{:.0}) -> window {id:?} rect {hit_rect:?}",
+                            location.x,
+                            location.y
+                        );
+                        if let Some(id) = id {
+                            keyboard_focus_set(self, Some(id));
                         }
                     }
                     // Any drag started above belongs to eswm, not the client.
                     swallow_client_button =
                         drag_consumes_button(self.udev.as_ref().unwrap().drag, button);
-                    // Dock bar click-to-focus / toggle-minimize (bottom strip of primary output).
-                    let dec = self.decoration.lock().unwrap();
-                    let dock_height = dec.dock_height;
-                    let dock = self.primary_output.as_ref().and_then(|o| {
-                        let loc = o.current_location();
-                        let size = o.current_mode().map(|m| m.size)?;
-                        Some((
-                            loc.x as f64,
-                            loc.y as f64,
-                            size.w as f64,
-                            size.h as f64,
-                        ))
-                    });
-                    drop(dec);
-                    if dock_height > 0
-                        && let Some((gx, _gy, gw, gh)) = dock {
-                            // Dock strip sits inside the non-exclusive zone (above
-                            // any bottom-anchored layer like waybar), matching the
-                            // render side; work_area already has dock_h subtracted.
-                            let wa_bottom = self
-                                .wm
-                                .work_area
-                                .map(|wa| wa.y as f64 + wa.height as f64)
-                                .unwrap_or(gh - dock_height as f64);
-                            if location.y >= wa_bottom
-                                && location.y < wa_bottom + dock_height as f64
-                                && location.x >= gx
-                                && location.x < gx + gw
-                            {
-                                let entries = self.wm.dock_entries();
-                                let n = entries.len();
-                                if n > 0 {
-                                    let seg_w = gw / n as f64;
-                                    let idx = ((location.x - gx) / seg_w).floor() as usize;
-                                    let idx = idx.min(n.saturating_sub(1));
-                                    if let Some(entry) = entries.get(idx) {
-                                        if button == BTN_LEFT {
-                                            // Left click: focus, restoring from minimized if needed.
-                                            self.wm.focus_window_or_restore(entry.id);
-                                        } else if button == BTN_RIGHT {
-                                            // Right click: toggle minimize.
-                                            self.wm.toggle_minimize(entry.id);
-                                        }
-                                        // Push the new focus/state to the client. Without this a
-                                        // restored dock window keeps stale xdg states on screen.
-                                        crate::apply_layout(self);
-                                        // Skip normal click-to-focus on windows behind the dock.
-                                        let pointer = self.seat.get_pointer().unwrap();
-                                        pointer.button(
-                                            self,
-                                            &ButtonEvent {
-                                                button,
-                                                state: button_state.try_into().unwrap(),
-                                                serial: SCOUNTER.next_serial(),
-                                                time: event.time_msec(),
-                                            },
-                                        );
-                                        pointer.frame(self);
-                                        return;
-                                    }
-                                }
-                            }
-                        }
-                    // click to focus + wl_keyboard enter (empty clicks keep focus)
-                    let id = self.wm.window_at((location.x, location.y), self.wm.border_size());
-                    if let Some(id) = id {
-                        self.wm.focus_window(id);
-                    }
-                    let hit_rect = id.and_then(|id| self.wm.window(id)).map(|w| w.target_rect);
-                    tracing::debug!(
-                        "click at ({:.0},{:.0}) -> window {id:?} rect {hit_rect:?}",
-                        location.x,
-                        location.y
-                    );
-                    if let Some(id) = id {
-                        keyboard_focus_set(self, Some(id));
-                    }
                 } else {
                     // release: end drag if it matches this button, and swallow the
                     // matching client-facing release (its press was swallowed too).
@@ -2239,6 +2348,41 @@ impl State {
                     if let Some(discrete) = vertical_discrete {
                         frame = frame.v120(input::Axis::Vertical, discrete as i32);
                     }
+                }
+                // Scroll must follow the surface actually under the pointer even
+                // when the layout changed while the pointer sat still. The
+                // button/motion paths refresh first; axis used to trust a stale
+                // focus (BUG-2026-11-24-LAYER-INPUT).
+                let location = self.udev.as_ref().unwrap().pointer_location;
+                let expected = pointer_focus(self, location);
+                let pointer = self.seat.get_pointer().unwrap();
+                let current = pointer.current_focus();
+                match &expected {
+                    Some((surface, origin)) if current.as_ref() != Some(surface) => {
+                        pointer.motion(
+                            self,
+                            Some((surface.clone(), *origin)),
+                            &MotionEvent {
+                                location,
+                                serial: SCOUNTER.next_serial(),
+                                time: event.time_msec(),
+                            },
+                        );
+                        pointer.frame(self);
+                    }
+                    None if current.is_some() => {
+                        pointer.motion(
+                            self,
+                            None,
+                            &MotionEvent {
+                                location,
+                                serial: SCOUNTER.next_serial(),
+                                time: event.time_msec(),
+                            },
+                        );
+                        pointer.frame(self);
+                    }
+                    _ => {}
                 }
                 let pointer = self.seat.get_pointer().unwrap();
                 pointer.axis(self, frame);

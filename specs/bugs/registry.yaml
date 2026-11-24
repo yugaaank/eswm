@@ -707,3 +707,36 @@ bug-2026-11-24-super-drag-leak:
     cargo clippy --all-targets; cargo test; cargo build. Live DRM UAT: in
     floating mode, Super+drag over a file manager moves the window without
     selecting files; ordinary clicks and right-click menus still work.
+
+bug-2026-11-24-layer-input:
+  id: BUG-2026-11-24-LAYER-INPUT
+  title: Layer-shell surfaces render but never receive pointer clicks or scroll
+  date: "2026-11-24"
+  severity: high
+  priority: high
+  status: fixed
+  scope: input
+  reported_by: operator_observation
+  risk_level: low
+  security_impact: none
+  file: specs/bugs/BUG-2026-11-24-LAYER-INPUT.md
+  files:
+    - src/udev.rs
+  description: |
+    wlr_layer_shell surfaces paint correctly but never become the pointer
+    target. pointer_focus() hit-tests popups and toplevel windows only, so no
+    wl_pointer enter/button/axis is ever delivered to a layer client.
+  root_cause: |
+    Pointer focus is computed exclusively from the WM's toplevel window list;
+    the LayerMap is consulted only for rendering. No layer-input branch exists,
+    and the axis handler did not refresh focus before forwarding.
+  approach: >-
+    Hit-test the LayerMap in render z-order (overlay/top above windows,
+    bottom/background below) via smithay's LayerSurface::surface_under, route
+    pointer_focus() through it, keep popup/drag/dock precedence, move keyboard
+    focus to interactive layers on click, and refresh focus in PointerAxis.
+  verify: |
+    cargo clippy --all-targets; cargo test; cargo build (219 tests, log at
+    /tmp/opencode/layer-input-preflight.log). Live DRM UAT: click a button on a
+    bar/launcher layer and scroll it; both must reach the client.
+  hardware_uat: pending_operator
