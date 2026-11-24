@@ -2601,6 +2601,26 @@ mod tests {
         assert!(!manager.window(id).unwrap().minimized);
     }
 
+    // BUG-2026-11-24-DOCK-RESTORE: a dock click must clear minimized, not just focus.
+    #[test]
+    fn dock_restore_unminimizes_a_minimized_window() {
+        let (mut manager, output) = manager();
+        let id = manager.add_window(output, "kitty", "one").unwrap();
+        let other = manager.add_window(output, "kitty", "two").unwrap();
+        manager.focus_window(other);
+        assert!(manager.toggle_minimize(id));
+        assert!(manager.window(id).unwrap().minimized);
+        assert!(!manager.window(id).unwrap().focused);
+
+        assert!(manager.focus_window_or_restore(id));
+
+        let w = manager.window(id).unwrap();
+        assert!(!w.minimized, "dock click must un-minimize the window");
+        assert!(w.focused, "restored window must take focus");
+        assert_eq!(manager.focused_id(), Some(id));
+        assert!(!manager.dock_entries().iter().find(|e| e.id == id).unwrap().minimized);
+    }
+
     // e09s01t4 — one global focus with MRU history.
     #[test]
     fn focus_mru_tracks_single_focus_across_outputs() {
