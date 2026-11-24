@@ -389,6 +389,61 @@ pub fn titlebar_button_at(rect: Rect, titlebar_height: u32, x: f64) -> Option<Ti
     }
 }
 
+/// Which frame edge a resize drag grabbed (e10s01). One enum drives hit
+/// testing, rect math, cursor choice and their tests, so none can drift.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResizeEdge {
+    North,
+    South,
+    East,
+    West,
+    NorthEast,
+    NorthWest,
+    SouthEast,
+    SouthWest,
+}
+
+/// Resolve the resize handle under `point` on an outer frame `rect`.
+///
+/// `padding` is an invisible grab zone outside the frame. Corners win over
+/// edges. A point in the free interior (including the titlebar) returns None
+/// so a titlebar press stays a move drag — otherwise grabbing the titlebar
+/// would silently resize the window. Reality check: users notice that.
+pub fn resize_edge_at(rect: Rect, point: (f64, f64), padding: i32) -> Option<ResizeEdge> {
+    if rect.width == 0 || rect.height == 0 {
+        return None;
+    }
+    let pad = padding.max(0) as f64;
+    let left = rect.x as f64;
+    let top = rect.y as f64;
+    let right = left + rect.width as f64;
+    let bottom = top + rect.height as f64;
+    let (px, py) = point;
+    if px < left - pad || px > right + pad || py < top - pad || py > bottom + pad {
+        return None;
+    }
+    // Shrink the near-edge zone on tiny frames so opposite edges cannot both
+    // claim the same point.
+    let pad_x = pad.min(rect.width as f64 / 2.0);
+    let pad_y = pad.min(rect.height as f64 / 2.0);
+    let west = px <= left + pad_x;
+    let east = px >= right - pad_x;
+    let north = py <= top + pad_y;
+    let south = py >= bottom - pad_y;
+
+    match (north, south, west, east) {
+        (true, _, true, _) => Some(ResizeEdge::NorthWest),
+        (true, _, _, true) => Some(ResizeEdge::NorthEast),
+        (_, true, true, _) => Some(ResizeEdge::SouthWest),
+        (_, true, _, true) => Some(ResizeEdge::SouthEast),
+        (true, _, _, _) => Some(ResizeEdge::North),
+        (_, true, _, _) => Some(ResizeEdge::South),
+        (_, _, true, _) => Some(ResizeEdge::West),
+        (_, _, _, true) => Some(ResizeEdge::East),
+        _ => None,
+    }
+}
+
 /// Compute the border frame for a window's target_rect.
 /// The frame extends `border_size` pixels outward on all sides, plus
 /// `titlebar_height` pixels upward from the top edge.
