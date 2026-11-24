@@ -43,7 +43,7 @@ handoff:
     - specs/epics/e09-design-decisions/epic.yaml
     - specs/epics/e09-design-decisions/e09s01-window-state-model.md
     - specs/epics/e09-design-decisions/e09s01-tasks.yaml
-  next_skill: survey-context
+  next_skill: kickoff-branch
   last_bug: "BUG-2026-11-24-DOCK-RESTORE fixed on branch fix/dock-restore (ee322aa): minimized dock icons now restore by clearing the minimized flag instead of checking mapped; dock handler calls apply_layout. 197 tests + clippy --all-targets + build green. Live DRM UAT pending operator."
 decisions:
   - story: BUG-2026-11-22-DRM-RESTORE-PERMISSION

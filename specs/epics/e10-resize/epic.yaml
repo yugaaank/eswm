@@ -1,0 +1,23 @@
+id: e10
+slug: resize
+title: Resize Windows (Floating Handles + Tiling Splits)
+status: pending
+wsjf_rank: 9
+bcps_total: 10
+core_value: |
+  Make resizing a first-class operation in both placement modes. Floating
+  windows get all four edges and four corners, with constraints and clear
+  input semantics. Tiled windows get draggable split boundaries that survive
+  re-arrangement, because per-window rect overrides cannot (arrange_output owns
+  tiled geometry).
+stories:
+  - id: e10s01
+    title: "Floating resize: 8 handles, constraints, input semantics"
+    bcps: 5
+    delta: MODIFIED
+    status: pending
+  - id: e10s02
+    title: "Tiling resize: split ratios for Master and Equal layouts"
+    bcps: 5
+    delta: ADDED
+    status: pending

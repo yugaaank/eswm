@@ -85,3 +85,15 @@ epics:
       LayerMap per output), IPC protocol (events/subscribe/security), Lua config
       shape (declarative es.config{}, es.bind with function/action). Deferred:
       touch keyboard focus, wp_security_context_v1.
+  - id: e10
+    slug: resize
+    title: Resize Windows (Floating Handles + Tiling Splits)
+    wsjf_rank: 9
+    status: pending
+    stories: []
+    description: |
+      Floating windows gain eight directional resize handles, compositor-side
+      min/max constraints, drag threshold, Escape-cancel and resize cursors.
+      Tiled windows gain draggable split ratios for Master and Equal layouts,
+      stored per output so re-arrangement preserves them. Deferred: persistence
+      across sessions, snap layouts, cross-monitor drag, touch resize.

@@ -1,0 +1,78 @@
+spec: specs/epics/e10-resize/e10s01-floating-resize.md
+story_id: e10s01
+title: 'Floating resize: 8 handles, constraints, input semantics'
+status: failing
+bcps: 5
+tasks:
+- id: e10s01t1
+  description: 'Add ResizeEdge enum and pure resize_edge_at(rect, point, padding) with unit tests for all 8 handles, 6px padding, and free titlebar area'
+  verify: cargo test --bin eswm resize_edge_at
+  risk: P1
+  security: none
+  status: failing
+  allure:
+    severity: high
+    categories: [e10-resize, floating, unit]
+- id: e10s01t2
+  description: 'Add pure resize_rect(orig, edge, dx, dy, min, max) handling left/top origin shifts, min/max clamps and u32 underflow; RED then GREEN'
+  verify: cargo test --bin eswm resize_rect
+  risk: P1
+  security: none
+  status: failing
+  allure:
+    severity: high
+    categories: [e10-resize, floating, unit]
+- id: e10s01t3
+  description: 'Carry edge in DragState and route DragMode::Resize through resize_rect; keep Super+RMB as SouthEast shortcut'
+  verify: cargo test --bin eswm resize_rect
+  risk: P1
+  security: none
+  status: failing
+  allure:
+    severity: high
+    categories: [e10-resize, floating, input]
+- id: e10s01t4
+  description: 'Reorder button-press handling: titlebar buttons, resize edges, titlebar drag, dock, click-to-focus; plain edge resize only for floating normal windows'
+  verify: cargo build
+  risk: P1
+  security: none
+  status: failing
+  allure:
+    severity: high
+    categories: [e10-resize, floating, input]
+- id: e10s01t5
+  description: 'Set per-edge CursorImageStatus with named-cursor fallback'
+  verify: cargo test --bin eswm resize_edge
+  risk: P2
+  security: none
+  status: failing
+  allure:
+    severity: normal
+    categories: [e10-resize, floating, cursor]
+- id: e10s01t6
+  description: 'Add 3px drag threshold and Escape-to-cancel for move/resize drags with tests'
+  verify: cargo test --bin eswm drag_threshold
+  risk: P2
+  security: none
+  status: failing
+  allure:
+    severity: normal
+    categories: [e10-resize, floating, input]
+- id: e10s01t7
+  description: 'Promote 200/150 to wm::MIN_WINDOW_WIDTH/HEIGHT and add es.dsp.set_min_window_size(w,h) with validation and config.example.lua docs'
+  verify: cargo test --bin eswm min_window_size
+  risk: P2
+  security: none
+  status: failing
+  allure:
+    severity: normal
+    categories: [e10-resize, floating, config]
+- id: e10s01t8
+  description: 'Full preflight and live-DRM UAT checklist for all eight handles'
+  verify: cargo clippy --all-targets && cargo test && cargo build
+  risk: P1
+  security: none
+  status: failing
+  allure:
+    severity: high
+    categories: [e10-resize, floating, preflight]
