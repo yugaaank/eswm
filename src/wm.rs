@@ -2316,6 +2316,28 @@ mod tests {
         assert_eq!(rows[1].1.height, 787);
     }
 
+    // e10s02t6: hit-testing works on the already-arranged rects, so the same
+    // helper serves Master and Equal layouts without duplicating geometry.
+    #[test]
+    fn tiling_split_edge_detects_internal_boundaries_only() {
+        let master = (1, Rect { x: 2, y: 2, width: 1149, height: 1076 });
+        let top = (2, Rect { x: 1151, y: 2, width: 767, height: 538 });
+        let bottom = (3, Rect { x: 1151, y: 540, width: 767, height: 538 });
+        let rects = [master, top, bottom];
+
+        let vertical = tiling_split_edge_at(&rects, (1151.0, 300.0), 6.0).unwrap();
+        assert_eq!(vertical.axis, SplitAxis::Vertical);
+        assert_eq!((vertical.first, vertical.second), (1, 2));
+
+        let horizontal = tiling_split_edge_at(&rects, (1400.0, 540.0), 6.0).unwrap();
+        assert_eq!(horizontal.axis, SplitAxis::Horizontal);
+        assert_eq!((horizontal.first, horizontal.second), (2, 3));
+
+        // Outer frame and window centres are not split boundaries.
+        assert!(tiling_split_edge_at(&rects, (2.0, 300.0), 6.0).is_none());
+        assert!(tiling_split_edge_at(&rects, (1400.0, 300.0), 6.0).is_none());
+    }
+
     #[test]
     fn workspace_move_keeps_windows_separate() {
         let (mut manager, output) = manager();
