@@ -27,8 +27,8 @@ runs its own drag-selection alongside eswm's window move.
 - Full preflight, then operator live-DRM UAT in a file manager.
 
 ## Resolution
-**Fixed:** 2026-11-24 on branch `fix/super-drag-leak` (RED `88a63fb`, GREEN `ac0314b`),
-local merge pending.
+**Fixed:** 2026-11-24, landed on local `main` as `f8d4b4d` (merge of `ac0314b`;
+RED `88a63fb`). Not pushed.
 **Root cause:** the compositor started a `DragState` but still delivered the
 initiating button press, matching release, and motion to the client, so the app
 ran its own drag-selection while eswm moved the window.

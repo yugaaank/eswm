@@ -659,7 +659,7 @@ bug-2026-11-24-super-drag-leak:
   severity: high
   priority: high
   status: fixed
-  fixed_in: ac0314b
+  fixed_in: f8d4b4d
   fixed_date: "2026-11-24"
   scope: input
   reported_by: operator_observation
