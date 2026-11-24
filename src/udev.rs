@@ -137,6 +137,11 @@ struct DragState {
     button: u32,
     /// Grabbed frame edge. Ignored for Move; Super+RMB stays SouthEast.
     edge: wm::ResizeEdge,
+    /// True once DRAG_THRESHOLD of travel is crossed; stays true after.
+    armed: bool,
+    /// Escape pressed: keep the record until button release so the release is
+    /// still swallowed, but never touch geometry again (e10s01t6).
+    cancelled: bool,
 }
 
 pub struct UdevData {
@@ -1354,6 +1359,14 @@ fn process_shortcut(state: &mut State, mods: &ModifiersState, keysym: KeysymHand
     };
     let raw = raw_sym.raw();
 
+    // e10s01t6: Escape is the drag's "never mind" — restore geometry and let
+    // go, before any config keybind gets a chance to also fire. Tiny detail:
+    // Escape only matters while a drag is live, so a plain Escape still reaches
+    // the client untouched.
+    if is_drag_cancel_key(raw) && cancel_active_drag(state) {
+        return FilterResult::Intercept(());
+    }
+
     // Always-on built-ins (emergency quit, VT switch) take precedence and cannot be removed.
     if let Some(kb) = builtin_shortcut(mods, raw) {
         return execute_keybind(state, &kb);
@@ -1379,6 +1392,14 @@ const BTN_LEFT: u32 = 0x110;
 const BTN_RIGHT: u32 = 0x111;
 /// Invisible grab zone outside a frame so edges are easy to catch (e10s01).
 const RESIZE_HANDLE_PADDING: i32 = 6;
+/// Logical pixels of travel before a move/resize drag engages (e10s01t6).
+/// Below this a press is a click — the window must not jump on a twitchy hand.
+const DRAG_THRESHOLD: f64 = 3.0;
+
+/// Escape is the universal "never mind" for an in-flight drag (e10s01t6).
+fn is_drag_cancel_key(raw_sym: u32) -> bool {
+    raw_sym == xkbcommon::xkb::keysyms::KEY_Escape
+}
 /// Xcursor names loaded at startup; the four dual arrows cover eight handles.
 const RESIZE_CURSOR_NAMES: [&str; 4] = ["ns-resize", "ew-resize", "nesw-resize", "nwse-resize"];
 
@@ -1639,10 +1660,61 @@ fn drag_rect(
     }
 }
 
+/// Geometry a drag should apply, or None while it is still a click / cancelled
+/// (e10s01t6). Pure so the threshold gate is testable without a compositor State.
+fn drag_rect_if_armed(
+    drag: DragState,
+    pos: Point<f64, Logical>,
+    min: (u32, u32),
+    max: (u32, u32),
+    threshold: f64,
+) -> Option<wm::Rect> {
+    if drag.cancelled {
+        return None;
+    }
+    let dx = pos.x - drag.start.x;
+    let dy = pos.y - drag.start.y;
+    let past = dx * dx + dy * dy >= threshold * threshold;
+    if drag.armed || past {
+        Some(drag_rect(drag, pos, min, max))
+    } else {
+        None
+    }
+}
+
+/// Escape drops an in-flight drag and restores its starting rect (e10s01t6).
+/// The DragState is kept until button release so the matching release stays
+/// swallowed — otherwise the app gets an orphan release and looks confused.
+fn cancel_active_drag(state: &mut State) -> bool {
+    let Some(drag) = state.udev.as_ref().and_then(|u| u.drag) else {
+        return false;
+    };
+    if drag.cancelled {
+        return true;
+    }
+    if state.wm.set_window_rect(drag.window, drag.orig_rect) {
+        crate::apply_layout(state);
+    }
+    if let Some(udev) = state.udev.as_mut() {
+        if let Some(d) = udev.drag.as_mut() {
+            d.cancelled = true;
+        }
+        udev.cursor_image = CursorImageStatus::default_named();
+    }
+    state.redraw_needed = true;
+    true
+}
+
 /// Advance an in-flight move/resize and return the dragged window id.
 fn drag_update(state: &mut State, pos: Point<f64, Logical>) -> Option<wm::WindowId> {
     let drag = state.udev.as_ref().unwrap().drag?;
-    let mut rect = drag_rect(drag, pos, (200, 150), (u32::MAX, u32::MAX));
+    let mut rect = drag_rect_if_armed(drag, pos, (200, 150), (u32::MAX, u32::MAX), DRAG_THRESHOLD)?;
+    // Crossed the threshold: latch it so later motion keeps tracking even if
+    // the pointer wobbles back inside the dead zone.
+    if !drag.armed
+        && let Some(d) = state.udev.as_mut().and_then(|u| u.drag.as_mut()) {
+            d.armed = true;
+        }
     // Keep the window on its output: an unbounded drag could wrap the i32
     // geometry used by hit-testing and leave the window unclickable.
     if let Some(geometry) = state
@@ -1879,6 +1951,8 @@ impl State {
                                     orig_rect: rect,
                                     button,
                                     edge: wm::ResizeEdge::SouthEast,
+                                    armed: false,
+                                    cancelled: false,
                                 });
                             }
                     } else if let Some(id) = self.wm.window_at((location.x, location.y), self.wm.border_size())
@@ -1913,6 +1987,8 @@ impl State {
                                     orig_rect: rect,
                                     button,
                                     edge,
+                                    armed: false,
+                                    cancelled: false,
                                 });
                             } else if in_titlebar {
                                 self.udev.as_mut().unwrap().drag = Some(DragState {
@@ -1922,6 +1998,8 @@ impl State {
                                     orig_rect: rect,
                                     button,
                                     edge: wm::ResizeEdge::SouthEast,
+                                    armed: false,
+                                    cancelled: false,
                                 });
                             }
                         }
@@ -3701,6 +3779,8 @@ mod tests {
             orig_rect: wm::Rect { x: 0, y: 0, width: 100, height: 100 },
             button: BTN_LEFT,
             edge: wm::ResizeEdge::SouthEast,
+            armed: false,
+            cancelled: false,
         };
         assert!(drag_consumes_button(Some(drag), BTN_LEFT));
         assert!(!drag_consumes_button(Some(drag), BTN_RIGHT), "other buttons still belong to the app");
@@ -3721,6 +3801,8 @@ mod tests {
             orig_rect: orig,
             button: BTN_LEFT,
             edge,
+            armed: false,
+            cancelled: false,
         };
         let at = Point::from((60.0, 170.0));
 
