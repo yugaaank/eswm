@@ -651,3 +651,31 @@ bug-2026-11-24-tiled-state:
     cargo test --bin eswm xdg_configure_state; cargo clippy --all-targets;
     cargo test; cargo build. Live DRM UAT: deckcraft fills natively and a GTK
     client keeps correct CSD behavior.
+
+bug-2026-11-24-super-drag-leak:
+  id: BUG-2026-11-24-SUPER-DRAG-LEAK
+  title: Super+drag move/resize leaks button and motion events to the client
+  date: "2026-11-24"
+  severity: high
+  priority: high
+  status: fixed
+  fixed_in: ac0314b
+  fixed_date: "2026-11-24"
+  scope: input
+  reported_by: operator_observation
+  risk_level: low
+  security_impact: none
+  file: specs/bugs/BUG-2026-11-24-SUPER-DRAG-LEAK.md
+  files_changed:
+    - src/udev.rs
+  approach: >-
+    Swallow the initiating press and matching release of a compositor-owned
+    drag via drag_consumes_button(), and route motion to no surface while a
+    drag is active so the client cannot run its own drag-selection.
+  commit_message: "fix(input): stop Super+drag from leaking clicks to clients"
+  hardware_uat: pending_operator
+  verify: |
+    cargo test --bin eswm super_drag_consumes_only_its_own_button;
+    cargo clippy --all-targets; cargo test; cargo build. Live DRM UAT: in
+    floating mode, Super+drag over a file manager moves the window without
+    selecting files; ordinary clicks and right-click menus still work.
