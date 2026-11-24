@@ -1,7 +1,7 @@
 id: e10
 slug: resize
 title: Resize Windows (Floating Handles + Tiling Splits)
-status: pending
+status: completed
 wsjf_rank: 9
 bcps_total: 10
 core_value: |
@@ -20,4 +20,4 @@ stories:
     title: "Tiling resize: split ratios for Master and Equal layouts"
     bcps: 5
     delta: ADDED
-    status: pending
+    status: completed
