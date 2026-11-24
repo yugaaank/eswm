@@ -297,21 +297,86 @@ pub fn normalize_weights(weights: &[f64], n: usize, min_share: f64) -> Vec<f64> 
         return Vec::new();
     }
     let floor = min_share.max(0.0).min(1.0 / n as f64);
-    let mut out: Vec<f64> = (0..n)
+    // Missing / invalid weights start neutral instead of starving at zero.
+    // A floor is a floor, not a tax on the healthy cells: lift only the
+    // violating ones and give their lost share back to the rest. Otherwise a
+    // 3:1 split would silently become 67:33, which feels like dragging through
+    // treacle near the limit. Treacle, incidentally, is a terrible WM feel.
+    let cleaned: Vec<f64> = (0..n)
         .map(|i| match weights.get(i).copied() {
-            Some(v) if v.is_finite() && v >= floor => v,
-            _ => floor,
+            Some(v) if v.is_finite() && v > 0.0 => v,
+            _ => 1.0,
         })
         .collect();
-    let total: f64 = out.iter().sum();
-    if !total.is_finite() || total <= 0.0 {
-        out.fill(1.0 / n as f64);
-        return out;
+    let total: f64 = cleaned.iter().sum();
+    let mut out: Vec<f64> = if total.is_finite() && total > 0.0 {
+        cleaned.iter().map(|v| v / total).collect()
+    } else {
+        vec![1.0 / n as f64; n]
+    };
+    for _ in 0..n {
+        let bad: Vec<usize> = (0..n).filter(|&i| out[i] < floor).collect();
+        if bad.is_empty() {
+            break;
+        }
+        let free: Vec<usize> = (0..n).filter(|i| !bad.contains(i)).collect();
+        let free_total = 1.0 - floor * bad.len() as f64;
+        let free_sum: f64 = free.iter().map(|&i| out[i]).sum();
+        for i in bad {
+            out[i] = floor;
+        }
+        if free.is_empty() {
+            break;
+        }
+        for i in &free {
+            out[*i] = if free_sum > 0.0 {
+                free_total * out[*i] / free_sum
+            } else {
+                free_total / free.len() as f64
+            };
+        }
     }
-    for v in &mut out {
-        *v /= total;
+    let total: f64 = out.iter().sum();
+    if total.is_finite() && total > 0.0 {
+        for v in &mut out {
+            *v /= total;
+        }
     }
     out
+}
+
+/// Split `total` pixels among `weights`, reserving `gap` between parts
+/// (e10s02t2). Weights are normalized first, so every cell gets at least the
+/// configured share. Largest-remainder rounding hands out spare pixels so the
+/// parts always sum to exactly `total - gaps` — no drift after repeated drags.
+pub fn weighted_split(total: u32, gap: u32, weights: &[f64], min_share: f64) -> Vec<u32> {
+    let n = weights.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let available = total.saturating_sub(gap.saturating_mul((n - 1) as u32));
+    let norm = normalize_weights(weights, n, min_share);
+    let mut sizes = Vec::with_capacity(n);
+    let mut fractions = Vec::with_capacity(n);
+    let mut used: u32 = 0;
+    for w in norm {
+        let raw = available as f64 * w;
+        let base = raw.floor() as u32;
+        used = used.saturating_add(base);
+        sizes.push(base);
+        fractions.push(raw - raw.floor());
+    }
+    let mut spare = available.saturating_sub(used);
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by(|&a, &b| fractions[b].total_cmp(&fractions[a]).then(a.cmp(&b)));
+    for i in order {
+        if spare == 0 {
+            break;
+        }
+        sizes[i] += 1;
+        spare -= 1;
+    }
+    sizes
 }
 
 impl Default for TilingSplits {
@@ -1933,7 +1998,7 @@ mod tests {
     #[test]
     fn weighted_split_allocates_equal_skewed_and_clamped() {
         assert_eq!(weighted_split(1000, 0, &[1.0, 1.0, 1.0], MIN_SPLIT_SHARE), vec![334, 333, 333]);
-        assert_eq!(weighted_split(1000, 10, &[1.0, 1.0], MIN_SPLIT_SHARE), vec![490, 490]);
+        assert_eq!(weighted_split(1000, 10, &[1.0, 1.0], MIN_SPLIT_SHARE), vec![495, 495]);
         assert_eq!(weighted_split(1000, 0, &[3.0, 1.0], MIN_SPLIT_SHARE), vec![750, 250]);
         // A zero weight is lifted to the floor instead of collapsing a cell.
         assert_eq!(weighted_split(1000, 0, &[1000.0, 0.0], MIN_SPLIT_SHARE), vec![850, 150]);
@@ -1947,7 +2012,6 @@ mod tests {
         assert_eq!(weighted_split(5, 10, &[1.0, 1.0], MIN_SPLIT_SHARE), vec![0, 0]);
         let parts = weighted_split(100, 0, &[f64::NAN, 1.0], MIN_SPLIT_SHARE);
         assert_eq!(parts.len(), 2);
-        assert!(parts.iter().all(|v| v.is_finite()));
         assert_eq!(parts.iter().sum::<u32>(), 100);
     }
 
