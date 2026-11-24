@@ -3271,11 +3271,15 @@ impl State {
                         // One cached ring replaces the four strips. Its hole
                         // spans the titlebar band and the client; the wedges
                         // over their square corners carry the border colour.
+                        // The client is still square underneath — we are, in
+                        // effect, using border-coloured toothpaste to hide the
+                        // corners it refuses to brush. Hyprland uses a shader
+                        // for this; smithay said no, so we bake paint instead.
                         let frame = border_frame(*rect, border_size, titlebar_height);
                         let key = crate::rounding::DecorationBufferKey {
                             window: *id,
                             width: frame.top.width as i32,
-                            height: (frame.bottom.y + border_size as i32 - frame.top.y),
+                            height: frame.bottom.y + border_size as i32 - frame.top.y,
                             radius: corner_radius,
                             border: border_size,
                             titlebar: titlebar_height,
@@ -3321,60 +3325,60 @@ impl State {
                             border_elements.push(EswmRenderElements::Cursor(elem));
                         }
                     } else {
-                    let color32f = Color32F::new(
-                        color[0] as f32 / 255.0,
-                        color[1] as f32 / 255.0,
-                        color[2] as f32 / 255.0,
-                        color[3] as f32 / 255.0,
-                    );
-                    // Use shared border_frame helper so all four edges connect with zero gap.
-                    let frame = border_frame(*rect, border_size, titlebar_height);
+                        let color32f = Color32F::new(
+                            color[0] as f32 / 255.0,
+                            color[1] as f32 / 255.0,
+                            color[2] as f32 / 255.0,
+                            color[3] as f32 / 255.0,
+                        );
+                        // Use shared border_frame helper so all four edges connect with zero gap.
+                        let frame = border_frame(*rect, border_size, titlebar_height);
 
-                    // Top edge
-                    border_elements.push(EswmRenderElements::Solid(SolidColorRenderElement::new(
-                        Id::new(),
-                        Rectangle::<i32, Physical>::new(
-                            Point::from((frame.top.x, frame.top.y)),
-                            Size::from((frame.top.width as i32, frame.top.height as i32)),
-                        ),
-                        CommitCounter::default(),
-                        color32f,
-                        Kind::Unspecified,
-                    )));
-                    // Bottom edge
-                    border_elements.push(EswmRenderElements::Solid(SolidColorRenderElement::new(
-                        Id::new(),
-                        Rectangle::<i32, Physical>::new(
-                            Point::from((frame.bottom.x, frame.bottom.y)),
-                            Size::from((frame.bottom.width as i32, frame.bottom.height as i32)),
-                        ),
-                        CommitCounter::default(),
-                        color32f,
-                        Kind::Unspecified,
-                    )));
-                    // Left edge
-                    border_elements.push(EswmRenderElements::Solid(SolidColorRenderElement::new(
-                        Id::new(),
-                        Rectangle::<i32, Physical>::new(
-                            Point::from((frame.left.x, frame.left.y)),
-                            Size::from((frame.left.width as i32, frame.left.height as i32)),
-                        ),
-                        CommitCounter::default(),
-                        color32f,
-                        Kind::Unspecified,
-                    )));
-                    // Right edge
-                    border_elements.push(EswmRenderElements::Solid(SolidColorRenderElement::new(
-                        Id::new(),
-                        Rectangle::<i32, Physical>::new(
-                            Point::from((frame.right.x, frame.right.y)),
-                            Size::from((frame.right.width as i32, frame.right.height as i32)),
-                        ),
-                        CommitCounter::default(),
-                        color32f,
-                        Kind::Unspecified,
-                    )));
-                    }
+                        // Top edge
+                        border_elements.push(EswmRenderElements::Solid(SolidColorRenderElement::new(
+                            Id::new(),
+                            Rectangle::<i32, Physical>::new(
+                                Point::from((frame.top.x, frame.top.y)),
+                                Size::from((frame.top.width as i32, frame.top.height as i32)),
+                            ),
+                            CommitCounter::default(),
+                            color32f,
+                            Kind::Unspecified,
+                        )));
+                        // Bottom edge
+                        border_elements.push(EswmRenderElements::Solid(SolidColorRenderElement::new(
+                            Id::new(),
+                            Rectangle::<i32, Physical>::new(
+                                Point::from((frame.bottom.x, frame.bottom.y)),
+                                Size::from((frame.bottom.width as i32, frame.bottom.height as i32)),
+                            ),
+                            CommitCounter::default(),
+                            color32f,
+                            Kind::Unspecified,
+                        )));
+                        // Left edge
+                        border_elements.push(EswmRenderElements::Solid(SolidColorRenderElement::new(
+                            Id::new(),
+                            Rectangle::<i32, Physical>::new(
+                                Point::from((frame.left.x, frame.left.y)),
+                                Size::from((frame.left.width as i32, frame.left.height as i32)),
+                            ),
+                            CommitCounter::default(),
+                            color32f,
+                            Kind::Unspecified,
+                        )));
+                        // Right edge
+                        border_elements.push(EswmRenderElements::Solid(SolidColorRenderElement::new(
+                            Id::new(),
+                            Rectangle::<i32, Physical>::new(
+                                Point::from((frame.right.x, frame.right.y)),
+                                Size::from((frame.right.width as i32, frame.right.height as i32)),
+                            ),
+                            CommitCounter::default(),
+                            color32f,
+                            Kind::Unspecified,
+                        )));
+                        }
                 }
                 // Borders pushed first -> index 0 -> drawn last -> on top (capture titlebar edges).
                 elements.extend(border_elements);

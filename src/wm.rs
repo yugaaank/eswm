@@ -3636,4 +3636,22 @@ mod tests {
         manager.toggle_fullscreen(id);
         assert_eq!(manager.window(id).unwrap().mode, ClientMode::floating());
     }
+
+    #[test]
+    fn border_frame_hole_spans_titlebar_and_client() {
+        // The rounded ring's hole is inset by one border width on every side.
+        // It must cover exactly the titlebar band plus the client rect, so a
+        // titlebar can own the hole's top corners with no gap.
+        let target = Rect { x: 100, y: 200, width: 800, height: 600 };
+        let bs = 2u32;
+        let tb = 24u32;
+        let frame = super::border_frame(target, bs, tb);
+        let frame_h = frame.bottom.y + bs as i32 - frame.top.y;
+        let hole_w = frame.top.width as i32 - 2 * bs as i32;
+        let hole_h = frame_h - 2 * bs as i32;
+        assert_eq!(frame.top.y, 200 - 2 - 24);
+        assert_eq!(frame_h, 600 + 2 * 2 + 24);
+        assert_eq!(hole_w, 800);
+        assert_eq!(hole_h, 600 + 24);
+    }
 }
