@@ -1727,6 +1727,18 @@ impl WindowManager {
         self.arrange_output(output);
     }
 
+    /// e10s02t5: relative widths/heights of Equal-layout grid cells. Empty
+    /// vectors mean the original equal split.
+    pub fn set_equal_weights(&mut self, output: OutputId, cols: Vec<f64>, rows: Vec<f64>) {
+        let Some(state) = self.outputs.get_mut(&output) else {
+            return;
+        };
+        state.splits.col_weights = cols;
+        state.splits.row_weights = rows;
+        self.dirty = true;
+        self.arrange_output(output);
+    }
+
     pub fn arrange_output(&mut self, output: OutputId) {
         if !self.dirty {
             return;
@@ -1872,7 +1884,23 @@ impl WindowManager {
                     self.set_target_rect(tiled[0], inner);
                 } else {
                     let mut assigned: Vec<(WindowId, Rect)> = Vec::new();
-                    equal_split(&mut assigned, &tiled, inner, inner_gap, tb_h as u32);
+                    equal_split(
+                        &mut assigned,
+                        &tiled,
+                        inner,
+                        inner_gap,
+                        tb_h as u32,
+                        if output_state.splits.col_weights.is_empty() {
+                            None
+                        } else {
+                            Some(&output_state.splits.col_weights)
+                        },
+                        if output_state.splits.row_weights.is_empty() {
+                            None
+                        } else {
+                            Some(&output_state.splits.row_weights)
+                        },
+                    );
                     for (id, rect) in assigned {
                         self.set_target_rect(id, rect);
                     }
@@ -1962,6 +1990,8 @@ pub fn equal_split(
     rect: Rect,
     gap: u32,
     titlebar_height: u32,
+    col_weights: Option<&[f64]>,
+    row_weights: Option<&[f64]>,
 ) {
     let n = window_ids.len();
     if n == 0 {
@@ -1994,18 +2024,41 @@ pub fn equal_split(
     // Vertical gap between rows must accommodate titlebars: a lower window's
     // titlebar extends upward from its target_rect, so it needs tb_h of space.
     let gap_v = gap + titlebar_height;
-    let cell_w = (rect.width.saturating_sub(gap * (best_cols - 1) as u32)) / best_cols as u32;
-    let cell_h = (rect.height.saturating_sub(gap_v * (best_rows - 1) as u32)) / best_rows as u32;
+    // Empty or stale weight vectors fall back to the original integer split,
+    // so an unchanged session keeps the exact pre-e10 geometry.
+    let axis_sizes = |total: u32, count: usize, axis_gap: u32, weights: Option<&[f64]>| {
+        match weights {
+            Some(w) if w.len() >= count && !w.is_empty() => {
+                weighted_split(total, axis_gap, &w[..count], MIN_SPLIT_SHARE)
+            }
+            _ => vec![
+                total.saturating_sub(axis_gap * (count - 1) as u32) / count as u32;
+                count
+            ],
+        }
+    };
+    let col_sizes = axis_sizes(rect.width, best_cols, gap, col_weights);
+    let row_sizes = axis_sizes(rect.height, best_rows, gap_v, row_weights);
     for (i, &id) in window_ids.iter().enumerate() {
         let row = i / best_cols;
         let col = i % best_cols;
+        let x = rect.x
+            + col_sizes[..col]
+                .iter()
+                .map(|&w| w as i32 + gap as i32)
+                .sum::<i32>();
+        let y = rect.y
+            + row_sizes[..row]
+                .iter()
+                .map(|&h| h as i32 + gap_v as i32)
+                .sum::<i32>();
         assigned.push((
             id,
             Rect {
-                x: rect.x + col as i32 * (cell_w + gap) as i32,
-                y: rect.y + row as i32 * (cell_h + gap_v) as i32,
-                width: cell_w,
-                height: cell_h,
+                x,
+                y,
+                width: col_sizes[col],
+                height: row_sizes[row],
             },
         ));
     }
@@ -2842,7 +2895,7 @@ mod tests {
     fn equal_split_single_window_fills_rect() {
         let rect = Rect { x: 0, y: 0, width: 1920, height: 1080 };
         let mut assigned: Vec<(u64, Rect)> = Vec::new();
-        equal_split(&mut assigned, &[1], rect, 0, 0);
+        equal_split(&mut assigned, &[1], rect, 0, 0, None, None);
 
         assert_eq!(assigned.len(), 1);
         assert_eq!(assigned[0].0, 1);
@@ -2853,7 +2906,7 @@ mod tests {
     fn equal_split_two_windows_split_vertically() {
         let rect = Rect { x: 0, y: 0, width: 1920, height: 1080 };
         let mut assigned: Vec<(u64, Rect)> = Vec::new();
-        equal_split(&mut assigned, &[1, 2], rect, 0, 0);
+        equal_split(&mut assigned, &[1, 2], rect, 0, 0, None, None);
 
         assert_eq!(assigned.len(), 2);
         assert_eq!(assigned[0].1.x, 0);
@@ -2870,7 +2923,7 @@ mod tests {
     fn equal_split_three_windows_equal_size() {
         let rect = Rect { x: 0, y: 0, width: 1920, height: 1080 };
         let mut assigned: Vec<(u64, Rect)> = Vec::new();
-        equal_split(&mut assigned, &[1, 2, 3], rect, 0, 0);
+        equal_split(&mut assigned, &[1, 2, 3], rect, 0, 0, None, None);
 
         assert_eq!(assigned.len(), 3);
         // All windows should have the same width and height
@@ -2937,7 +2990,7 @@ mod tests {
     fn equal_split_rects_do_not_overlap_with_gap() {
         let rect = Rect { x: 0, y: 0, width: 1920, height: 1080 };
         let mut assigned: Vec<(u64, Rect)> = Vec::new();
-        equal_split(&mut assigned, &[1, 2, 3, 4], rect, 10, 0);
+        equal_split(&mut assigned, &[1, 2, 3, 4], rect, 10, 0, None, None);
 
         assert_eq!(assigned.len(), 4);
         // 2x2 grid with 10px gaps: cell_w=(1920-10)/2=955, cell_h=(1080-10)/2=535
@@ -2964,7 +3017,7 @@ mod tests {
         let rect = Rect { x: 0, y: 0, width: 1920, height: 1080 };
         let mut assigned: Vec<(u64, Rect)> = Vec::new();
         // 2 windows side by side, 30px titlebar height, no extra gap
-        equal_split(&mut assigned, &[1, 2], rect, 0, 30);
+        equal_split(&mut assigned, &[1, 2], rect, 0, 30, None, None);
 
         assert_eq!(assigned.len(), 2);
         // 1x2 grid: cell_w=960, cell_h=1080
@@ -2982,7 +3035,7 @@ mod tests {
         let rect = Rect { x: 0, y: 0, width: 1080, height: 1920 };
         let mut assigned: Vec<(u64, Rect)> = Vec::new();
         // 2 windows stacked vertically on a portrait screen, 30px titlebar
-        equal_split(&mut assigned, &[1, 2], rect, 0, 30);
+        equal_split(&mut assigned, &[1, 2], rect, 0, 30, None, None);
 
         assert_eq!(assigned.len(), 2);
         // 2x1 grid: cell_w=1080, cell_h=(1920-30)/2=945
