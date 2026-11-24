@@ -112,6 +112,76 @@ pub fn rounded_alpha(x: i32, y: i32, width: i32, height: i32, c: Corners) -> u8 
     }
 }
 
+/// Build an ARGB byte slice for a filled rounded rectangle. Bytes are ordered
+/// `[R, G, B, A]` because the buffers upload with `Fourcc::Abgr8888`, which
+/// smithay maps to GL `RGBA`. RGB is premultiplied by the final alpha.
+pub fn rounded_rect_pixels(
+    width: i32,
+    height: i32,
+    color: [u8; 4],
+    corners: Corners,
+) -> Vec<u8> {
+    let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            let mask = rounded_alpha(x, y, width, height, corners);
+            let a = color[3] as u16 * mask as u16 / 255;
+            pixels.extend_from_slice(&[
+                (color[0] as u16 * a as u16 / 255) as u8,
+                (color[1] as u16 * a as u16 / 255) as u8,
+                (color[2] as u16 * a as u16 / 255) as u8,
+                a as u8,
+            ]);
+        }
+    }
+    pixels
+}
+
+/// Build one border ring: opaque border colour on the straight edges, a
+/// transparent hole for the titlebar and client, and border-coloured wedges
+/// over their square corners. The outer silhouette follows `outer`; the hole
+/// follows `inner`. Bytes are `[R, G, B, A]`, premultiplied.
+#[allow(clippy::too_many_arguments)]
+pub fn rounded_border_pixels(
+    width: i32,
+    height: i32,
+    hole_x: i32,
+    hole_y: i32,
+    hole_width: i32,
+    hole_height: i32,
+    color: [u8; 4],
+    outer: Corners,
+    inner: Corners,
+) -> Vec<u8> {
+    let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            let outer_mask = rounded_alpha(x, y, width, height, outer);
+            let in_hole = x >= hole_x
+                && x < hole_x + hole_width
+                && y >= hole_y
+                && y < hole_y + hole_height;
+            let mask = if in_hole {
+                // Inside the hole, cover only the part its own rounded mask
+                // clips away — that is the wedge over a square client corner.
+                255u8.saturating_sub(rounded_alpha(
+                    x - hole_x, y - hole_y, hole_width, hole_height, inner,
+                ))
+            } else {
+                outer_mask
+            };
+            let a = color[3] as u16 * mask as u16 / 255;
+            pixels.extend_from_slice(&[
+                (color[0] as u16 * a as u16 / 255) as u8,
+                (color[1] as u16 * a as u16 / 255) as u8,
+                (color[2] as u16 * a as u16 / 255) as u8,
+                a as u8,
+            ]);
+        }
+    }
+    pixels
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,8 +259,14 @@ mod tests {
         // Straight border edge is opaque border colour.
         assert_eq!(at(2, 10), [255, 0, 0, 255]);
         // Inside the hole but outside its rounded mask is the wedge that
-        // covers the client's square corner: border colour, opaque.
-        assert_eq!(at(4, 4), [255, 0, 0, 255]);
+        // covers the client's square corner. The exact arc pixel is
+        // antialiased; one step further out is fully opaque border colour.
+        let corner = at(4, 4);
+        assert_eq!(corner[1], 0);
+        assert_eq!(corner[2], 0);
+        assert!(corner[3] > 0, "wedge must paint the client corner: {corner:?}");
+        // The straight part of the ring is fully opaque.
+        assert_eq!(at(2, 4), [255, 0, 0, 255]);
         // Outside the outer arc: transparent.
         assert_eq!(at(0, 0), [0, 0, 0, 0]);
     }
