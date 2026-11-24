@@ -593,7 +593,7 @@ bug-2026-11-24-dock-restore:
   severity: high
   priority: high
   status: fixed
-  fixed_in: ee322aa
+  fixed_in: 6477041
   fixed_date: "2026-11-24"
   scope: input
   reported_by: operator_observation
