@@ -1318,11 +1318,14 @@ impl WindowManager {
             return false;
         };
         let output = window.output;
-        let _workspace = window.workspace;
-        let was_mapped = window.mapped;
+        let was_minimized = window.minimized;
 
-        // Restore from minimized state if needed.
-        if !was_mapped
+        // `mapped` means "the client has a buffer" and stays true while the
+        // window is minimized. The explicit flag is the only restore signal.
+        // BUG-2026-11-24-DOCK-RESTORE: checking `mapped` here left the window
+        // hidden forever after a dock click. `mapped` was living a double life
+        // and the window paid the rent.
+        if was_minimized
             && let Some(w) = self.windows.get_mut(&id) {
                 w.minimized = false;
             }
@@ -1332,7 +1335,7 @@ impl WindowManager {
         // If we restored a non-focused minimized window, focus_window already
         // set workspace.focused and w.focused = true. arrange_output so the
         // restored window gets a target_rect / configure.
-        if !was_mapped {
+        if was_minimized {
             self.dirty = true;
             self.arrange_output(output);
         }
@@ -2599,6 +2602,26 @@ mod tests {
 
         assert!(manager.toggle_minimize(id));
         assert!(!manager.window(id).unwrap().minimized);
+    }
+
+    // BUG-2026-11-24-DOCK-RESTORE: a dock click must clear minimized, not just focus.
+    #[test]
+    fn dock_restore_unminimizes_a_minimized_window() {
+        let (mut manager, output) = manager();
+        let id = manager.add_window(output, "kitty", "one").unwrap();
+        let other = manager.add_window(output, "kitty", "two").unwrap();
+        manager.focus_window(other);
+        assert!(manager.toggle_minimize(id));
+        assert!(manager.window(id).unwrap().minimized);
+        assert!(!manager.window(id).unwrap().focused);
+
+        assert!(manager.focus_window_or_restore(id));
+
+        let w = manager.window(id).unwrap();
+        assert!(!w.minimized, "dock click must un-minimize the window");
+        assert!(w.focused, "restored window must take focus");
+        assert_eq!(manager.focused_id(), Some(id));
+        assert!(!manager.dock_entries().iter().find(|e| e.id == id).unwrap().minimized);
     }
 
     // e09s01t4 — one global focus with MRU history.

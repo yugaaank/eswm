@@ -1865,6 +1865,9 @@ impl State {
                                             // Right click: toggle minimize.
                                             self.wm.toggle_minimize(entry.id);
                                         }
+                                        // Push the new focus/state to the client. Without this a
+                                        // restored dock window keeps stale xdg states on screen.
+                                        crate::apply_layout(self);
                                         // Skip normal click-to-focus on windows behind the dock.
                                         let pointer = self.seat.get_pointer().unwrap();
                                         pointer.button(

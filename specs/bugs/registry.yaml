@@ -586,6 +586,35 @@ bug-2026-11-24-size-negotiation:
     fixed-size client to resize. Cycle 2 added compositor-side stretch to fill
     the frame in both directions; see stretch_followup above.
 
+bug-2026-11-24-dock-restore:
+  id: BUG-2026-11-24-DOCK-RESTORE
+  title: Clicking a minimized window's dock icon does not restore it
+  date: "2026-11-24"
+  severity: high
+  priority: high
+  status: fixed
+  fixed_in: ee322aa
+  fixed_date: "2026-11-24"
+  scope: input
+  reported_by: operator_observation
+  risk_level: low
+  security_impact: none
+  file: specs/bugs/BUG-2026-11-24-DOCK-RESTORE.md
+  files_changed:
+    - src/wm.rs
+    - src/udev.rs
+  approach: >-
+    Key the dock restore on the explicit minimized flag instead of `mapped`,
+    which stays true while a window is hidden. Clear the flag, re-arrange the
+    output, and call apply_layout from the dock handler so the client receives
+    fresh focus/state configures.
+  commit_message: "fix(wm): restore minimized windows on dock click"
+  hardware_uat: pending_operator
+  verify: |
+    cargo test --bin eswm dock_restore_unminimizes_a_minimized_window;
+    cargo clippy --all-targets; cargo test; cargo build. Live DRM UAT: minimize
+    a window then left-click its dock icon; it must reappear and take focus.
+
 bug-2026-11-24-tiled-state:
   id: BUG-2026-11-24-TILED-STATE
   title: Tiled windows lack xdg tiled states, so winit clients override the frame size
