@@ -1318,11 +1318,14 @@ impl WindowManager {
             return false;
         };
         let output = window.output;
-        let _workspace = window.workspace;
-        let was_mapped = window.mapped;
+        let was_minimized = window.minimized;
 
-        // Restore from minimized state if needed.
-        if !was_mapped
+        // `mapped` means "the client has a buffer" and stays true while the
+        // window is minimized. The explicit flag is the only restore signal.
+        // BUG-2026-11-24-DOCK-RESTORE: checking `mapped` here left the window
+        // hidden forever after a dock click. `mapped` was living a double life
+        // and the window paid the rent.
+        if was_minimized
             && let Some(w) = self.windows.get_mut(&id) {
                 w.minimized = false;
             }
@@ -1332,7 +1335,7 @@ impl WindowManager {
         // If we restored a non-focused minimized window, focus_window already
         // set workspace.focused and w.focused = true. arrange_output so the
         // restored window gets a target_rect / configure.
-        if !was_mapped {
+        if was_minimized {
             self.dirty = true;
             self.arrange_output(output);
         }
