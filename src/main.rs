@@ -1258,6 +1258,25 @@ fn apply_decoration_to_wm(state: &mut State) {
     state.wm.set_tiling_layout(tiling_layout);
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ToplevelConfigureState {
+    activated: bool,
+    maximized: bool,
+    fullscreen: bool,
+    tiled: bool,
+}
+
+/// The xdg toplevel states that describe where the compositor placed a window.
+fn toplevel_configure_state(mode: wm::ClientMode, focused: bool) -> ToplevelConfigureState {
+    let (maximized, fullscreen) = mode.xdg_state_flags();
+    ToplevelConfigureState {
+        activated: focused,
+        maximized,
+        fullscreen,
+        tiled: mode.sends_tiled_state(),
+    }
+}
+
 // M5: push target rects to clients as xdg_toplevel size configures, then mark applied.
 pub(crate) fn apply_layout(state: &mut State) {
     apply_decoration_to_wm(state);
@@ -1289,25 +1308,40 @@ pub(crate) fn apply_layout(state: &mut State) {
         }
         if let Some(toplevel) = toplevel_for_window(state, id) {
             tracing::debug!("configuring window id={id:?} -> {}x{} at {},{}", target.width, target.height, target.x, target.y);
-            let (maximized, fullscreen) = window.mode.xdg_state_flags();
+            let flags = toplevel_configure_state(window.mode, window.focused);
             toplevel.with_pending_state(|st| {
                 if target_valid {
                     st.size = Some((target.width.max(1) as i32, target.height.max(1) as i32).into());
                 }
-                if window.focused {
+                if flags.activated {
                     st.states.set(xdg_toplevel::State::Activated);
                 } else {
                     st.states.unset(xdg_toplevel::State::Activated);
                 }
-                if maximized {
+                if flags.maximized {
                     st.states.set(xdg_toplevel::State::Maximized);
                 } else {
                     st.states.unset(xdg_toplevel::State::Maximized);
                 }
-                if fullscreen {
+                if flags.fullscreen {
                     st.states.set(xdg_toplevel::State::Fullscreen);
                 } else {
                     st.states.unset(xdg_toplevel::State::Fullscreen);
+                }
+                // Hyprland tells every tiled client all four directions, so
+                // winit stops treating our configure as a polite suggestion.
+                let tiled = [
+                    xdg_toplevel::State::TiledLeft,
+                    xdg_toplevel::State::TiledRight,
+                    xdg_toplevel::State::TiledTop,
+                    xdg_toplevel::State::TiledBottom,
+                ];
+                for state in tiled {
+                    if flags.tiled {
+                        st.states.set(state);
+                    } else {
+                        st.states.unset(state);
+                    }
                 }
             });
             toplevel.send_pending_configure();
