@@ -50,6 +50,12 @@ es.dsp.set_titlebar_height(0)                      -- 0 = no titlebar; eswm-draw
 es.dsp.set_dock_height(0)                          -- 0 = no dock; bottom dock bar when > 0
 es.dsp.set_layout_mode("tiling")                   -- "tiling" or "floating"; default mode for new windows
 
+-- Tiling splits: drag within 6px of an internal boundary to resize adjacent
+-- tiled windows. Ratios are per output and survive re-arrangements.
+--   es.dsp.reset_tiling_splits() -> restore defaults (60% master, equal cells)
+--   es.bind("Super+R", "reset_tiling_splits") -- optional keybind
+-- Hover shows a left/right or up/down resize cursor on the boundary.
+
 -- Dock (managed by eswm, rendered server-side):
 --   es.dock.entries() -> [{id, app_id, title, minimized, focused}]
 --   es.dock.activate(id)   -> focus/restore a docked window

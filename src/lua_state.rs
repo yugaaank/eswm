@@ -444,6 +444,16 @@ pub fn register_api(
     })?;
     dsp_table.set("set_dock_height", dsp_set_dock_height)?;
 
+    // es.dsp.reset_tiling_splits() -> restore default Master/Equal ratios on
+    // the primary output (e10s02t8). Routed through the command channel so the
+    // same action serves Lua, keybinds, and the control socket.
+    let cmd_reset_splits = cmd_tx.clone();
+    let dsp_reset_tiling_splits = lua.create_function(move |_, _: ()| -> Result<(), mlua::Error> {
+        let _ = cmd_reset_splits.send(crate::ipc::CompCmd::ResetTilingSplits);
+        Ok(())
+    })?;
+    dsp_table.set("reset_tiling_splits", dsp_reset_tiling_splits)?;
+
     // es.dock — pluggable dock frontend contract.
     // entries() -> [{id, app_id, title, minimized, focused}]
     // activate(id) -> focus that window (sends CompCmd::FocusWindow)
@@ -541,11 +551,11 @@ mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
 
-    type TestApi = (Lua, Arc<Mutex<Vec<Keybind>>>, Arc<Mutex<InputConfig>>, Arc<Mutex<DecorationConfig>>);
+    type TestApi = (Lua, Arc<Mutex<Vec<Keybind>>>, Arc<Mutex<InputConfig>>, Arc<Mutex<DecorationConfig>>, flume::Receiver<crate::ipc::CompCmd>);
     fn test_api() -> TestApi {
         let lua = init().expect("lua init");
         let snapshot = Arc::new(Mutex::new(crate::ipc::Snapshot::default()));
-        let (cmd_tx, _cmd_rx) = flume::unbounded();
+        let (cmd_tx, cmd_rx) = flume::unbounded();
         let keybinds = Arc::new(Mutex::new(Vec::new()));
         let decoration = Arc::new(Mutex::new(DecorationConfig::default()));
         let dock_entries = Arc::new(Mutex::new(Vec::new()));
@@ -560,12 +570,12 @@ mod tests {
             input_config.clone(),
         )
         .expect("register api");
-        (lua, keybinds, input_config, decoration)
+        (lua, keybinds, input_config, decoration, cmd_rx)
     }
 
     #[test]
     fn keybind_parse_stores_xkb_keysym_case_insensitive() {
-        let (lua, keybinds, _input_config, _decoration) = test_api();
+        let (lua, keybinds, _input_config, _decoration, _cmd_rx) = test_api();
         lua.load(r#"es.bind("Super+Return", "spawn_terminal")"#)
             .exec()
             .expect("bind return");
@@ -580,9 +590,19 @@ mod tests {
 
     // e10s01t7: es.dsp.set_min_window_size stores validated dimensions in the
     // shared DecorationConfig that the drag clamps read each motion event.
+    // e10s02t8: es.dsp.reset_tiling_splits is a real command, not a Lua stub.
+    #[test]
+    fn reset_tiling_splits_lua_command_is_queued() {
+        let (lua, _keybinds, _input_config, _decoration, cmd_rx) = test_api();
+        lua.load("es.dsp.reset_tiling_splits()")
+            .exec()
+            .expect("reset tiling splits");
+        assert!(matches!(cmd_rx.try_recv(), Ok(crate::ipc::CompCmd::ResetTilingSplits)));
+    }
+
     #[test]
     fn min_window_size_setter_validates_and_stores() {
-        let (lua, _keybinds, _input_config, decoration) = test_api();
+        let (lua, _keybinds, _input_config, decoration, _cmd_rx) = test_api();
         lua.load("es.dsp.set_min_window_size(240, 180)")
             .exec()
             .expect("set min window size");
@@ -659,7 +679,7 @@ mod tests {
     // compositor; invalid keymap/scales must not poison the config.
     #[test]
     fn keymap_config_setters_store_values() {
-        let (lua, _keybinds, input_config, _decoration) = test_api();
+        let (lua, _keybinds, input_config, _decoration, _cmd_rx) = test_api();
         lua.load(
             r#"
             es.dsp.set_output_scale("eDP-1", 2.0)
@@ -681,7 +701,7 @@ mod tests {
 
     #[test]
     fn keymap_config_rejects_invalid_values() {
-        let (lua, _keybinds, input_config, _decoration) = test_api();
+        let (lua, _keybinds, input_config, _decoration, _cmd_rx) = test_api();
         assert!(lua.load(r#"es.dsp.set_keymap("")"#).exec().is_err());
         assert!(lua.load(r#"es.dsp.set_output_scale("eDP-1", 0)"#).exec().is_err());
         assert!(input_config.lock().unwrap().output_scales.is_empty());
@@ -690,7 +710,7 @@ mod tests {
 
     #[test]
     fn keybind_parse_unknown_key_returns_lua_error() {
-        let (lua, keybinds, _input_config, _decoration) = test_api();
+        let (lua, keybinds, _input_config, _decoration, _cmd_rx) = test_api();
         let err = lua
             .load(r#"es.bind("Super+NotARealKey_123", "spawn_terminal")"#)
             .exec()

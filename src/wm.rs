@@ -255,6 +255,205 @@ pub struct Workspace {
     pub focused: Option<WindowId>,
 }
 
+/// Adjustable layout inputs for one output (e10s02). Stored on the output, not
+/// the window: `arrange_output` owns every tiled rect and would erase a
+/// per-window override on the next pass. Weights are kept flat and normalized
+/// on every arrangement so adding/removing windows cannot leave a stale length.
+#[derive(Clone, Debug)]
+pub struct TilingSplits {
+    /// Width share of the master column in the Master layout.
+    pub master_ratio: f64,
+    /// Relative heights of the stack column (Master layout).
+    pub stack_weights: Vec<f64>,
+    /// Relative widths of Equal-layout grid columns.
+    pub col_weights: Vec<f64>,
+    /// Relative heights of Equal-layout grid rows.
+    pub row_weights: Vec<f64>,
+}
+
+/// Smallest share any single split side may keep (e10s02). Keeps a dragged
+/// boundary from collapsing a window into an unusable sliver.
+pub const MIN_SPLIT_SHARE: f64 = 0.15;
+const MAX_MASTER_RATIO: f64 = 1.0 - MIN_SPLIT_SHARE;
+const MASTER_RATIO_DEFAULT: f64 = 0.6;
+
+/// Clamp a master ratio into [MIN_SPLIT_SHARE, MAX_MASTER_RATIO]. NaN falls
+/// back to the default — a poisoned ratio would make every rect NaN and
+/// silently hide the whole layout. Infinity is clamped by the same bounds.
+pub fn clamp_master_ratio(ratio: f64) -> f64 {
+    if ratio.is_nan() {
+        MASTER_RATIO_DEFAULT
+    } else {
+        ratio.clamp(MIN_SPLIT_SHARE, MAX_MASTER_RATIO)
+    }
+}
+
+/// Normalize `weights` to exactly n entries summing to 1.0 (e10s02t1).
+/// Missing entries start neutral; non-finite or below-floor entries get the
+/// floor. The floor degrades to 1/n when there are too many entries for it to
+/// be satisfiable, so seven stack windows still get valid, visible cells.
+pub fn normalize_weights(weights: &[f64], n: usize, min_share: f64) -> Vec<f64> {
+    if n == 0 {
+        return Vec::new();
+    }
+    let floor = min_share.max(0.0).min(1.0 / n as f64);
+    // Missing / invalid weights start neutral instead of starving at zero.
+    // A floor is a floor, not a tax on the healthy cells: lift only the
+    // violating ones and give their lost share back to the rest. Otherwise a
+    // 3:1 split would silently become 67:33, which feels like dragging through
+    // treacle near the limit. Treacle, incidentally, is a terrible WM feel.
+    let cleaned: Vec<f64> = (0..n)
+        .map(|i| match weights.get(i).copied() {
+            Some(v) if v.is_finite() && v > 0.0 => v,
+            _ => 1.0,
+        })
+        .collect();
+    let total: f64 = cleaned.iter().sum();
+    let mut out: Vec<f64> = if total.is_finite() && total > 0.0 {
+        cleaned.iter().map(|v| v / total).collect()
+    } else {
+        vec![1.0 / n as f64; n]
+    };
+    for _ in 0..n {
+        let bad: Vec<usize> = (0..n).filter(|&i| out[i] < floor).collect();
+        if bad.is_empty() {
+            break;
+        }
+        let free: Vec<usize> = (0..n).filter(|i| !bad.contains(i)).collect();
+        let free_total = 1.0 - floor * bad.len() as f64;
+        let free_sum: f64 = free.iter().map(|&i| out[i]).sum();
+        for i in bad {
+            out[i] = floor;
+        }
+        if free.is_empty() {
+            break;
+        }
+        for i in &free {
+            out[*i] = if free_sum > 0.0 {
+                free_total * out[*i] / free_sum
+            } else {
+                free_total / free.len() as f64
+            };
+        }
+    }
+    let total: f64 = out.iter().sum();
+    if total.is_finite() && total > 0.0 {
+        for v in &mut out {
+            *v /= total;
+        }
+    }
+    out
+}
+
+/// Split `total` pixels among `weights`, reserving `gap` between parts
+/// (e10s02t2). Weights are normalized first, so every cell gets at least the
+/// configured share. Largest-remainder rounding hands out spare pixels so the
+/// parts always sum to exactly `total - gaps` — no drift after repeated drags.
+pub fn weighted_split(total: u32, gap: u32, weights: &[f64], min_share: f64) -> Vec<u32> {
+    let n = weights.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let available = total.saturating_sub(gap.saturating_mul((n - 1) as u32));
+    let norm = normalize_weights(weights, n, min_share);
+    let mut sizes = Vec::with_capacity(n);
+    let mut fractions = Vec::with_capacity(n);
+    let mut used: u32 = 0;
+    for w in norm {
+        let raw = available as f64 * w;
+        let base = raw.floor() as u32;
+        used = used.saturating_add(base);
+        sizes.push(base);
+        fractions.push(raw - raw.floor());
+    }
+    let mut spare = available.saturating_sub(used);
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by(|&a, &b| fractions[b].total_cmp(&fractions[a]).then(a.cmp(&b)));
+    for i in order {
+        if spare == 0 {
+            break;
+        }
+        sizes[i] += 1;
+        spare -= 1;
+    }
+    sizes
+}
+
+/// Move a share of the combined weight of two adjacent cells from `second` to
+/// `first` (e10s02t7). Each side keeps at least `MIN_SPLIT_SHARE` of the axis
+/// total, so a violent drag cannot collapse a window into a sliver.
+fn shift_pair(weights: &mut [f64], first: usize, second: usize, share: f64) -> bool {
+    if first == second || first >= weights.len() || second >= weights.len() {
+        return false;
+    }
+    let mut cleaned: Vec<f64> = weights
+        .iter()
+        .map(|&w| if w.is_finite() && w > 0.0 { w } else { 1.0 })
+        .collect();
+    let total: f64 = cleaned.iter().sum();
+    let pair = cleaned[first] + cleaned[second];
+    if !total.is_finite() || total <= 0.0 || pair <= 0.0 {
+        return false;
+    }
+    let minimum = MIN_SPLIT_SHARE * total;
+    if pair < 2.0 * minimum {
+        cleaned[first] = pair / 2.0;
+        cleaned[second] = pair / 2.0;
+    } else {
+        let step = share * pair;
+        let grown = (cleaned[first] + step).clamp(minimum, pair - minimum);
+        cleaned[first] = grown;
+        cleaned[second] = pair - grown;
+    }
+    weights.copy_from_slice(&cleaned);
+    true
+}
+
+/// Grid chosen by `equal_split`: minimize the larger dimension, then prefer
+/// the squarest cell (e10s02t7). Shared with `adjust_split` so hit-testing and
+/// weight edits agree on which column/row a boundary belongs to.
+fn grid_for(n: usize, rect: Rect) -> (usize, usize) {
+    if n == 0 {
+        return (0, 0);
+    }
+    let mut best_rows = 1;
+    let mut best_cols = n;
+    let mut best_max_dim = n;
+    let mut best_ratio_dev = f64::INFINITY;
+    let screen_ratio = rect.width as f64 / rect.height as f64;
+    for rows in 1..=n {
+        let cols = n.div_ceil(rows);
+        let max_dim = rows.max(cols);
+        let cell_ratio = screen_ratio * (rows as f64 / cols as f64);
+        let ratio_dev = (cell_ratio - 1.0).abs();
+        if max_dim < best_max_dim || (max_dim == best_max_dim && ratio_dev < best_ratio_dev) {
+            best_max_dim = max_dim;
+            best_ratio_dev = ratio_dev;
+            best_rows = rows;
+            best_cols = cols;
+        }
+    }
+    (best_rows, best_cols)
+}
+
+impl Default for TilingSplits {
+    fn default() -> Self {
+        Self::standard()
+    }
+}
+
+impl TilingSplits {
+    /// Defaults are chosen so the existing 3/5 Master layout is unchanged.
+    pub fn standard() -> Self {
+        Self {
+            master_ratio: MASTER_RATIO_DEFAULT,
+            stack_weights: Vec::new(),
+            col_weights: Vec::new(),
+            row_weights: Vec::new(),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Output {
     pub id: OutputId,
@@ -262,6 +461,9 @@ pub struct Output {
     pub geometry: Rect,
     pub active_workspace: WorkspaceId,
     pub tiling_layout: TilingLayout,
+    /// Per-output split ratios (e10s02). Survives re-arrangement, workspace
+    /// switches and output resizes for the lifetime of the session.
+    pub splits: TilingSplits,
 }
 
 /// A single entry in the dock: one window on the active workspace, either
@@ -442,6 +644,98 @@ pub fn resize_edge_at(rect: Rect, point: (f64, f64), padding: i32) -> Option<Res
         (_, _, _, true) => Some(ResizeEdge::East),
         _ => None,
     }
+}
+
+/// Which way a tiling split boundary runs (e10s02t6).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SplitAxis {
+    /// Boundary between left and right cells; dragged horizontally.
+    Vertical,
+    /// Boundary between upper and lower cells; dragged vertically.
+    Horizontal,
+}
+
+/// An internal boundary between two arranged tiled windows (e10s02t6).
+/// `first` is left/above, `second` is right/below, so `adjust_split` knows
+/// which adjacent weights to move without guessing from window order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TilingSplitEdge {
+    pub axis: SplitAxis,
+    pub first: WindowId,
+    pub second: WindowId,
+}
+
+/// Find the internal split boundary nearest `point`, or None for an outer
+/// frame or window interior (e10s02t6). Pairwise on already-arranged rects:
+/// the same helper covers Master and Equal layouts without knowing the grid.
+pub fn tiling_split_edge_at(
+    rects: &[(WindowId, Rect)],
+    point: (f64, f64),
+    padding: f64,
+) -> Option<TilingSplitEdge> {
+    let pad = padding.max(0.0);
+    let mut best: Option<(f64, TilingSplitEdge)> = None;
+    for i in 0..rects.len() {
+        for j in (i + 1)..rects.len() {
+            let (id_a, a) = rects[i];
+            let (id_b, b) = rects[j];
+            let (a_right, b_right) = (
+                a.x as f64 + a.width as f64,
+                b.x as f64 + b.width as f64,
+            );
+            let (a_bottom, b_bottom) = (
+                a.y as f64 + a.height as f64,
+                b.y as f64 + b.height as f64,
+            );
+            let (b_left, b_top) = (b.x as f64, b.y as f64);
+            let (px, py) = point;
+
+            // Vertical: cells side by side, sharing vertical span.
+            let y_from = (a.y as f64).max(b_top);
+            let y_to = a_bottom.min(b_bottom);
+            if y_to > y_from
+                && py >= y_from - pad
+                && py <= y_to + pad
+                && (b_left - a_right).abs() <= pad * 2.0
+            {
+                let mid = (a_right + b_left) / 2.0;
+                let dist = (px - mid).abs();
+                if dist <= pad {
+                    let edge = if a_right <= b_left {
+                        TilingSplitEdge { axis: SplitAxis::Vertical, first: id_a, second: id_b }
+                    } else {
+                        TilingSplitEdge { axis: SplitAxis::Vertical, first: id_b, second: id_a }
+                    };
+                    if best.is_none_or(|(d, _)| dist < d) {
+                        best = Some((dist, edge));
+                    }
+                }
+            }
+
+            // Horizontal: cells stacked, sharing horizontal span.
+            let x_from = (a.x as f64).max(b_left);
+            let x_to = a_right.min(b_right);
+            if x_to > x_from
+                && px >= x_from - pad
+                && px <= x_to + pad
+                && (b_top - a_bottom).abs() <= pad * 2.0
+            {
+                let mid = (a_bottom + b_top) / 2.0;
+                let dist = (py - mid).abs();
+                if dist <= pad {
+                    let edge = if a_bottom <= b_top {
+                        TilingSplitEdge { axis: SplitAxis::Horizontal, first: id_a, second: id_b }
+                    } else {
+                        TilingSplitEdge { axis: SplitAxis::Horizontal, first: id_b, second: id_a }
+                    };
+                    if best.is_none_or(|(d, _)| dist < d) {
+                        best = Some((dist, edge));
+                    }
+                }
+            }
+        }
+    }
+    best.map(|(_, edge)| edge)
 }
 
 /// Apply a pointer delta to `orig` for the grabbed `edge`.
@@ -656,6 +950,7 @@ impl WindowManager {
                 geometry,
                 active_workspace: workspace,
                 tiling_layout: TilingLayout::default(),
+                splits: TilingSplits::standard(),
             },
         );
         self.dirty = true;
@@ -1558,6 +1853,203 @@ impl WindowManager {
         true
     }
 
+    #[allow(dead_code)] // public WM API; tests and future config surfaces use it
+    /// e10s02t3: change the Master-layout split ratio for an output. The
+    /// ratio is clamped into the usable range and applied on the next arrange
+    /// pass. Floor (not round) to stay byte-identical with the old 3/5 split.
+    pub fn set_master_ratio(&mut self, output: OutputId, ratio: f64) {
+        let Some(state) = self.outputs.get_mut(&output) else {
+            return;
+        };
+        state.splits.master_ratio = clamp_master_ratio(ratio);
+        self.dirty = true;
+        self.arrange_output(output);
+    }
+
+    #[allow(dead_code)] // public WM API; tests and future config surfaces use it
+    /// e10s02t4: relative heights of the Master-layout stack column. An empty
+    /// vector means equal heights, preserving the pre-e10 layout exactly.
+    pub fn set_stack_weights(&mut self, output: OutputId, weights: Vec<f64>) {
+        let Some(state) = self.outputs.get_mut(&output) else {
+            return;
+        };
+        state.splits.stack_weights = weights;
+        self.dirty = true;
+        self.arrange_output(output);
+    }
+
+    #[allow(dead_code)] // public WM API; tests and future config surfaces use it
+    /// e10s02t5: relative widths/heights of Equal-layout grid cells. Empty
+    /// vectors mean the original equal split.
+    pub fn set_equal_weights(&mut self, output: OutputId, cols: Vec<f64>, rows: Vec<f64>) {
+        let Some(state) = self.outputs.get_mut(&output) else {
+            return;
+        };
+        state.splits.col_weights = cols;
+        state.splits.row_weights = rows;
+        self.dirty = true;
+        self.arrange_output(output);
+    }
+
+    /// e10s02t8: restore all split inputs for an output to their defaults.
+    pub fn reset_tiling_splits(&mut self, output: OutputId) {
+        let Some(state) = self.outputs.get_mut(&output) else {
+            return;
+        };
+        state.splits = TilingSplits::standard();
+        self.dirty = true;
+        self.arrange_output(output);
+    }
+
+    /// Tiled windows on `output`'s active workspace, in arrangement order.
+    fn arranged_tiled_ids(&self, output: OutputId) -> Vec<WindowId> {
+        let Some(workspace_id) = self.outputs.get(&output).map(|o| o.active_workspace) else {
+            return Vec::new();
+        };
+        let Some(workspace) = self.workspaces.get(&workspace_id) else {
+            return Vec::new();
+        };
+        workspace
+            .windows
+            .iter()
+            .filter_map(|id| self.windows.get(id))
+            .filter(|w| {
+                w.mapped
+                    && !w.minimized
+                    && w.mode.placement == Placement::Tiled
+                    && w.mode.presentation == Presentation::Normal
+            })
+            .map(|w| w.id)
+            .collect()
+    }
+
+    /// Arranged tiled rects for split hit-testing (e10s02t6).
+    pub fn tiled_split_rects(&self, output: OutputId) -> Vec<(WindowId, Rect)> {
+        self.arranged_tiled_ids(output)
+            .into_iter()
+            .filter_map(|id| self.windows.get(&id).map(|w| (id, w.target_rect)))
+            .collect()
+    }
+
+    /// Inner geometry used by `arrange_output` for tiled cells.
+    fn inner_rect_for_output(&self, output: OutputId) -> Option<Rect> {
+        let state = self.outputs.get(&output)?;
+        let base = self.work_area.unwrap_or(state.geometry);
+        let bp = self.border_size as i32;
+        let tb_h = self.titlebar_height as i32;
+        Some(Rect {
+            x: base.x + self.outer as i32 + bp,
+            y: base.y + self.outer as i32 + bp + tb_h,
+            width: base.width.saturating_sub(2 * self.outer).saturating_sub(2 * self.border_size),
+            height: base
+                .height
+                .saturating_sub(2 * self.outer)
+                .saturating_sub(self.titlebar_height)
+                .saturating_sub(2 * self.border_size),
+        })
+    }
+
+    /// e10s02t7: move an internal split by `delta_px` pixels. Positive delta
+    /// grows the first (left/above) side. Only ratio/weight inputs change; the
+    /// next arrange pass rebuilds every rect, so the layout stays consistent.
+    pub fn adjust_split(&mut self, output: OutputId, edge: TilingSplitEdge, delta_px: f64) -> bool {
+        let Some(state) = self.outputs.get(&output).cloned() else {
+            return false;
+        };
+        let ids = self.arranged_tiled_ids(output);
+        let Some(first) = ids.iter().position(|&id| id == edge.first) else {
+            return false;
+        };
+        let Some(second) = ids.iter().position(|&id| id == edge.second) else {
+            return false;
+        };
+        if first == second {
+            return false;
+        }
+        let (a, b) = match (
+            self.windows.get(&edge.first),
+            self.windows.get(&edge.second),
+        ) {
+            (Some(a), Some(b)) => (a.target_rect, b.target_rect),
+            _ => return false,
+        };
+        let Some(inner) = self.inner_rect_for_output(output) else {
+            return false;
+        };
+        let gap_v = self.inner as i32 + self.titlebar_height as i32;
+        let total_px = match edge.axis {
+            SplitAxis::Vertical => a.width as f64 + b.width as f64 + self.inner as f64,
+            SplitAxis::Horizontal => a.height as f64 + b.height as f64 + gap_v.max(0) as f64,
+        };
+        if !total_px.is_finite() || total_px <= 0.0 || !delta_px.is_finite() {
+            return false;
+        }
+        let share = delta_px / total_px;
+
+        let update = |splits: &mut TilingSplits| match (state.tiling_layout, edge.axis) {
+            (TilingLayout::Master, SplitAxis::Vertical) if first == 0 && second == 1 => {
+                splits.master_ratio = clamp_master_ratio(splits.master_ratio + share);
+                true
+            }
+            (TilingLayout::Master, SplitAxis::Horizontal) if first >= 1 && second >= 1 => {
+                let n = ids.len().saturating_sub(1);
+                let mut weights = if splits.stack_weights.len() >= n {
+                    splits.stack_weights.clone()
+                } else {
+                    vec![1.0; n]
+                };
+                if !shift_pair(&mut weights, first - 1, second - 1, share) {
+                    return false;
+                }
+                splits.stack_weights = weights;
+                true
+            }
+            (TilingLayout::Equal, SplitAxis::Vertical) => {
+                let (_, cols) = grid_for(ids.len(), inner);
+                if cols == 0 || first / cols != second / cols {
+                    return false;
+                }
+                let mut weights = if splits.col_weights.len() >= cols {
+                    splits.col_weights.clone()
+                } else {
+                    vec![1.0; cols]
+                };
+                if !shift_pair(&mut weights, first % cols, second % cols, share) {
+                    return false;
+                }
+                splits.col_weights = weights;
+                true
+            }
+            (TilingLayout::Equal, SplitAxis::Horizontal) => {
+                let (_, cols) = grid_for(ids.len(), inner);
+                if cols == 0 || first % cols != second % cols {
+                    return false;
+                }
+                let rows = ids.len().div_ceil(cols);
+                let mut weights = if splits.row_weights.len() >= rows {
+                    splits.row_weights.clone()
+                } else {
+                    vec![1.0; rows]
+                };
+                if !shift_pair(&mut weights, first / cols, second / cols, share) {
+                    return false;
+                }
+                splits.row_weights = weights;
+                true
+            }
+            _ => false,
+        };
+        let Some(splits) = self.outputs.get_mut(&output).map(|o| &mut o.splits) else {
+            return false;
+        };
+        if !update(splits) {
+            return false;
+        }
+        self.dirty = true;
+        self.arrange_output(output);
+        true
+    }
+
     pub fn arrange_output(&mut self, output: OutputId) {
         if !self.dirty {
             return;
@@ -1639,7 +2131,8 @@ impl WindowManager {
                 let master_width = if tiled.len() == 1 {
                     inner.width
                 } else {
-                    ((inner.width as u64 * 3) / 5) as u32
+                    let ratio = output_state.splits.master_ratio;
+                    ((inner.width as f64 * ratio).floor() as u64) as u32
                 };
                 self.set_target_rect(
                     tiled[0],
@@ -1664,19 +2157,32 @@ impl WindowManager {
                     // titlebar height so a lower window's titlebar doesn't
                     // overlap the window above it.
                     let gap_v = inner_gap as i32 + tb_h;
-                    let total_gap_v = gap_v * (stack.len() - 1) as i32;
-                    let cell_h = (inner.height as i32 - total_gap_v) / stack.len() as i32;
-                    for (index, id) in stack.iter().enumerate() {
-                        let top = inner.y + (index as i32 * (cell_h + gap_v));
+                    let heights = if output_state.splits.stack_weights.is_empty() {
+                        // Keep the pre-e10 integer-division layout byte-for-byte:
+                        // it drops the remainder instead of handing it out.
+                        let cell_h = (inner.height as i32 - gap_v * (stack.len() - 1) as i32)
+                            / stack.len() as i32;
+                        vec![cell_h as u32; stack.len()]
+                    } else {
+                        weighted_split(
+                            inner.height,
+                            gap_v.max(0) as u32,
+                            &output_state.splits.stack_weights,
+                            MIN_SPLIT_SHARE,
+                        )
+                    };
+                    let mut top = inner.y;
+                    for (id, height) in stack.iter().zip(heights) {
                         self.set_target_rect(
                             *id,
                             Rect {
                                 x: stack_x,
                                 y: top,
                                 width: stack_w,
-                                height: cell_h as u32,
+                                height,
                             },
                         );
+                        top += height as i32 + gap_v;
                     }
                 }
             }
@@ -1689,7 +2195,23 @@ impl WindowManager {
                     self.set_target_rect(tiled[0], inner);
                 } else {
                     let mut assigned: Vec<(WindowId, Rect)> = Vec::new();
-                    equal_split(&mut assigned, &tiled, inner, inner_gap, tb_h as u32);
+                    equal_split(
+                        &mut assigned,
+                        &tiled,
+                        inner,
+                        inner_gap,
+                        tb_h as u32,
+                        if output_state.splits.col_weights.is_empty() {
+                            None
+                        } else {
+                            Some(&output_state.splits.col_weights)
+                        },
+                        if output_state.splits.row_weights.is_empty() {
+                            None
+                        } else {
+                            Some(&output_state.splits.row_weights)
+                        },
+                    );
                     for (id, rect) in assigned {
                         self.set_target_rect(id, rect);
                     }
@@ -1779,6 +2301,8 @@ pub fn equal_split(
     rect: Rect,
     gap: u32,
     titlebar_height: u32,
+    col_weights: Option<&[f64]>,
+    row_weights: Option<&[f64]>,
 ) {
     let n = window_ids.len();
     if n == 0 {
@@ -1788,41 +2312,47 @@ pub fn equal_split(
         assigned.push((window_ids[0], rect));
         return;
     }
-    // Find the grid (rows x cols) that fits all windows. Primary: minimize the
-    // larger dimension (avoid 1xN rows when 2x2 fits). Tiebreak: squarest cell
-    // aspect ratio so cells are close to square.
-    let mut best_rows = 1;
-    let mut best_cols = n;
-    let mut best_max_dim = n;
-    let mut best_ratio_dev = f64::INFINITY;
-    let screen_ratio = rect.width as f64 / rect.height as f64;
-    for rows in 1..=n {
-        let cols = n.div_ceil(rows); // ceil(n / rows)
-        let max_dim = rows.max(cols);
-        let cell_ratio = screen_ratio * (rows as f64 / cols as f64);
-        let ratio_dev = (cell_ratio - 1.0).abs();
-        if max_dim < best_max_dim || (max_dim == best_max_dim && ratio_dev < best_ratio_dev) {
-            best_max_dim = max_dim;
-            best_ratio_dev = ratio_dev;
-            best_rows = rows;
-            best_cols = cols;
-        }
-    }
+    // Same grid choice as adjust_split, so dragging a boundary never changes
+    // which column/row it belongs to.
+    let (best_rows, best_cols) = grid_for(n, rect);
     // Vertical gap between rows must accommodate titlebars: a lower window's
     // titlebar extends upward from its target_rect, so it needs tb_h of space.
     let gap_v = gap + titlebar_height;
-    let cell_w = (rect.width.saturating_sub(gap * (best_cols - 1) as u32)) / best_cols as u32;
-    let cell_h = (rect.height.saturating_sub(gap_v * (best_rows - 1) as u32)) / best_rows as u32;
+    // Empty or stale weight vectors fall back to the original integer split,
+    // so an unchanged session keeps the exact pre-e10 geometry.
+    let axis_sizes = |total: u32, count: usize, axis_gap: u32, weights: Option<&[f64]>| {
+        match weights {
+            Some(w) if w.len() >= count && !w.is_empty() => {
+                weighted_split(total, axis_gap, &w[..count], MIN_SPLIT_SHARE)
+            }
+            _ => vec![
+                total.saturating_sub(axis_gap * (count - 1) as u32) / count as u32;
+                count
+            ],
+        }
+    };
+    let col_sizes = axis_sizes(rect.width, best_cols, gap, col_weights);
+    let row_sizes = axis_sizes(rect.height, best_rows, gap_v, row_weights);
     for (i, &id) in window_ids.iter().enumerate() {
         let row = i / best_cols;
         let col = i % best_cols;
+        let x = rect.x
+            + col_sizes[..col]
+                .iter()
+                .map(|&w| w as i32 + gap as i32)
+                .sum::<i32>();
+        let y = rect.y
+            + row_sizes[..row]
+                .iter()
+                .map(|&h| h as i32 + gap_v as i32)
+                .sum::<i32>();
         assigned.push((
             id,
             Rect {
-                x: rect.x + col as i32 * (cell_w + gap) as i32,
-                y: rect.y + row as i32 * (cell_h + gap_v) as i32,
-                width: cell_w,
-                height: cell_h,
+                x,
+                y,
+                width: col_sizes[col],
+                height: row_sizes[row],
             },
         ));
     }
@@ -1830,8 +2360,74 @@ pub fn equal_split(
 
 #[cfg(test)]
 mod tests {
-    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation, size_action, SizeAction, fill_scale, MAX_SIZE_RESENDS, SIZE_RESEND_INTERVAL, ResizeEdge, resize_edge_at, resize_rect, MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT};
+    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation, size_action, SizeAction, fill_scale, MAX_SIZE_RESENDS, SIZE_RESEND_INTERVAL, ResizeEdge, resize_edge_at, resize_rect, MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT, TilingSplits, clamp_master_ratio, normalize_weights, MIN_SPLIT_SHARE, weighted_split, SplitAxis, TilingSplitEdge, tiling_split_edge_at};
     use std::time::Duration;
+
+    // e10s02t1: splits live on the output so they survive re-arrangement.
+    // Per-window rect overrides cannot: arrange_output owns tiled geometry and
+    // would erase them on the next dirty pass. Splits are layout inputs.
+    #[test]
+    fn tiling_splits_defaults_are_master_60_percent() {
+        let d = TilingSplits::default();
+        assert!((d.master_ratio - 0.6).abs() < f64::EPSILON);
+        assert!(d.stack_weights.is_empty());
+        assert!(d.col_weights.is_empty());
+        assert!(d.row_weights.is_empty());
+        assert!((MIN_SPLIT_SHARE - 0.15).abs() < f64::EPSILON);
+    }
+
+    // e10s02t2: one allocation helper serves Master stacks and Equal columns
+    // and rows. Largest-remainder rounding makes the parts sum to the exact
+    // available space — no drifting one-pixel gaps after repeated drags.
+    #[test]
+    fn weighted_split_allocates_equal_skewed_and_clamped() {
+        assert_eq!(weighted_split(1000, 0, &[1.0, 1.0, 1.0], MIN_SPLIT_SHARE), vec![334, 333, 333]);
+        assert_eq!(weighted_split(1000, 10, &[1.0, 1.0], MIN_SPLIT_SHARE), vec![495, 495]);
+        assert_eq!(weighted_split(1000, 0, &[3.0, 1.0], MIN_SPLIT_SHARE), vec![750, 250]);
+        // A zero weight is lifted to the floor instead of collapsing a cell.
+        assert_eq!(weighted_split(1000, 0, &[1000.0, 0.0], MIN_SPLIT_SHARE), vec![850, 150]);
+    }
+
+    #[test]
+    fn weighted_split_handles_degenerate_inputs() {
+        assert!(weighted_split(1000, 0, &[], MIN_SPLIT_SHARE).is_empty());
+        assert_eq!(weighted_split(0, 0, &[1.0, 1.0], MIN_SPLIT_SHARE), vec![0, 0]);
+        // Gaps larger than the total must not underflow into a huge u32.
+        assert_eq!(weighted_split(5, 10, &[1.0, 1.0], MIN_SPLIT_SHARE), vec![0, 0]);
+        let parts = weighted_split(100, 0, &[f64::NAN, 1.0], MIN_SPLIT_SHARE);
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts.iter().sum::<u32>(), 100);
+    }
+
+    #[test]
+    fn tiling_splits_clamp_master_ratio_keeps_both_sides_usable() {
+        assert!((clamp_master_ratio(0.3) - 0.3).abs() < f64::EPSILON);
+        assert!((clamp_master_ratio(0.0) - MIN_SPLIT_SHARE).abs() < f64::EPSILON);
+        assert!((clamp_master_ratio(1.0) - 0.85).abs() < f64::EPSILON);
+        assert!((clamp_master_ratio(f64::NAN) - 0.6).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn tiling_splits_normalize_weights_fills_clamps_and_sums_to_one() {
+        let w = normalize_weights(&[1.0, 3.0], 4, MIN_SPLIT_SHARE);
+        assert_eq!(w.len(), 4);
+        assert!((w.iter().sum::<f64>() - 1.0).abs() < 1e-9);
+        assert!(w.iter().all(|v| *v >= 0.0));
+        assert!(w[1] > w[0], "explicit small weight must still shrink its cell");
+
+        // A zero/NaN weight gets the floor, not a zero-width cell.
+        let w = normalize_weights(&[0.0, f64::NAN, 1.0], 3, MIN_SPLIT_SHARE);
+        assert!(w.iter().all(|v| v.is_finite() && *v > 0.0));
+        assert!((w.iter().sum::<f64>() - 1.0).abs() < 1e-9);
+
+        // Too many windows for the floor: the floor degrades to 1/n rather
+        // than demanding more space than exists.
+        let w = normalize_weights(&[], 10, MIN_SPLIT_SHARE);
+        assert_eq!(w.len(), 10);
+        assert!(w.iter().all(|v| (v - 0.1).abs() < 1e-9));
+
+        assert!(normalize_weights(&[], 0, MIN_SPLIT_SHARE).is_empty());
+    }
 
     // e10s01t1: hit-testing, rect math and cursors must all agree on which
     // edge is moving. Free titlebar space is a move handle, not a resize one —
@@ -1947,6 +2543,147 @@ mod tests {
         assert_eq!(manager.window(second).unwrap().target_rect.x, 1151);
         assert_eq!(manager.window(second).unwrap().target_rect.height, 538);
         assert_eq!(manager.window(third).unwrap().target_rect.y, 540);
+    }
+
+    // e10s02t3: the default ratio must be byte-identical to the old 3/5 split,
+    // then actually drive the master width when dragged. Integer 3/5 used to
+    // floor 1916 -> 1149; keep that exact result for the default.
+    #[test]
+    fn master_ratio_drives_width_and_defaults_to_three_fifths() {
+        let (mut manager, output) = manager();
+        let master = manager.add_window(output, "kitty", "master").unwrap();
+        let stack = manager.add_window(output, "kitty", "stack").unwrap();
+
+        assert_eq!(manager.window(master).unwrap().target_rect.width, 1149);
+        assert_eq!(manager.window(stack).unwrap().target_rect.x, 1151);
+
+        manager.set_master_ratio(output, 0.3);
+        assert_eq!(manager.window(master).unwrap().target_rect.width, 574);
+        assert_eq!(manager.window(stack).unwrap().target_rect.x, 576);
+
+        // The 15% floor keeps both columns usable.
+        manager.set_master_ratio(output, 0.0);
+        assert_eq!(manager.window(master).unwrap().target_rect.width, 287);
+    }
+
+    // e10s02t4: stack heights are layout inputs on the output. Default weights
+    // reproduce the old equal split; explicit weights redistribute pixels while
+    // keeping the 15% floor so the small side stays usable.
+    #[test]
+    fn stack_weights_drive_master_stack_heights() {
+        let (mut manager, output) = manager();
+        let _master = manager.add_window(output, "kitty", "master").unwrap();
+        let top = manager.add_window(output, "kitty", "top").unwrap();
+        let bottom = manager.add_window(output, "kitty", "bottom").unwrap();
+
+        // Empty weights = old equal stack: 1076px inner height / 2 = 538.
+        assert_eq!(manager.window(top).unwrap().target_rect.height, 538);
+        assert_eq!(manager.window(bottom).unwrap().target_rect.y, 540);
+
+        manager.set_stack_weights(output, vec![3.0, 1.0]);
+        assert_eq!(manager.window(top).unwrap().target_rect.height, 807);
+        assert_eq!(manager.window(bottom).unwrap().target_rect.y, 809);
+        assert_eq!(manager.window(bottom).unwrap().target_rect.height, 269);
+
+        // A 1000:1 weight must not flatten the small window to zero.
+        manager.set_stack_weights(output, vec![1000.0, 1.0]);
+        assert!(manager.window(bottom).unwrap().target_rect.height >= 161);
+    }
+
+    // e10s02t5: Equal-layout weights change cell sizes without changing the
+    // chosen grid. Empty weights keep the old integer-division geometry.
+    #[test]
+    fn equal_split_skewed_weights_shift_grid_cells() {
+        let rect = Rect { x: 0, y: 0, width: 1920, height: 1080 };
+        let mut cols = Vec::new();
+        equal_split(&mut cols, &[1, 2], rect, 0, 0, Some(&[3.0, 1.0]), None);
+        assert_eq!(cols[0].1.width, 1440);
+        assert_eq!(cols[1].1.x, 1440);
+        assert_eq!(cols[1].1.width, 480);
+
+        // A tall rect makes the grid 2 rows x 1 column, so row weights apply.
+        let tall = Rect { x: 0, y: 0, width: 540, height: 1080 };
+        let mut rows = Vec::new();
+        equal_split(&mut rows, &[1, 2], tall, 0, 30, None, Some(&[1.0, 3.0]));
+        assert_eq!(rows[0].1.height, 263);
+        assert_eq!(rows[1].1.y, 293);
+        assert_eq!(rows[1].1.height, 787);
+    }
+
+    // e10s02t6: hit-testing works on the already-arranged rects, so the same
+    // helper serves Master and Equal layouts without duplicating geometry.
+    #[test]
+    fn tiling_split_edge_detects_internal_boundaries_only() {
+        let master = (1, Rect { x: 2, y: 2, width: 1149, height: 1076 });
+        let top = (2, Rect { x: 1151, y: 2, width: 767, height: 538 });
+        let bottom = (3, Rect { x: 1151, y: 540, width: 767, height: 538 });
+        let rects = [master, top, bottom];
+
+        let vertical = tiling_split_edge_at(&rects, (1151.0, 300.0), 6.0).unwrap();
+        assert_eq!(vertical.axis, SplitAxis::Vertical);
+        assert_eq!((vertical.first, vertical.second), (1, 2));
+
+        let horizontal = tiling_split_edge_at(&rects, (1400.0, 540.0), 6.0).unwrap();
+        assert_eq!(horizontal.axis, SplitAxis::Horizontal);
+        assert_eq!((horizontal.first, horizontal.second), (2, 3));
+
+        // Outer frame and window centres are not split boundaries.
+        assert!(tiling_split_edge_at(&rects, (2.0, 300.0), 6.0).is_none());
+        assert!(tiling_split_edge_at(&rects, (1400.0, 300.0), 6.0).is_none());
+    }
+
+    // e10s02t7: one adjust_split entry point moves whichever split the edge
+    // names, and the 15% floor survives a violent drag.
+    #[test]
+    fn adjust_split_clamps_master_stack_and_grid() {
+        let (mut manager, output) = manager();
+        let master = manager.add_window(output, "kitty", "master").unwrap();
+        let top = manager.add_window(output, "kitty", "top").unwrap();
+        let bottom = manager.add_window(output, "kitty", "bottom").unwrap();
+
+        let vertical = TilingSplitEdge { axis: SplitAxis::Vertical, first: master, second: top };
+        manager.adjust_split(output, vertical, 100.0);
+        assert!(manager.window(master).unwrap().target_rect.width > 1149);
+        manager.adjust_split(output, vertical, 10000.0);
+        assert_eq!(manager.window(master).unwrap().target_rect.width, 1628);
+        assert!(manager.window(top).unwrap().target_rect.width >= 287);
+
+        let horizontal = TilingSplitEdge { axis: SplitAxis::Horizontal, first: top, second: bottom };
+        manager.adjust_split(output, horizontal, 50.0);
+        assert!(manager.window(top).unwrap().target_rect.height > 538);
+        assert!(manager.window(bottom).unwrap().target_rect.height < 538);
+        manager.adjust_split(output, horizontal, -10000.0);
+        assert!(manager.window(top).unwrap().target_rect.height >= 161);
+
+        manager.set_tiling_layout(TilingLayout::Equal);
+        let left = manager.add_window(output, "kitty", "left").unwrap();
+        let right = manager.add_window(output, "kitty", "right").unwrap();
+        let grid = TilingSplitEdge { axis: SplitAxis::Vertical, first: left, second: right };
+        manager.adjust_split(output, grid, 100.0);
+        assert!(manager.window(left).unwrap().target_rect.width > manager.window(right).unwrap().target_rect.width);
+    }
+
+    // e10s02t8: reset restores every split input on the output in one pass.
+    #[test]
+    fn reset_tiling_splits_restores_defaults() {
+        let (mut manager, output) = manager();
+        let master = manager.add_window(output, "kitty", "master").unwrap();
+        let top = manager.add_window(output, "kitty", "top").unwrap();
+        let _bottom = manager.add_window(output, "kitty", "bottom").unwrap();
+
+        manager.set_master_ratio(output, 0.2);
+        manager.set_stack_weights(output, vec![4.0, 1.0]);
+        manager.set_equal_weights(output, vec![9.0, 1.0], vec![8.0, 2.0]);
+        assert!((manager.output(output).unwrap().splits.master_ratio - 0.2).abs() < f64::EPSILON);
+
+        manager.reset_tiling_splits(output);
+        let splits = &manager.output(output).unwrap().splits;
+        assert!((splits.master_ratio - 0.6).abs() < f64::EPSILON);
+        assert!(splits.stack_weights.is_empty());
+        assert!(splits.col_weights.is_empty());
+        assert!(splits.row_weights.is_empty());
+        assert_eq!(manager.window(master).unwrap().target_rect.width, 1149);
+        assert_eq!(manager.window(top).unwrap().target_rect.height, 538);
     }
 
     #[test]
@@ -2528,7 +3265,7 @@ mod tests {
     fn equal_split_single_window_fills_rect() {
         let rect = Rect { x: 0, y: 0, width: 1920, height: 1080 };
         let mut assigned: Vec<(u64, Rect)> = Vec::new();
-        equal_split(&mut assigned, &[1], rect, 0, 0);
+        equal_split(&mut assigned, &[1], rect, 0, 0, None, None);
 
         assert_eq!(assigned.len(), 1);
         assert_eq!(assigned[0].0, 1);
@@ -2539,7 +3276,7 @@ mod tests {
     fn equal_split_two_windows_split_vertically() {
         let rect = Rect { x: 0, y: 0, width: 1920, height: 1080 };
         let mut assigned: Vec<(u64, Rect)> = Vec::new();
-        equal_split(&mut assigned, &[1, 2], rect, 0, 0);
+        equal_split(&mut assigned, &[1, 2], rect, 0, 0, None, None);
 
         assert_eq!(assigned.len(), 2);
         assert_eq!(assigned[0].1.x, 0);
@@ -2556,7 +3293,7 @@ mod tests {
     fn equal_split_three_windows_equal_size() {
         let rect = Rect { x: 0, y: 0, width: 1920, height: 1080 };
         let mut assigned: Vec<(u64, Rect)> = Vec::new();
-        equal_split(&mut assigned, &[1, 2, 3], rect, 0, 0);
+        equal_split(&mut assigned, &[1, 2, 3], rect, 0, 0, None, None);
 
         assert_eq!(assigned.len(), 3);
         // All windows should have the same width and height
@@ -2623,7 +3360,7 @@ mod tests {
     fn equal_split_rects_do_not_overlap_with_gap() {
         let rect = Rect { x: 0, y: 0, width: 1920, height: 1080 };
         let mut assigned: Vec<(u64, Rect)> = Vec::new();
-        equal_split(&mut assigned, &[1, 2, 3, 4], rect, 10, 0);
+        equal_split(&mut assigned, &[1, 2, 3, 4], rect, 10, 0, None, None);
 
         assert_eq!(assigned.len(), 4);
         // 2x2 grid with 10px gaps: cell_w=(1920-10)/2=955, cell_h=(1080-10)/2=535
@@ -2650,7 +3387,7 @@ mod tests {
         let rect = Rect { x: 0, y: 0, width: 1920, height: 1080 };
         let mut assigned: Vec<(u64, Rect)> = Vec::new();
         // 2 windows side by side, 30px titlebar height, no extra gap
-        equal_split(&mut assigned, &[1, 2], rect, 0, 30);
+        equal_split(&mut assigned, &[1, 2], rect, 0, 30, None, None);
 
         assert_eq!(assigned.len(), 2);
         // 1x2 grid: cell_w=960, cell_h=1080
@@ -2668,7 +3405,7 @@ mod tests {
         let rect = Rect { x: 0, y: 0, width: 1080, height: 1920 };
         let mut assigned: Vec<(u64, Rect)> = Vec::new();
         // 2 windows stacked vertically on a portrait screen, 30px titlebar
-        equal_split(&mut assigned, &[1, 2], rect, 0, 30);
+        equal_split(&mut assigned, &[1, 2], rect, 0, 30, None, None);
 
         assert_eq!(assigned.len(), 2);
         // 2x1 grid: cell_w=1080, cell_h=(1920-30)/2=945
