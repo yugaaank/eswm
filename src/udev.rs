@@ -3615,6 +3615,33 @@ mod tests {
         assert!(!drag_consumes_button(None, BTN_LEFT));
     }
 
+    // e10s01t3: the grabbed edge travels with the drag. Resize must use it
+    // instead of the old bottom-right-only growth; move must ignore it.
+    #[test]
+    fn drag_rect_resize_follows_the_carried_edge() {
+        let orig = wm::Rect { x: 100, y: 200, width: 300, height: 200 };
+        let bounds = (200, 150);
+        let limit = (u32::MAX, u32::MAX);
+        let drag = |mode, edge| DragState {
+            window: 1,
+            mode,
+            start: Point::from((100.0, 200.0)),
+            orig_rect: orig,
+            button: BTN_LEFT,
+            edge,
+        };
+        let at = Point::from((60.0, 170.0));
+
+        assert_eq!(
+            drag_rect(drag(DragMode::Resize, wm::ResizeEdge::NorthWest), at, bounds, limit),
+            wm::Rect { x: 60, y: 170, width: 340, height: 230 }
+        );
+        assert_eq!(
+            drag_rect(drag(DragMode::Move, wm::ResizeEdge::SouthEast), at, bounds, limit),
+            wm::Rect { x: 60, y: 170, width: 300, height: 200 }
+        );
+    }
+
     #[test]
     fn idle_frame_skips_render_timer() {
         assert!(render_timer_delay(false, Duration::from_millis(16)).is_none());
