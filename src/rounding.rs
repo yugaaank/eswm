@@ -16,6 +16,62 @@
 //! - fullscreen windows and popups are never rounded.
 //! - `corner_radius == 0` disables rounding entirely.
 
+/// Radii for the four corners, in pixels. Independent so a titlebar can round
+/// only its top edge while the client below rounds only its bottom edge.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Corners {
+    pub tl: u32,
+    pub tr: u32,
+    pub bl: u32,
+    pub br: u32,
+}
+
+impl Corners {
+    pub fn all(r: u32) -> Self {
+        Self { tl: r, tr: r, bl: r, br: r }
+    }
+}
+
+/// Which corners of a window are rounded for one frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RingPlan {
+    /// Outer silhouette of the border ring.
+    pub outer: Corners,
+    /// Inner hole of the ring; paints over the client's square corners.
+    pub inner: Corners,
+    /// Titlebar background; only its top corners are rounded.
+    pub titlebar: Corners,
+}
+
+/// Compute the corner policy from config and window state.
+pub fn ring_plan(
+    radius: u32,
+    border_size: u32,
+    titlebar_height: u32,
+    fullscreen: bool,
+    popup: bool,
+) -> RingPlan {
+    if radius == 0 || fullscreen || popup {
+        return RingPlan::default();
+    }
+    let Some(inner_radius) = radius.checked_sub(border_size) else {
+        return RingPlan::default();
+    };
+    let mut inner = Corners::all(inner_radius);
+    // A titlebar shorter than the arc owns the top of the hole: clamp both
+    // sides to the same limit so the titlebar and the ring meet seamlessly.
+    if titlebar_height > 0 && inner_radius > titlebar_height {
+        inner.tl = titlebar_height;
+        inner.tr = titlebar_height;
+    }
+    let titlebar = if titlebar_height > 0 {
+        Corners { tl: inner.tl, tr: inner.tr, bl: 0, br: 0 }
+    } else {
+        Corners::default()
+    };
+    RingPlan { outer: Corners::all(radius), titlebar, inner }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
