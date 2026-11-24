@@ -3671,6 +3671,22 @@ mod tests {
         );
     }
 
+    // e10s01t5: eight handles need only four Xcursor icons. Mapping them from
+    // one place keeps the hover cursor and the dragged cursor identical.
+    #[test]
+    fn resize_edge_cursor_icons_cover_all_handles() {
+        use wm::ResizeEdge::*;
+        let name = |e| resize_cursor_icon(e).name();
+        assert_eq!(name(North), "ns-resize");
+        assert_eq!(name(South), "ns-resize");
+        assert_eq!(name(East), "ew-resize");
+        assert_eq!(name(West), "ew-resize");
+        assert_eq!(name(NorthEast), "nesw-resize");
+        assert_eq!(name(SouthWest), "nesw-resize");
+        assert_eq!(name(NorthWest), "nwse-resize");
+        assert_eq!(name(SouthEast), "nwse-resize");
+    }
+
     #[test]
     fn idle_frame_skips_render_timer() {
         assert!(render_timer_delay(false, Duration::from_millis(16)).is_none());
