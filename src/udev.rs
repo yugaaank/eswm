@@ -126,6 +126,9 @@ struct UdevOutputId {
 enum DragMode {
     Move,
     Resize,
+    /// e10s02t7: dragging an internal tiling boundary changes split weights,
+    /// not a window rect.
+    TilingSplit,
 }
 
 #[derive(Clone, Copy)]
@@ -137,6 +140,8 @@ struct DragState {
     button: u32,
     /// Grabbed frame edge. Ignored for Move; Super+RMB stays SouthEast.
     edge: wm::ResizeEdge,
+    /// Boundary being dragged. Only Some for `DragMode::TilingSplit`.
+    split: Option<wm::TilingSplitEdge>,
     /// True once DRAG_THRESHOLD of travel is crossed; stays true after.
     armed: bool,
     /// Escape pressed: keep the record until button release so the release is
@@ -1657,6 +1662,9 @@ fn drag_rect(
             ..drag.orig_rect
         },
         DragMode::Resize => wm::resize_rect(drag.orig_rect, drag.edge, dx, dy, min, max),
+        // Split drags never move a window rect; the branch in drag_update
+        // handles them before this helper is called.
+        DragMode::TilingSplit => drag.orig_rect,
     }
 }
 
@@ -1692,7 +1700,10 @@ fn cancel_active_drag(state: &mut State) -> bool {
     if drag.cancelled {
         return true;
     }
-    if state.wm.set_window_rect(drag.window, drag.orig_rect) {
+    // A split drag has no window rect to restore; its weights stay put.
+    if !matches!(drag.mode, DragMode::TilingSplit)
+        && state.wm.set_window_rect(drag.window, drag.orig_rect)
+    {
         crate::apply_layout(state);
     }
     if let Some(udev) = state.udev.as_mut() {
@@ -1708,6 +1719,34 @@ fn cancel_active_drag(state: &mut State) -> bool {
 /// Advance an in-flight move/resize and return the dragged window id.
 fn drag_update(state: &mut State, pos: Point<f64, Logical>) -> Option<wm::WindowId> {
     let drag = state.udev.as_ref().unwrap().drag?;
+    // e10s02t7: split drags change layout inputs instead of a window rect.
+    if matches!(drag.mode, DragMode::TilingSplit) {
+        if drag.cancelled {
+            return None;
+        }
+        let dx = pos.x - drag.start.x;
+        let dy = pos.y - drag.start.y;
+        if !drag.armed && dx * dx + dy * dy < DRAG_THRESHOLD * DRAG_THRESHOLD {
+            return None;
+        }
+        if let Some(d) = state.udev.as_mut().and_then(|u| u.drag.as_mut()) {
+            d.armed = true;
+        }
+        if let (Some(split), Some(output)) = (
+            drag.split,
+            state.wm.window(drag.window).map(|window| window.output),
+        ) {
+            let delta = match split.axis {
+                wm::SplitAxis::Vertical => dx,
+                wm::SplitAxis::Horizontal => dy,
+            };
+            if state.wm.adjust_split(output, split, delta) {
+                crate::apply_layout(state);
+                state.redraw_needed = true;
+            }
+        }
+        return None;
+    }
     // e10s01t7: min sizes come from the shared config so es.dsp.set_min_window_size
     // takes effect on the very next motion event. max(1) guards a zero-valued
     // config from ever reaching the clamp math.
@@ -1958,6 +1997,7 @@ impl State {
                                     orig_rect: rect,
                                     button,
                                     edge: wm::ResizeEdge::SouthEast,
+                                    split: None,
                                     armed: false,
                                     cancelled: false,
                                 });
@@ -1969,6 +2009,7 @@ impl State {
                         // 6px grab zone can never swallow close/maximize/minimize.
                         let rect = window.target_rect;
                         let mode = window.mode;
+                        let output = window.output;
                         let tb = titlebar_height as f64;
                         let in_titlebar = location.y >= rect.y as f64 - tb && location.y < rect.y as f64
                             && location.x >= rect.x as f64 && location.x < rect.x as f64 + rect.width as f64;
@@ -1979,6 +2020,28 @@ impl State {
                         };
                         if let Some(tb_button) = titlebar_button {
                             apply_titlebar_action(self, id, tb_button);
+                        } else if mode.placement == wm::Placement::Tiled
+                            && mode.presentation == wm::Presentation::Normal {
+                            // Internal boundaries own a 6px grab zone. Outer
+                            // frame and window centres fall through to focus.
+                            let rects = self.wm.tiled_split_rects(output);
+                            if let Some(split) = wm::tiling_split_edge_at(
+                                &rects,
+                                (location.x, location.y),
+                                RESIZE_HANDLE_PADDING as f64,
+                            ) {
+                                self.udev.as_mut().unwrap().drag = Some(DragState {
+                                    window: id,
+                                    mode: DragMode::TilingSplit,
+                                    start: location,
+                                    orig_rect: rect,
+                                    button,
+                                    edge: wm::ResizeEdge::SouthEast,
+                                    split: Some(split),
+                                    armed: false,
+                                    cancelled: false,
+                                });
+                            }
                         } else if mode.placement == wm::Placement::Floating
                             && mode.presentation == wm::Presentation::Normal {
                             let frame = wm::outer_frame(rect, self.wm.border_size(), titlebar_height);
@@ -1994,6 +2057,7 @@ impl State {
                                     orig_rect: rect,
                                     button,
                                     edge,
+                                    split: None,
                                     armed: false,
                                     cancelled: false,
                                 });
@@ -2005,6 +2069,7 @@ impl State {
                                     orig_rect: rect,
                                     button,
                                     edge: wm::ResizeEdge::SouthEast,
+                                    split: None,
                                     armed: false,
                                     cancelled: false,
                                 });
@@ -3786,6 +3851,7 @@ mod tests {
             orig_rect: wm::Rect { x: 0, y: 0, width: 100, height: 100 },
             button: BTN_LEFT,
             edge: wm::ResizeEdge::SouthEast,
+            split: None,
             armed: false,
             cancelled: false,
         };
@@ -3808,6 +3874,7 @@ mod tests {
             orig_rect: orig,
             button: BTN_LEFT,
             edge,
+            split: None,
             armed: false,
             cancelled: false,
         };
@@ -3836,6 +3903,7 @@ mod tests {
             orig_rect: orig,
             button: BTN_LEFT,
             edge: wm::ResizeEdge::SouthEast,
+            split: None,
             armed,
             cancelled,
         };

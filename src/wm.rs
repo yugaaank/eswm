@@ -1910,6 +1910,14 @@ impl WindowManager {
             .collect()
     }
 
+    /// Arranged tiled rects for split hit-testing (e10s02t6).
+    pub fn tiled_split_rects(&self, output: OutputId) -> Vec<(WindowId, Rect)> {
+        self.arranged_tiled_ids(output)
+            .into_iter()
+            .filter_map(|id| self.windows.get(&id).map(|w| (id, w.target_rect)))
+            .collect()
+    }
+
     /// Inner geometry used by `arrange_output` for tiled cells.
     fn inner_rect_for_output(&self, output: OutputId) -> Option<Rect> {
         let state = self.outputs.get(&output)?;
