@@ -164,9 +164,15 @@ pub fn rounded_border_pixels(
             let mask = if in_hole {
                 // Inside the hole, cover only the part its own rounded mask
                 // clips away — that is the wedge over a square client corner.
-                255u8.saturating_sub(rounded_alpha(
+                // The wedge must stay inside the outer silhouette too: with a
+                // thin border the hole's corner sits further from the arc
+                // centre than the outer arc does, so an unclipped wedge
+                // pokes out past the arc and squares the corner off again.
+                // Same trap as painting a round room's corners with a square
+                // brush.
+                outer_mask.min(255u8.saturating_sub(rounded_alpha(
                     x - hole_x, y - hole_y, hole_width, hole_height, inner,
-                ))
+                )))
             } else {
                 outer_mask
             };
@@ -295,6 +301,36 @@ mod tests {
         assert_eq!(at(2, 4), [255, 0, 0, 255]);
         // Outside the outer arc: transparent.
         assert_eq!(at(0, 0), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn thin_border_wedge_cannot_poke_outside_the_arc() {
+        // Operator config: radius 12 over a 1px border. The hole's square
+        // corner sits further from the arc centre than the outer arc does, so
+        // an unclipped wedge spills past the silhouette and squares the corner
+        // off again -- rounded arcs with square corners still showing.
+        let (w, h, bs, tb, r) = (90i32, 50i32, 1i32, 20i32, 12u32);
+        let fw = w + 2 * bs;
+        let fh = h + tb + 2 * bs;
+        let px = rounded_border_pixels(
+            fw, fh, bs, bs, w, h + tb, [255, 0, 0, 255],
+            Corners::all(r), Corners::all(r - bs as u32),
+        );
+        let alpha = |x: i32, y: i32| px[((y * fw + x) * 4 + 3) as usize];
+        for y in 0..fh {
+            for x in 0..fw {
+                if rounded_alpha(x, y, fw, fh, Corners::all(r)) == 0 {
+                    assert_eq!(
+                        alpha(x, y), 0,
+                        "({x},{y}) is outside the outer arc but still painted",
+                    );
+                }
+            }
+        }
+        // The corner border must still close over the client's square corner.
+        assert!(alpha(4, 4) > 0, "corner border must cover the client corner");
+        // ...while the square corner tip itself stays cut away.
+        assert_eq!(alpha(1, 1), 0, "corner tip must be rounded away");
     }
 
     #[test]

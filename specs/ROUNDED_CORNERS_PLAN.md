@@ -489,6 +489,31 @@ Verified: `cargo clippy --all-targets` clean, `cargo test` 228 passed,
 Live DRM UAT still pending — this session runs inside an existing Wayland/X11
 session, where grabbing the VT is forbidden.
 
+### 11.1 UAT defect: square corners still visible (2026-11-25)
+
+Symptom: the arcs drew, but a square block of border colour stayed pinned over
+each corner. Reproduced on the CPU by compositing the real element stack
+(ring over a square client) with the operator's settings — radius 12, **border
+size 1**, titlebar 20.
+
+Root cause: `rounded_border_pixels` computed the hole-corner wedge as
+`255 - inner_alpha` and ignored the outer mask. Inset by only `border_size`, the
+hole's corner sits `(radius - border_size) * sqrt(2)` from the arc centre while
+the outer arc stops at `radius`, so for `border_size < radius * (1 - 1/sqrt2)`
+(≈ 3.5px at radius 12) the wedge extends past the silhouette. The ring then
+painted border colour in a square outside its own arc. A 3px border hides it;
+the operator's 1px border does not.
+
+Fix: `mask = outer_mask.min(255 - inner_alpha)` — the wedge is clipped by the
+outer silhouette, so the visible shape is exactly "outer rounded rect minus the
+inner rounded hole". Regression guard:
+`thin_border_wedge_cannot_poke_outside_the_arc` asserts no pixel outside the
+outer arc is painted and that the corner border still closes over the client's
+square corner.
+
+Verified: `cargo clippy --all-targets` clean, `cargo test` 229 passed,
+`cargo build` clean.
+
 ## 12. Prior art
 
 - Local Hyprland checkout `/home/yugaaank/Projects/Hyprland`:
