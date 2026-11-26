@@ -1230,6 +1230,16 @@ fn find_lua_keybind<'a>(
 
 /// Execute a single keybind action.
 fn execute_keybind(state: &mut State, kb: &lua_state::Keybind) -> FilterResult<()> {
+    // Lua callbacks are real code now, not the old action-string theatre.
+    // A callback error is logged and swallowed: one bad Lua function must not
+    // take the whole compositor down mid-keypress.
+    if kb.callback.is_some() {
+        if let Some(lua) = &state.lua
+            && let Err(err) = crate::lua_state::call_keybind_callback(lua, kb) {
+                warn!("lua keybind callback failed: {err}");
+            }
+        return FilterResult::Intercept(());
+    }
     match kb.action.as_str() {
         "spawn_terminal" => crate::spawn_terminal(),
         "spawn_fuzzel" => crate::spawn_on_socket("fuzzel", &[]),
@@ -1380,6 +1390,7 @@ fn builtin_shortcut(mods: &ModifiersState, raw_sym: u32) -> Option<lua_state::Ke
             action: "quit".into(),
             arg: None,
             cmd: None,
+            callback: None,
         });
     }
 
@@ -1395,6 +1406,7 @@ fn builtin_shortcut(mods: &ModifiersState, raw_sym: u32) -> Option<lua_state::Ke
             action: "change_vt".into(),
             arg: Some(vt),
             cmd: None,
+            callback: None,
         });
     }
 
@@ -4668,6 +4680,7 @@ mod tests {
             arg: Some(1),
             cmd: None,
             action: "move_window_to_workspace".into(),
+            callback: None,
         };
         let mods = ModifiersState {
             logo: true,
@@ -4688,6 +4701,7 @@ mod tests {
             arg: None,
             cmd: None,
             action: "spawn_terminal".into(),
+            callback: None,
         };
         let mods = ModifiersState {
             logo: true,

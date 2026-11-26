@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::collections::HashMap;
 use flume::Sender;
-use mlua::{Lua, Table};
+use mlua::{Function, Lua, RegistryKey, Table};
 use xkbcommon::xkb;
 
 use crate::wm::{DecorationConfig, DockEntry, TilingLayout, WmMode};
@@ -391,6 +391,22 @@ pub struct Keybind {
     pub action: String,
     pub arg: Option<i32>,
     pub cmd: Option<String>,
+    /// Lua callback for `es.bind(keys, function, arg)`. Arc keeps Keybind
+    /// cloneable while RegistryKey deliberately is not.
+    pub callback: Option<Arc<RegistryKey>>,
+}
+
+/// Run a Lua-bound keybind callback. Errors travel back to the caller so the
+/// key path can log them instead of silently pretending the key worked.
+pub(crate) fn call_keybind_callback(lua: &Lua, kb: &Keybind) -> Result<(), mlua::Error> {
+    let Some(key) = &kb.callback else {
+        return Ok(());
+    };
+    let function: Function = lua.registry_value(key)?;
+    match kb.arg {
+        Some(arg) => function.call::<()>(arg),
+        None => function.call::<()>(()),
+    }
 }
 
 
@@ -445,12 +461,27 @@ pub fn register_api(
     // es.bind(keybind_string, action_string, [arg]) -> registers a keybind
     // Example: es.bind("Super+Return", "spawn_terminal")
     // Example: es.bind("Super+1", "switch_workspace", 1)
-    let bind = lua.create_function(move |_, (keybind, action, arg): (String, String, Option<i32>)| -> Result<(), mlua::Error> {
+    let bind = lua.create_function(move |lua, (keybind, action, arg): (String, mlua::Value, Option<i32>)| -> Result<(), mlua::Error> {
         let (mods, key) = parse_keybind_string(&keybind);
         if key.is_empty() {
             return Err(mlua::Error::RuntimeError("keybind missing key".into()));
         }
         let keysym = parse_keysym_name(&key)?;
+        // A function action is kept in the registry; string actions keep the
+        // old closed-list behaviour byte-for-byte.
+        let (action, callback) = match action {
+            mlua::Value::String(name) => (name.to_str()?.to_string(), None),
+            mlua::Value::Function(function) => (
+                "lua_function".to_string(),
+                Some(Arc::new(lua.create_registry_value(function)?)),
+            ),
+            other => {
+                return Err(mlua::Error::RuntimeError(format!(
+                    "bind action must be a string or function, got {}",
+                    other.type_name()
+                )));
+            }
+        };
         let kb = Keybind {
             mods,
             key,
@@ -458,6 +489,7 @@ pub fn register_api(
             action,
             arg,
             cmd: None,
+            callback,
         };
         lua_keybinds.lock().unwrap().push(kb);
         Ok(())
@@ -479,6 +511,7 @@ pub fn register_api(
             action: "exec_cmd".into(),
             arg: None,
             cmd: Some(command),
+            callback: None,
         };
         lua_keybinds_cmd.lock().unwrap().push(kb);
         Ok(())
