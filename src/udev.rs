@@ -46,7 +46,7 @@ use smithay::{
                 surface::{render_elements_from_surface_tree, WaylandSurfaceRenderElement},
                 Kind, render_elements,
             },
-            gles::GlesRenderer,
+            gles::{GlesFrame, GlesRenderer},
             multigpu::{gbm::GbmGlesBackend, GpuManager, MultiRenderer},
             ImportAll, ImportDma, ImportEgl, ImportMem, Renderer, Color32F,
             utils::CommitCounter,
@@ -86,7 +86,7 @@ use tracing::{debug, error, info, trace, warn};
 
 use smithay_drm_extras::drm_scanner::{DrmScanEvent, DrmScanner};
 
-use crate::{send_frames_surface_tree, State, clip::ClippedSurfaceElement, wm, ipc, lua_state};
+use crate::{send_frames_surface_tree, State, clip::ClippedSurfaceElement, rounded_surface::{AsGlRenderer, RoundedElement}, wm, ipc, lua_state};
 use crate::wm::border_frame;
 
 type UdevRenderer<'a> = MultiRenderer<
@@ -98,11 +98,28 @@ type UdevRenderer<'a> = MultiRenderer<
 
 render_elements! {
     pub EswmRenderElements<R> where
-        R: Renderer + ImportAll + ImportMem;
+        R: Renderer + ImportAll + ImportMem + AsGlRenderer;
     Cursor = MemoryRenderBufferRenderElement<R>,
     Surface = WaylandSurfaceRenderElement<R>,
     ClippedSurface = ClippedSurfaceElement<R>,
+    RoundedSurface = RoundedElement<ClippedSurfaceElement<R>>,
     Solid = SolidColorRenderElement,
+}
+
+impl<'a> AsGlRenderer for UdevRenderer<'a> {
+    fn gl_renderer(&mut self) -> &mut GlesRenderer {
+        <Self as AsMut<GlesRenderer>>::as_mut(self)
+    }
+
+    fn gl_frame<'fr, 'f, 'b>(
+        frame: &'fr mut Self::Frame<'f, 'b>,
+    ) -> &'fr mut GlesFrame<'f, 'b>
+    where
+        'f: 'fr,
+        'b: 'fr,
+    {
+        <Self::Frame<'f, 'b> as AsMut<GlesFrame<'f, 'b>>>::as_mut(frame)
+    }
 }
 
 // Widely supported gbm formats; 8-bit only unless 10-bit is explicitly wanted.
@@ -3514,11 +3531,30 @@ impl State {
                         Size::from((rect.width as i32, rect.height as i32)),
                     );
                     let scale = Scale::from(output.current_scale().fractional_scale());
-                    tree_target.extend(tree_elements.into_iter().map(|elem| {
-                        EswmRenderElements::ClippedSurface(
-                            ClippedSurfaceElement::with_stretch(elem, clip, scale, stretch),
-                        )
-                    }));
+                    let fullscreen = matches!(
+                        self.wm.window(*id).map(|w| w.mode.presentation),
+                        Some(wm::Presentation::Fullscreen)
+                    );
+                    let radii = crate::rounding::client_corners(
+                        corner_radius,
+                        border_size,
+                        titlebar_height,
+                        fullscreen,
+                        false,
+                    );
+                    for elem in tree_elements {
+                        let clipped =
+                            ClippedSurfaceElement::with_stretch(elem, clip, scale, stretch);
+                        if radii == crate::rounding::Corners::default() {
+                            tree_target.push(EswmRenderElements::ClippedSurface(clipped));
+                        } else {
+                            // Clip the real surface pixels, cosmic-style, so no
+                            // square client corner survives under the ring.
+                            tree_target.push(EswmRenderElements::RoundedSurface(
+                                RoundedElement::new(&mut renderer, clipped, clip, radii),
+                            ));
+                        }
+                    }
                 }
             }
         } else {
@@ -3553,11 +3589,30 @@ impl State {
                         Size::from((rect.width as i32, rect.height as i32)),
                     );
                     let scale = Scale::from(output.current_scale().fractional_scale());
-                    tree_target.extend(tree_elements.into_iter().map(|elem| {
-                        EswmRenderElements::ClippedSurface(
-                            ClippedSurfaceElement::with_stretch(elem, clip, scale, stretch),
-                        )
-                    }));
+                    let fullscreen = matches!(
+                        self.wm.window(*id).map(|w| w.mode.presentation),
+                        Some(wm::Presentation::Fullscreen)
+                    );
+                    let radii = crate::rounding::client_corners(
+                        corner_radius,
+                        border_size,
+                        titlebar_height,
+                        fullscreen,
+                        false,
+                    );
+                    for elem in tree_elements {
+                        let clipped =
+                            ClippedSurfaceElement::with_stretch(elem, clip, scale, stretch);
+                        if radii == crate::rounding::Corners::default() {
+                            tree_target.push(EswmRenderElements::ClippedSurface(clipped));
+                        } else {
+                            // Clip the real surface pixels, cosmic-style, so no
+                            // square client corner survives under the ring.
+                            tree_target.push(EswmRenderElements::RoundedSurface(
+                                RoundedElement::new(&mut renderer, clipped, clip, radii),
+                            ));
+                        }
+                    }
                 }
             }
         }

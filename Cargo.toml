@@ -2,6 +2,7 @@
 name = "eswm"
 version = "0.1.0"
 edition = "2024"
+license = "GPL-3.0-only"
 
 [dependencies]
 smithay = { version = "0.7", features = ["backend_egl", "use_system_lib"] }

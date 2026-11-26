@@ -1,13 +1,10 @@
-//! Rounded window corners via baked alpha in compositor-drawn textures.
+//! Rounded window corners.
 //!
-//! Hyprland rounds windows in a fragment shader (`rounding.glsl`), but
-//! Smithay 0.7's `render_elements!` macro requires every element to implement
-//! `RenderElement<R>` for all renderers, which prevents injecting a GLES-only
-//! shader override per element without forking smithay. Instead, eswm bakes
-//! the corner mask into the alpha channel of the textures it already draws:
-//! the titlebar background and the border frame. The client surface stays
-//! square, but it is inset inside the rounded frame, so the visible outline
-//! is rounded. No GLES-specific code, no shader, no damage-tracking changes.
+//! The border ring and titlebar are still baked alpha textures, but the client
+//! surface itself is clipped by a custom GLES texture shader (see
+//! `rounded_surface.rs`, adapted from cosmic-comp). That is what makes the
+//! rounding real: the surface pixels are masked, not merely painted over, so a
+//! thin border can no longer leave square client corners showing.
 //!
 //! Corner policy (operator spec, 2026-11-24):
 //! - titlebar present: round the titlebar's two top corners and the window's
@@ -70,6 +67,32 @@ pub fn ring_plan(
         Corners::default()
     };
     RingPlan { outer: Corners::all(radius), titlebar, inner }
+}
+
+/// Corner radii for the client surface itself, which the shader clips.
+///
+/// With a titlebar the client's top corners are interior (hidden behind the
+/// titlebar's square bottom edge), so only its bottom corners round. Without a
+/// titlebar all four are outer corners. The radius follows the ring's inner
+/// hole (`radius - border_size`) so the surface arc nests inside the border's
+/// outer arc. `radius <= border_size` stays degenerate and disables rounding,
+/// matching `ring_plan`.
+pub fn client_corners(
+    radius: u32,
+    border_size: u32,
+    titlebar_height: u32,
+    fullscreen: bool,
+    popup: bool,
+) -> Corners {
+    let plan = ring_plan(radius, border_size, titlebar_height, fullscreen, popup);
+    if plan.inner == Corners::default() {
+        return Corners::default();
+    }
+    if titlebar_height > 0 {
+        Corners { tl: 0, tr: 0, bl: plan.inner.bl, br: plan.inner.br }
+    } else {
+        plan.inner
+    }
 }
 
 /// Coverage of pixel `(x, y)` in a `width x height` rectangle with independent
@@ -242,6 +265,41 @@ mod tests {
         assert_eq!(base, DecorationBufferKey { scale: 1, ..base });
         assert_ne!(base, DecorationBufferKey { scale: 2, ..base });
         assert_ne!(base, DecorationBufferKey { radius: 8, ..base });
+    }
+
+    #[test]
+    fn client_corners_round_bottom_only_with_titlebar() {
+        // Titlebar owns the top arcs; the client only exposes bottom corners.
+        assert_eq!(
+            client_corners(12, 2, 24, false, false),
+            Corners { tl: 0, tr: 0, bl: 10, br: 10 }
+        );
+    }
+
+    #[test]
+    fn client_corners_round_all_four_without_titlebar() {
+        assert_eq!(
+            client_corners(12, 2, 0, false, false),
+            Corners { tl: 10, tr: 10, bl: 10, br: 10 }
+        );
+    }
+
+    #[test]
+    fn client_corners_can_round_without_a_border() {
+        // The shader clips the surface, so the old "needs a border to hide the
+        // corner" rule is gone.
+        assert_eq!(
+            client_corners(12, 0, 0, false, false),
+            Corners { tl: 12, tr: 12, bl: 12, br: 12 }
+        );
+    }
+
+    #[test]
+    fn client_corners_disable_for_fullscreen_and_popups() {
+        assert_eq!(client_corners(12, 2, 24, true, false), Corners::default());
+        assert_eq!(client_corners(12, 2, 24, false, true), Corners::default());
+        assert_eq!(client_corners(0, 2, 24, false, false), Corners::default());
+        assert_eq!(client_corners(2, 2, 24, false, false), Corners::default());
     }
 
     #[test]

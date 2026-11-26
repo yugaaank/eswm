@@ -232,4 +232,6 @@ Open defect: none currently tracked.
 
 ## License
 
-MIT; see `LICENSE`.
+GPL-3.0-only; see `LICENSE`. The rounded-surface render element and its
+fragment shader are adapted from [cosmic-comp](https://github.com/pop-os/cosmic-comp),
+also GPL-3.0-only. See `NOTICE` for attribution.

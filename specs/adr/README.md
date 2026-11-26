@@ -33,3 +33,4 @@ Index:
 | [0003](ADR-0003-inline-tests.md) | Tests live inline in `src/`, not in `tests/` |
 | [0004](ADR-0004-popup-positioner-parity.md) | Popup placement follows Hyprland's positioner semantics |
 | [0005](ADR-0005-specs-are-contracts.md) | `specs/` is a gated contract, checked by `scripts/spec-lint.py` |
+| [0006](ADR-0006-shader-rounding-and-gpl.md) | GPL-3.0-only relicensing; COSMIC-style shader clipping of real client corners |

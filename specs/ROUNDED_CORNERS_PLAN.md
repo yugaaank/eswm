@@ -1,5 +1,10 @@
 # Rounded Corners — Per-Corner Implementation Plan
 
+> **Superseded in part by §13 and `adr/ADR-0006-shader-rounding-and-gpl.md`.**
+> The baked-ring design below still describes the border/titlebar decoration,
+> but the client's own corners are now clipped by a COSMIC-style GLES shader,
+> so the "no shader / no rounding without a border" constraints no longer hold.
+
 **Status:** implemented on branch `rounded-corners-per-corner`, preflight green, awaiting live DRM UAT
 **Date:** 2026-11-24
 **Scope:** server-side border ring + titlebar, baked-alpha masks, no GLES shader
@@ -526,3 +531,57 @@ Verified: `cargo clippy --all-targets` clean, `cargo test` 229 passed,
 - smithay 0.7: `MemoryRenderBuffer::from_slice`,
   `MemoryRenderBufferRenderElement::from_buffer`,
   `gles/mod.rs:2062` premultiplied blend func.
+
+## 13. Revision: clip the real surface with COSMIC's shader (2026-11-26)
+
+The baked-ring plan shipped, but §11.1's defect was only patched, not cured:
+a 1px border always left border-coloured wedges near the arc, and with
+`border_size == 0` rounding was impossible by construction. The ring paints
+*over* a square client; it never changes the client's own pixels.
+
+Operator decision: relicense eswm to **GPL-3.0-only** and adapt
+`cosmic-comp`'s `ClippedSurfaceRenderElement` (GPL-3.0-only, credits niri).
+See `adr/ADR-0006-shader-rounding-and-gpl.md`.
+
+### What changed
+
+- `LICENSE` → GNU GPL v3; `Cargo.toml` `license = "GPL-3.0-only"`; `README.md`
+  license note; new `NOTICE` with cosmic-comp / System76 / niri attribution.
+- New `src/shaders/rounded_surface.frag`: COSMIC's `rounding_alpha` per-corner
+  signed-distance test with a half-pixel `smoothstep` band.
+- New `src/rounded_surface.rs`: `RoundedElement<E>` overrides the default GLES
+  texture program for the inner `draw()` via `AsGlRenderer`, caches the compiled
+  program in the renderer's EGL context user data, subtracts the four corner
+  squares from opaque regions, and returns `None` from `underlying_storage()` to
+  stop direct scanout bypassing the shader.
+- `src/rounding.rs`: new `client_corners()` maps `ring_plan().inner` into shader
+  radii — bottom-only with a titlebar, all four without, zero for fullscreen /
+  popups / `radius == 0` / `radius <= border_size`.
+- `src/udev.rs`: `render_elements!` gains a `RoundedSurface` variant and an
+  `AsGlRenderer` bound; both surface-tree render loops wrap client elements in
+  `RoundedElement` when radii are non-zero. Popups still bypass rounding.
+- `src/main.rs`: `mod rounded_surface;`.
+
+### Coordinate model
+
+COSMIC passes an `input_to_geo` matrix derived from the surface transform, view
+and buffer scale. eswm simplifies this: it always renders with
+`Transform::Normal` and stores geometry in physical framebuffer pixels (DRM
+mode size). smithay's projection (`flip180 * Normal.matrix() * renderer`) maps
+physical `(x, y)` straight to `gl_FragCoord.xy`, so the shader subtracts a
+global `geo_origin`. Verified from smithay 0.7 source; rotation support would
+need COSMIC's matrix approach.
+
+### Verification
+
+`cargo clippy --all-targets` clean, `cargo test` **234 passed**, `cargo build`
+clean. `cargo check` clean. Unit coverage: `client_corners` policy (4 tests)
+and `corner_rects` ordering/locality. Live DRM UAT still operator-only.
+
+### UAT additions for this revision
+
+- `set_border_size(0)`, `set_corner_radius(12)`: all four client corners are
+  visually clipped — this was impossible with the baked ring.
+- `set_border_size(1)`: no square colour wedge outside the arc (§11.1 defect).
+- Titlebar on/off: bottom-only vs. all-four client corners respectively.
+- Fractional scale (1.25×/1.5×): shader radii align with the ring and titlebar.

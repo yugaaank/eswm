@@ -1,0 +1,21 @@
+eswm
+Copyright (C) 2026 eswm contributors
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, version 3 of the License only.
+
+Third-party attribution
+-----------------------
+
+The rounded-surface render element (`src/rounded_surface.rs`) and its fragment
+shader (`src/shaders/rounded_surface.frag`) are adapted from the cosmic-comp
+compositor:
+
+    cosmic-comp
+    Copyright (C) 2023 System76, Inc.
+    https://github.com/pop-os/cosmic-comp
+    Licensed under the GNU General Public License, version 3 only.
+
+The original implementation also notes that its clipped-surface shader was
+taken and modified from niri, licensed GPL-3.0.
