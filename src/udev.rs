@@ -858,6 +858,10 @@ state.ipc = ipc_opt;
 // Without this the j/monitors reply described a single fictional "winit"
 // screen forever, no matter what was plugged in.
 ipc::refresh_snapshot(&state);
+// e09s03t9: publish the tick's transitions after control and IPC have had
+// their say. Late arrivals wait for the next bus instead of sneaking into
+// an already-numbered batch.
+crate::flush_events(&mut state);
 
         // A hitch with fast frames means the loop sat on a pending redraw. Time
         // the blocking dispatch: nothing pending = idle wait, work pending =

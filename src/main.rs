@@ -560,6 +560,19 @@ pub(crate) fn queue_ready(state: &mut State) {
     state.wm.events.queue(EventKind::Ready, json!({}));
 }
 
+/// One tick, one batch. Frames are numbered at flush, then fanned out to every
+/// subscriber. Without a socket the queue still drains; no frame loiters until
+/// the next tick like an unpaid intern waiting for a bus.
+pub(crate) fn flush_events(state: &mut State) {
+    let events = state.wm.events.flush();
+    if events.is_empty() {
+        return;
+    }
+    if let Some(stream) = &state.events {
+        stream.broadcast(&events);
+    }
+}
+
 // Mirror client-provided app_id/title into the wm window record (snapshot/Lua).
 fn sync_window_meta(state: &mut State, surface: &ToplevelSurface) {
     let Some(id) = window_id_of(surface.wl_surface()) else {

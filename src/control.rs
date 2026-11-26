@@ -206,7 +206,7 @@ impl EventStream {
         Self::start_at(event_socket_path(socket))
     }
 
-    fn start_at(path: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
+    pub(crate) fn start_at(path: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
         let listener = bind_socket(&path)?;
         let subscribers = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&subscribers);
