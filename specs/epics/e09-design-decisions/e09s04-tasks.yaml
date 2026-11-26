@@ -81,7 +81,7 @@ tasks:
     verify: cargo test --bin eswm config_reload
     risk: P1
     security: medium
-    status: failing
+    status: passing
     allure:
       severity: high
       categories:
