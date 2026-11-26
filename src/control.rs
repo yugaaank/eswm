@@ -23,6 +23,41 @@ use crate::{
 
 const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// e09s03t1: one flat, eswm-owned name per state transition we can emit.
+/// Hyprland's dotted names and `>>` framing stayed in Hyprland; no confetti.
+// e09s03 lands this model in stages: t1 defines the shape, t2+ wire the bus
+// and sockets. Suppress only until the first emission site constructs it.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EventKind {
+    WindowActive,
+}
+
+#[allow(dead_code)]
+impl EventKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::WindowActive => "window_active",
+        }
+    }
+}
+
+/// e09s03t1: a single NDJSON frame. `seq` is assigned at flush, not emission.
+#[allow(dead_code)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct Event {
+    pub seq: u64,
+    pub kind: EventKind,
+    pub data: Value,
+}
+
+#[allow(dead_code)]
+impl Event {
+    pub fn frame(&self) -> String {
+        json!({"seq": self.seq, "kind": self.kind.as_str(), "data": self.data}).to_string()
+    }
+}
+
 struct Request {
     line: String,
     reply: flume::Sender<String>,
