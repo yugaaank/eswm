@@ -87,7 +87,7 @@ impl XdgShellHandler for State {
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
         // M5: every toplevel becomes a tiling-managed window on the primary output.
-        let Some(output_id) = self.wm.primary_output_id() else {
+        let Some(output_id) = self.wm.focused_output_id() else {
             tracing::warn!("toplevel before any output exists; not registering");
             return;
         };
@@ -394,7 +394,7 @@ fn popup_constraint(state: &State) -> wm::Rect {
         .or_else(|| {
             state
                 .wm
-                .primary_output_id()
+                .focused_output_id()
                 .and_then(|id| state.wm.output(id))
                 .map(|output| output.geometry)
         })
@@ -675,7 +675,7 @@ impl State {
                 work_area.loc.x, work_area.loc.y, work_area.size.w, work_area.size.h,
                 self.layer_wrappers.len(), dock_h, wa.x, wa.y, wa.width, wa.height
             );
-            if self.wm.primary_output_id().is_some() {
+            if self.wm.focused_output_id().is_some() {
                 self.wm.mark_dirty();
                 // The dirty flag is global: arrange every output in one pass
                 // or the second monitor keeps wearing last season's geometry.
@@ -1844,7 +1844,7 @@ mod tests {
         let mut state = new_state("test", &dh, true);
         state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
 
-        let output_id = state.wm.primary_output_id().unwrap();
+        let output_id = state.wm.focused_output_id().unwrap();
         let id = state
             .wm
             .add_window(output_id, "test-app", "Test App")
@@ -1899,7 +1899,7 @@ mod tests {
     #[test]
     fn control_window_move_to_workspace() {
         let mut state = test_state();
-        let output_id = state.wm.primary_output_id().unwrap();
+        let output_id = state.wm.focused_output_id().unwrap();
         assert!(state.wm.add_window(output_id, "kitty", "one").is_some());
         assert!(state.wm.add_workspace(output_id, 2, "2"));
 
@@ -1916,7 +1916,7 @@ mod tests {
     #[test]
     fn control_window_move_cross_output_fails() {
         let mut state = test_state();
-        let output1 = state.wm.primary_output_id().unwrap();
+        let output1 = state.wm.focused_output_id().unwrap();
         assert!(state.wm.add_window(output1, "kitty", "one").is_some());
         let output2 = state.wm.add_output(
             "second",
@@ -2132,7 +2132,7 @@ mod tests {
         assert_eq!(state.popups.len(), 0);
 
         // Add a toplevel window first
-        let output_id = state.wm.primary_output_id().unwrap();
+        let output_id = state.wm.focused_output_id().unwrap();
         let _window_id = state
             .wm
             .add_window(output_id, "test-app", "Test App")
@@ -2152,7 +2152,7 @@ mod tests {
         state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
 
         // Add a toplevel window
-        let output_id = state.wm.primary_output_id().unwrap();
+        let output_id = state.wm.focused_output_id().unwrap();
         let _window_id = state
             .wm
             .add_window(output_id, "test-app", "Test App")
@@ -2238,7 +2238,7 @@ mod tests {
         use smithay::wayland::compositor::{RectangleKind, RegionAttributes};
 
         let mut state = test_state();
-        let output_id = state.wm.primary_output_id().unwrap();
+        let output_id = state.wm.focused_output_id().unwrap();
         let window_id = state.wm.add_window(output_id, "app", "t").expect("add window");
 
         let attrs = RegionAttributes {
@@ -2375,7 +2375,7 @@ mod tests {
     #[test]
     fn update_keyboard_focus_follows_focused_toplevel_when_no_layer() {
         let mut state = test_state();
-        let output_id = state.wm.primary_output_id().unwrap();
+        let output_id = state.wm.focused_output_id().unwrap();
         let _id = state
             .wm
             .add_window(output_id, "test-app", "Test App")
@@ -2401,7 +2401,7 @@ mod tests {
     #[test]
     fn layer_keyboard_interactive_commit_does_not_break_focus_policy() {
         let mut state = test_state();
-        let output_id = state.wm.primary_output_id().unwrap();
+        let output_id = state.wm.focused_output_id().unwrap();
         let _id = state
             .wm
             .add_window(output_id, "test-app", "Test App")
@@ -2423,7 +2423,7 @@ mod tests {
     #[test]
     fn keyboard_focus_restored_to_toplevel_after_layer_loss() {
         let mut state = test_state();
-        let output_id = state.wm.primary_output_id().unwrap();
+        let output_id = state.wm.focused_output_id().unwrap();
         let id = state
             .wm
             .add_window(output_id, "term", "Terminal")
@@ -2451,7 +2451,7 @@ mod tests {
     #[test]
     fn keyboard_focus_returns_to_toplevel_when_no_interactive_layer() {
         let mut state = test_state();
-        let output_id = state.wm.primary_output_id().unwrap();
+        let output_id = state.wm.focused_output_id().unwrap();
         let id = state
             .wm
             .add_window(output_id, "kitty", "kitty")
@@ -2571,7 +2571,7 @@ mod tests {
     #[test]
     fn titlebar_maximize_click_configures_client_and_requests_redraw() {
         let mut state = test_state();
-        let output_id = state.wm.primary_output_id().unwrap();
+        let output_id = state.wm.focused_output_id().unwrap();
         let id = state
             .wm
             .add_window(output_id, "test-app", "Test App")
@@ -2606,7 +2606,7 @@ mod tests {
     #[test]
     fn titlebar_close_without_toplevel_keeps_wm_window() {
         let mut state = test_state();
-        let output_id = state.wm.primary_output_id().unwrap();
+        let output_id = state.wm.focused_output_id().unwrap();
         let id = state
             .wm
             .add_window(output_id, "test-app", "Test App")
@@ -2700,7 +2700,7 @@ mod tests {
     #[test]
     fn apply_layout_mode_sent_tracks_mode_transitions() {
         let mut state = test_state();
-        let output_id = state.wm.primary_output_id().unwrap();
+        let output_id = state.wm.focused_output_id().unwrap();
         let id = state.wm.add_window(output_id, "app", "App").unwrap();
         assert_eq!(state.wm.window(id).unwrap().mode_sent, None);
         state.wm.set_mode_sent(id, wm::ClientMode::maximized());
@@ -2713,7 +2713,7 @@ mod tests {
     #[test]
     fn apply_layout_mode_sent_tracks_placement_changes() {
         let mut state = test_state();
-        let output_id = state.wm.primary_output_id().unwrap();
+        let output_id = state.wm.focused_output_id().unwrap();
         let id = state.wm.add_window(output_id, "app", "App").unwrap();
         state.wm.set_mode_sent(id, wm::ClientMode::tiled());
         assert_eq!(state.wm.window(id).unwrap().mode_sent, Some(wm::ClientMode::tiled()));

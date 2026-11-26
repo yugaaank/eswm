@@ -224,7 +224,7 @@ fn dispatch(state: &mut State, cmd: &str, args: &Value) -> Result<Value, String>
             Ok(json!({"window": id, "mode": mode.mode_name()}))
         }
         "workspace.focus" => {
-            let output = state.wm.primary_output_id().ok_or("no output")?;
+            let output = state.wm.focused_output_id().ok_or("no output")?;
             let workspace = match (args.get("id").and_then(Value::as_i64), args.get("delta").and_then(Value::as_i64)) {
                 (Some(id), _) => id as i32,
                 (None, Some(delta)) => state
@@ -334,7 +334,7 @@ fn workspaces_json(state: &State) -> Vec<Value> {
 }
 
 fn outputs_json(state: &State) -> Vec<Value> {
-    let primary = state.wm.primary_output_id();
+    let primary = state.wm.focused_output_id();
     state
         .wm
         .outputs()

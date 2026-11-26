@@ -118,7 +118,7 @@ pub fn apply_cmd(state: &mut State, ipc: &Ipc, cmd: CompCmd) {
     match cmd {
         CompCmd::Reload => ipc.sinks.emit("configreloaded", ""),
         CompCmd::GotoWorkspace(ws) => {
-            if let Some(output) = state.wm.primary_output_id() {
+            if let Some(output) = state.wm.focused_output_id() {
                 state.wm.focus_workspace(output, ws);
                 crate::apply_layout(state);
             }
@@ -137,7 +137,7 @@ pub fn apply_cmd(state: &mut State, ipc: &Ipc, cmd: CompCmd) {
             crate::apply_layout(state);
         }
         CompCmd::ResetTilingSplits => {
-            if let Some(output) = state.wm.primary_output_id() {
+            if let Some(output) = state.wm.focused_output_id() {
                 state.wm.reset_tiling_splits(output);
                 crate::apply_layout(state);
             }

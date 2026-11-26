@@ -1049,10 +1049,6 @@ impl WindowManager {
         self.windows.get(&id)
     }
 
-    pub fn primary_output_id(&self) -> Option<OutputId> {
-        self.outputs.keys().next().copied()
-    }
-
     /// Record which output the pointer is over. None means "outside every
     /// output", which lets window focus decide the focused output instead.
     // e09s02t6 wires this into udev pointer motion.
@@ -1064,8 +1060,8 @@ impl WindowManager {
     /// The one true focused output: pointer first, then focused window, then
     /// first surviving output. Two "primaries" walk into a bar; only one gets
     /// served, and it is this one.
-    // e09s02t2 migrates callers off primary_output_id().
-    #[allow(dead_code)]
+    // e09s02t2 retired the old "first output" primary; every caller now
+    // comes through here. Two captains, one ship, one very confused navigator.
     pub fn focused_output_id(&self) -> Option<OutputId> {
         self.pointer_output
             .filter(|id| self.outputs.contains_key(id))
@@ -1363,7 +1359,7 @@ impl WindowManager {
     }
 
     pub fn set_tiling_layout(&mut self, layout: TilingLayout) {
-        let Some(output_id) = self.primary_output_id() else {
+        let Some(output_id) = self.focused_output_id() else {
             return;
         };
         if let Some(output) = self.outputs.get_mut(&output_id) {
@@ -1453,7 +1449,7 @@ impl WindowManager {
     /// (unmapped), focused window first. This is the data model frontends
     /// consume via `es.dock.entries()`.
     pub fn dock_entries(&self) -> Vec<DockEntry> {
-        let Some(primary) = self.primary_output_id() else {
+        let Some(primary) = self.focused_output_id() else {
             return Vec::new();
         };
         let Some(output_state) = self.outputs.get(&primary) else {
@@ -1527,7 +1523,7 @@ impl WindowManager {
     /// Server-side decorations (titlebar, border) are not part of the client
     /// surface and never match here.
     pub fn surface_under(&self, pos: (f64, f64)) -> Option<(WindowId, (f64, f64))> {
-        let primary = self.primary_output_id()?;
+        let primary = self.focused_output_id()?;
         let output_state = self.outputs.get(&primary)?;
         let workspace = self.workspaces.get(&output_state.active_workspace)?;
         let focused = workspace.focused;
@@ -1573,7 +1569,7 @@ impl WindowManager {
     /// Iterates in render order — the focused window first, then the rest
     /// newest-first — so a click on an overlap hits the topmost rendered window.
     pub fn window_at(&self, pos: (f64, f64), border_size: u32) -> Option<WindowId> {
-        let primary = self.primary_output_id()?;
+        let primary = self.focused_output_id()?;
         let output_state = self.outputs.get(&primary)?;
         let workspace = self.workspaces.get(&output_state.active_workspace)?;
         let focused = workspace.focused;
@@ -1941,7 +1937,7 @@ impl WindowManager {
     /// Swap the focused window with its neighbour in the tiling order and keep
     /// focus on the same window.
     pub fn swap_focused(&mut self, delta: i32) -> bool {
-        let Some(output) = self.primary_output_id() else {
+        let Some(output) = self.focused_output_id() else {
             return false;
         };
         let Some(active) = self.outputs.get(&output).map(|o| o.active_workspace) else {
@@ -1970,7 +1966,7 @@ impl WindowManager {
 
     /// Switch the primary output to the next/previous workspace it owns.
     pub fn focus_workspace_relative(&mut self, delta: i32) -> Option<WorkspaceId> {
-        let output = self.primary_output_id()?;
+        let output = self.focused_output_id()?;
         let ids: Vec<WorkspaceId> = self
             .workspaces
             .values()
@@ -2376,7 +2372,7 @@ impl WindowManager {
 
     /// Move focus to the next/previous window of the active workspace.
     pub fn cycle_focus(&mut self, delta: i32) -> bool {
-        let Some(output) = self.primary_output_id() else {
+        let Some(output) = self.focused_output_id() else {
             return false;
         };
         let Some(active) = self.outputs.get(&output).map(|o| o.active_workspace) else {

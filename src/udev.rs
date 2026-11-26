@@ -1287,7 +1287,7 @@ fn execute_keybind(state: &mut State, kb: &lua_state::Keybind) -> FilterResult<(
             crate::apply_layout(state);
         }
         "reset_tiling_splits" => {
-            if let Some(output) = state.wm.primary_output_id() {
+            if let Some(output) = state.wm.focused_output_id() {
                 state.wm.reset_tiling_splits(output);
                 crate::apply_layout(state);
             }
@@ -1924,7 +1924,7 @@ fn drag_update(state: &mut State, pos: Point<f64, Logical>) -> Option<wm::Window
 }
 
 fn switch_workspace(state: &mut State, ws: i32) {
-    let Some(output) = state.wm.primary_output_id() else {
+    let Some(output) = state.wm.focused_output_id() else {
         return;
     };
     state.wm.ensure_workspace(output, ws);
