@@ -23,7 +23,7 @@ phases:
     t7: {command: "cargo test --bin eswm output_events", passed: true, result: "8 passed — workspace and monitor events, including focus-driven monitor_active; no-ops silent"}
     t8: {command: "cargo test --bin eswm layer_events", passed: true, result: "5 passed — layer open/close, config_reloaded and ready globals coalesce"}
     t9: {command: "cargo test --bin eswm event_stream", passed: true, result: "2 passed — two real subscribers get identical hello and seq 1-4 frames with final title; socketless ticks drain and seq continues"}
-    t10: {command: "manual: operator runs specs/verifications/uat-2026-11-26-e09s03-events.md on a live DRM TTY", passed: false, result: "PENDING — checklist prepared, not run; an agent cannot start the DRM backend inside an existing Wayland/X11 session"}
+    t10: {command: "manual: operator runs specs/verifications/uat-2026-11-26-e09s03-events.md on a live DRM TTY", passed: false, result: "PARTIAL — operator watched a live stream; PASS items recorded under manual.observed_pass, remaining checks still pending"}
   terminal_verdict:
     command: "cargo clippy --all-targets && cargo test && cargo build && python3 scripts/spec-lint.py"
     exit_code: 0
@@ -31,22 +31,38 @@ phases:
   manual:
     passed: false
     pending: true
-    status: checklist_prepared_not_run
+    status: partial_operator_evidence
     prepared_at: "2026-11-26T03:41:48Z"
+    observed_at: "2026-11-26T03:58:39Z"
+    evidence: /tmp/opencode/eswm-events.jsonl
     owner: operator
     checklist: specs/verifications/uat-2026-11-26-e09s03-events.md
-    reason: "Live DRM UAT needs a real VT and real clients. The agent must not run the DRM/libseat backend from the current Wayland/X11 session (VT grab), so no live event frames, hotplug callbacks or Tacit bar lifecycle were observed."
+    reason: "Operator ran the watch mode on a live TTY and supplied the stream. Remaining checks need another TTY run, a reload, a second subscriber, or hardware."
+    observed_pass:
+      - "Both sockets report mode 0600 on the live filesystem"
+      - "First line is hello with seq 0, version 1 and all 17 flat snake_case kinds"
+      - "kitty/Dolphin opens and closes emit window_open, window_active, window_class, window_title and window_close with matching ids"
+      - "workspace_active, window_mode (minimized/normal/maximized/fullscreen/floating) and layer_opened/layer_closed all appear"
+      - "83 parsed frames have seq 23-104 with no missing or duplicate seq values; no >> separators or dotted names"
+      - "Shell prompts changed window_title, but no frame carried key contents"
+    pending_checks:
+      - "Two independent subscribers produce byte-identical JSONL"
+      - "config_reloaded on the new socket plus configreloaded>> on .socket2.sock after hcmd 'reload'"
+      - "Real monitor hotplug produces monitor_added/removed/layout"
+      - "window.move produces window_workspace, and a new workspace produces workspace_created"
+      - "ready frame (subscriber connected after startup, so it was already emitted)"
+    observations:
+      - "seq 1-22 were emitted before the subscriber connected. The counter is compositor-global, so seq 23 after hello is expected; spec and checklist now say so explicitly."
+      - "The long run of window_active id=1 frames came from repeated focus requests in separate ticks. Coalescing is per tick; those are not duplicates within a tick."
+      - "^[^[^[ seen on screen was terminal key echo from socat reading stdin, not a frame. The JSONL log is clean; start.sh watch now uses socat -u."
     unconfirmed_checks:
-      - "Socket mode 0600 on a live filesystem"
-      - "kitty open/rename/close produce window_open/window_title/window_close on the wire"
-      - "focus, workspace and window_mode transitions arrive in order with gap-free seq"
-      - "real monitor hotplug produces monitor_added/removed/layout"
-      - "real Tacit layer surface produces layer_opened/closed"
-      - "config reload emits config_reloaded and keeps legacy configreloaded>>"
       - "two independent socat subscribers see byte-identical JSONL"
-      - "typing key contents produces no key-data event"
+      - "config reload emits config_reloaded and keeps legacy configreloaded>>"
+      - "real monitor hotplug produces monitor_added/removed/layout"
+      - "window_workspace and workspace_created on live actions"
+      - "ready frame observed from a subscriber connected before the first tick"
     automated_proxy: "event_model (5), event_bus (3), event_socket (5), control_hardening (4), control_errors (7), window_events (8), output_events (8), layer_events (5), event_stream (2). These prove shape, coalescing, permissions, fan-out and error codes; they cannot prove real client callbacks."
-    gate: "e09s03t10 remains failing. No merge into local main and no push until the operator records PASS in this file and explicitly authorises the merge."
+    gate: "e09s03t10 remains failing. No merge into local main and no push until the remaining checks are recorded PASS/N/A and the operator explicitly authorises the merge."
   security_scan:
     passed: true
     automated_only: true
@@ -57,7 +73,7 @@ phases:
   gaps:
     closed: false
     notes:
-      - "e09s03t10 live DRM UAT is pending operator; recorded as not run, never as waived."
+      - "e09s03t10 is partially verified: the operator supplied a live stream, but the reload, two-subscriber, hotplug and workspace-move checks remain. Recorded as partial, never as waived."
       - "Spec §12 originally said State owns EventBus; implementation keeps it on WindowManager because transitions originate there. State::flush_events is the single per-tick seam. Spec and t9 ledger now describe the shipped shape; no behavioural delta."
-      - "EventBus increments seq even on a socketless tick, so a later subscriber joins at the next number rather than seeing a reset. Unit tests pin this; manual seq check must account for startup frames already delivered."
+      - "EventBus increments seq globally, including socketless ticks, so a later subscriber joins at the current number rather than seeing a reset. Spec §10, §11 and the checklist now state this; the live run showed seq 23 after hello with frames 1-22 already emitted."
       - "CI remains unverified per operator skip precedent; nothing pushed to origin/main."

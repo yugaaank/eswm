@@ -99,8 +99,12 @@ subscribes to every event kind; closing unsubscribes.
 
 ### ADDED: Simple original frame format
 One JSON object per line: `{"seq":<u64>,"kind":"<name>","data":{...}}`.
-`seq` starts at 1 after `hello` and increases by one per delivered frame. No
-Hyprland prefixes, no dotted event names, no `>>` separators.
+`hello` is always `seq:0`; emitted frames start at 1 at compositor startup and
+increase by one per emitted frame. The counter is compositor-global, not
+per-subscriber, so a client that connects after earlier ticks joins at the
+current value and its first frame after `hello` can be greater than 1. Frames
+are identical for every subscriber; no client sees a gap in the frames it
+receives. No Hyprland prefixes, no dotted event names, no `>>` separators.
 
 ### ADDED: Per-tick coalescing
 Events queue during a compositor tick. At flush, frames with the same
@@ -159,6 +163,9 @@ someone later adds a similarly named dispatcher.
 - Inspect: `socat - UNIX-CONNECT:$XDG_RUNTIME_DIR/eswm-test.events.sock`.
 - First line is always `hello`; subscribers must tolerate unknown `kind`
   values and skip them (forward compatibility).
+- `seq` is global, so a late subscriber may see `seq:0` followed by e.g.
+  `seq:23`. Treat the first received frame as that client's baseline; do not
+  reset the counter locally.
 - Samples: `{"seq":4,"kind":"window_active","data":{"id":42}}`,
   `{"seq":5,"kind":"monitor_added","data":{"id":2,"name":"HDMI-A-1"}}`.
 
