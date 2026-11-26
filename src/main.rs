@@ -105,7 +105,16 @@ impl XdgShellHandler for State {
     }
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
-        if let Some(id) = window_id_of(surface.wl_surface()) {
+        // e09s05t2: prefer the direct index; the data-map tag is the fallback
+        // for a surface that committed but was never indexed.
+        let id = self
+            .toplevels
+            .iter()
+            .find(|(_, t)| t.wl_surface() == surface.wl_surface())
+            .map(|(id, _)| *id)
+            .or_else(|| window_id_of(surface.wl_surface()));
+        if let Some(id) = id {
+            self.toplevels.remove(&id);
             self.wm.remove_window(id);
             // e05s04t7: prune any stale window registrations when a toplevel
             // is destroyed, instead of every render frame.
@@ -523,12 +532,7 @@ fn window_geometry_offset(geometry: Option<Rectangle<i32, smithay::utils::Logica
 }
 
 fn toplevel_for_window(state: &State, id: wm::WindowId) -> Option<ToplevelSurface> {
-    state
-        .xdg_shell_state
-        .toplevel_surfaces()
-        .iter()
-        .find(|t| t.alive() && window_id_of(t.wl_surface()) == Some(id))
-        .cloned()
+    state.toplevels.get(&id).filter(|t| t.alive()).cloned()
 }
 
 /// Layer surfaces are tenants the WM does not own; the bus still takes their
@@ -611,14 +615,15 @@ fn register_toplevel_on_first_commit(state: &mut State, surface: &WlSurface) -> 
     if window_id_of(surface).is_some() {
         return false;
     }
-    let is_toplevel = state
+    let Some(toplevel_for_registration) = state
         .xdg_shell_state
         .toplevel_surfaces()
         .iter()
-        .any(|t| t.alive() && t.wl_surface() == surface);
-    if !is_toplevel {
+        .find(|t| t.alive() && t.wl_surface() == surface)
+        .cloned()
+    else {
         return false;
-    }
+    };
     let Some(output_id) = state.wm.focused_output_id() else {
         tracing::warn!("toplevel committed before any output exists; not registering");
         return false;
@@ -640,6 +645,7 @@ fn register_toplevel_on_first_commit(state: &mut State, surface: &WlSurface) -> 
     with_states(surface, |states| {
         states.data_map.insert_if_missing(|| id);
     });
+    state.toplevels.insert(id, toplevel_for_registration);
     tracing::info!("toplevel first commit registered id={id:?}");
     crate::apply_layout(state);
     true
@@ -1194,6 +1200,9 @@ pub(crate) struct State {
     #[allow(dead_code)] // owns the wl_output global's backing data
     output: Output,
     pub wm: wm::WindowManager,
+    // e09s05t2: direct WindowId -> live toplevel lookup. The surface data map
+    // stays the authoritative tag; this is the fast path for focus/render.
+    pub toplevels: std::collections::BTreeMap<wm::WindowId, ToplevelSurface>,
     pub dh: DisplayHandle,
     // M2: IPC-backed state; snapshot is rebuilt from the shell state each loop iteration
     ipc: Option<Ipc>,
@@ -1406,6 +1415,7 @@ fn new_state(
         seat,
         output,
         wm,
+        toplevels: std::collections::BTreeMap::new(),
         dh: dh.clone(),
         ipc: None,
         lua: None,
@@ -1437,9 +1447,25 @@ fn new_state(
 /// example after a client lost its display socket). Stale entries otherwise hold
 /// master/stack slots forever.
 pub(crate) fn prune_dead_windows(state: &mut State) -> usize {
-    let dead: Vec<wm::WindowId> = state
-        .wm
-        .window_ids()
+    // e09s05t2: an index entry whose window vanished must not outlive it like a
+    // ghost tenant still listed on the lease.
+    let live_windows = state.wm.window_ids();
+    let stale_index: Vec<wm::WindowId> = state
+        .toplevels
+        .keys()
+        .copied()
+        .filter(|id| {
+            !live_windows.contains(id)
+                || state
+                    .toplevels
+                    .get(id)
+                    .is_none_or(|t| !t.alive())
+        })
+        .collect();
+    for id in stale_index {
+        state.toplevels.remove(&id);
+    }
+    let dead: Vec<wm::WindowId> = live_windows
         .into_iter()
         .filter(|id| toplevel_for_window(state, *id).is_none())
         .collect();
@@ -2483,6 +2509,9 @@ mod tests {
         state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
 
         let (conn, mut queue, mut fixture) = fixture_toplevel_client(&mut display, &mut state);
+        fixture.toplevel.as_ref().unwrap().destroy();
+        fixture.xdg_surface.as_ref().unwrap().destroy();
+        fixture.surface.as_ref().unwrap().destroy();
         fixture.toplevel.take();
         fixture.xdg_surface.take();
         fixture.surface.take();
@@ -2576,6 +2605,9 @@ mod tests {
         let id = wm_id_for_app_id(&state, "doomed");
         assert!(state.toplevels.contains_key(&id), "precondition: indexed");
 
+        fixture.toplevel.as_ref().unwrap().destroy();
+        fixture.xdg_surface.as_ref().unwrap().destroy();
+        fixture.surface.as_ref().unwrap().destroy();
         fixture.toplevel.take();
         fixture.xdg_surface.take();
         fixture.surface.take();
