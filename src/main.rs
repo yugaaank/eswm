@@ -1622,6 +1622,30 @@ delegate_ext_data_control!(State);
 
 #[cfg(test)]
 mod tests {
+    // e09s02t5 — a bar on the HDMI output must shrink that output's work area,
+    // not the laptop's. The zone is output-local; the work area is global.
+    #[test]
+    fn layer_output_work_area_uses_zone_origin_and_dock() {
+        let zone = Rectangle {
+            loc: (40, 60).into(),
+            size: (1200, 700).into(),
+        };
+        let origin = Point::<i32, Logical>::from((1920, 100));
+        assert_eq!(
+            layer_work_area(origin, zone, 48),
+            wm::Rect { x: 1960, y: 160, width: 1200, height: 652 }
+        );
+
+        let empty = Rectangle {
+            loc: (0, 0).into(),
+            size: (-10, -20).into(),
+        };
+        assert_eq!(
+            layer_work_area(Point::from((0, 0)), empty, 0),
+            wm::Rect { x: 0, y: 0, width: 0, height: 0 }
+        );
+    }
+
     use super::*;
     // Imported here, not at module scope: only the tests construct a Display,
     // so a crate-level import is dead weight (and clippy --fix deletes it).
