@@ -3693,4 +3693,39 @@ mod tests {
         );
         assert_eq!(manager.auto_output_position(), (3200, 0));
     }
+
+    // e09s02t1 — pointer travel is a rectangle spanning real outputs, not the
+    // sum of their widths stacked at the origin like a badly shuffled deck.
+    #[test]
+    fn output_model_bounds_span_displaced_outputs() {
+        let mut manager = WindowManager::new();
+        assert_eq!(manager.outputs_bounds(), None);
+
+        manager.add_output(
+            "laptop",
+            Rect { x: 0, y: 0, width: 1920, height: 1080 },
+        );
+        assert_eq!(
+            manager.outputs_bounds(),
+            Some(Rect { x: 0, y: 0, width: 1920, height: 1080 })
+        );
+
+        manager.add_output(
+            "hdmi",
+            Rect { x: 1920, y: 0, width: 1280, height: 720 },
+        );
+        assert_eq!(
+            manager.outputs_bounds(),
+            Some(Rect { x: 0, y: 0, width: 3200, height: 1080 })
+        );
+
+        manager.add_output(
+            "portrait",
+            Rect { x: -400, y: 100, width: 300, height: 700 },
+        );
+        assert_eq!(
+            manager.outputs_bounds(),
+            Some(Rect { x: -400, y: 0, width: 3600, height: 1080 })
+        );
+    }
 }
