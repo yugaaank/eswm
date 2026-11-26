@@ -30,15 +30,74 @@ const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EventKind {
+    WindowOpen,
+    WindowClose,
     WindowActive,
+    WindowTitle,
+    WindowClass,
+    WindowMode,
+    WindowWorkspace,
+    WorkspaceActive,
+    WorkspaceCreated,
+    MonitorAdded,
+    MonitorRemoved,
+    MonitorActive,
+    MonitorLayout,
+    LayerOpened,
+    LayerClosed,
+    ConfigReloaded,
+    Ready,
 }
 
 #[allow(dead_code)]
 impl EventKind {
+    /// Every kind we can emit today; also the `hello` vocabulary.
+    pub const ALL: [Self; 17] = [
+        Self::WindowOpen,
+        Self::WindowClose,
+        Self::WindowActive,
+        Self::WindowTitle,
+        Self::WindowClass,
+        Self::WindowMode,
+        Self::WindowWorkspace,
+        Self::WorkspaceActive,
+        Self::WorkspaceCreated,
+        Self::MonitorAdded,
+        Self::MonitorRemoved,
+        Self::MonitorActive,
+        Self::MonitorLayout,
+        Self::LayerOpened,
+        Self::LayerClosed,
+        Self::ConfigReloaded,
+        Self::Ready,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::WindowOpen => "window_open",
+            Self::WindowClose => "window_close",
             Self::WindowActive => "window_active",
+            Self::WindowTitle => "window_title",
+            Self::WindowClass => "window_class",
+            Self::WindowMode => "window_mode",
+            Self::WindowWorkspace => "window_workspace",
+            Self::WorkspaceActive => "workspace_active",
+            Self::WorkspaceCreated => "workspace_created",
+            Self::MonitorAdded => "monitor_added",
+            Self::MonitorRemoved => "monitor_removed",
+            Self::MonitorActive => "monitor_active",
+            Self::MonitorLayout => "monitor_layout",
+            Self::LayerOpened => "layer_opened",
+            Self::LayerClosed => "layer_closed",
+            Self::ConfigReloaded => "config_reloaded",
+            Self::Ready => "ready",
         }
+    }
+
+    // Hyprland's camelCase checked into the flat snake_case hotel; no dots
+    // made it past the lobby.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.as_str() == name)
     }
 }
 
