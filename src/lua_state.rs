@@ -998,15 +998,21 @@ pub fn _do_chunk(lua: &Lua, source: &str, _snapshot: Arc<std::sync::Mutex<crate:
 mod tests {
     use super::*;
     use crate::control::{Event, EventKind};
+    use crate::wm::{ClientMode, Rect, WindowManager};
     use serde_json::json;
     use std::sync::{Arc, Mutex};
 
     type TestApi = (Lua, Arc<Mutex<Vec<Keybind>>>, Arc<Mutex<InputConfig>>, Arc<Mutex<DecorationConfig>>, flume::Receiver<crate::ipc::CompCmd>);
     fn test_api() -> TestApi {
-        test_api_with_hooks().0
+        test_api_with_extras().0
     }
 
     fn test_api_with_hooks() -> (TestApi, EventHooks) {
+        let (api, hooks, _rules) = test_api_with_extras();
+        (api, hooks)
+    }
+
+    fn test_api_with_extras() -> (TestApi, EventHooks, WindowRules) {
         let lua = init().expect("lua init");
         let snapshot = Arc::new(Mutex::new(crate::ipc::Snapshot::default()));
         let (cmd_tx, cmd_rx) = flume::unbounded();
@@ -1015,18 +1021,20 @@ mod tests {
         let dock_entries = Arc::new(Mutex::new(Vec::new()));
         let input_config = Arc::new(Mutex::new(InputConfig::default()));
         let hooks = Arc::new(Mutex::new(Vec::new()));
+        let rules = Arc::new(Mutex::new(Vec::new()));
         register_api(
             &lua,
             snapshot,
             &cmd_tx,
             keybinds.clone(),
             hooks.clone(),
+            rules.clone(),
             decoration.clone(),
             dock_entries,
             input_config.clone(),
         )
         .expect("register api");
-        ((lua, keybinds, input_config, decoration, cmd_rx), hooks)
+        ((lua, keybinds, input_config, decoration, cmd_rx), hooks, rules)
     }
 
     #[test]
@@ -1492,5 +1500,68 @@ mod tests {
         assert!(errors[0].contains("hook exploded"), "error keeps Lua message");
         let survivor: i32 = lua.globals().get("survivor").expect("survivor");
         assert_eq!(survivor, 1, "a bad hook must not silence the next one");
+    }
+
+    // e09s04t4: config rules are staged, then installed before windows appear.
+    #[test]
+    fn lua_window_rule_registers_and_installs_before_add_window() {
+        let ((lua, _keybinds, _input_config, _decoration, _cmd_rx), _hooks, rules) = test_api_with_extras();
+        lua.load(
+            r#"es.window_rule { app_id = "foot", workspace = 2, mode = "floating" }"#,
+        )
+        .exec()
+        .expect("window rule registration");
+        assert_eq!(rules.lock().unwrap().len(), 1);
+        let mut wm = WindowManager::new();
+        let output = wm.add_output("eDP-1", Rect { x: 0, y: 0, width: 1920, height: 1080 });
+        assert!(wm.add_workspace(output, 2, "2"));
+        drain_window_rules(&mut wm, &rules);
+        assert!(rules.lock().unwrap().is_empty(), "drained rules are gone");
+        let id = wm.add_window(output, "foot", "one").expect("window added");
+        let window = wm.window(id).expect("window record");
+        assert_eq!(window.workspace, 2);
+        assert_eq!(window.mode, ClientMode::floating());
+    }
+
+    #[test]
+    fn lua_window_rule_validates_app_id_mode_and_workspace() {
+        let ((lua, _keybinds, _input_config, _decoration, _cmd_rx), _hooks, rules) = test_api_with_extras();
+        for (source, expected) in [
+            (r#"es.window_rule { mode = "floating" }"#, "app_id"),
+            (r#"es.window_rule { app_id = "" }"#, "app_id"),
+            (r#"es.window_rule { app_id = "foot", mode = "sideways" }"#, "mode"),
+            (r#"es.window_rule { app_id = "foot", workspace = "two" }"#, "workspace"),
+            (r#"es.window_rule { app_id = "foot", bogus = 1 }"#, "bogus"),
+        ] {
+            let err = lua.load(source).exec().expect_err("bad rule must error");
+            assert!(err.to_string().contains(expected), "source: {source}; error: {err}");
+        }
+        assert!(rules.lock().unwrap().is_empty(), "no bad rule is staged");
+    }
+
+    #[test]
+    fn lua_window_rule_replaces_on_second_load() {
+        let ((lua, _keybinds, _input_config, _decoration, _cmd_rx), _hooks, rules) = test_api_with_extras();
+        lua.load(r#"es.window_rule { app_id = "one", workspace = 2 }"#)
+            .exec()
+            .expect("first load");
+        assert_eq!(rules.lock().unwrap().len(), 1);
+        clear_window_rules(&rules);
+        lua.load(r#"es.window_rule { app_id = "two", mode = "floating" }"#)
+            .exec()
+            .expect("second load");
+        {
+            let staged = rules.lock().unwrap();
+            assert_eq!(staged.len(), 1, "reload replaces instead of stacking");
+            assert_eq!(staged[0].app_id, "two");
+        }
+        let mut wm = WindowManager::new();
+        let output = wm.add_output("eDP-1", Rect { x: 0, y: 0, width: 1920, height: 1080 });
+        assert!(wm.add_workspace(output, 2, "2"));
+        drain_window_rules(&mut wm, &rules);
+        let old = wm.add_window(output, "one", "old").expect("old app");
+        let new = wm.add_window(output, "two", "new").expect("new app");
+        assert_eq!(wm.window(old).unwrap().workspace, 1, "old rule is gone");
+        assert_eq!(wm.window(new).unwrap().mode, ClientMode::floating());
     }
 }
