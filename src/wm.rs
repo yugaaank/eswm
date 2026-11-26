@@ -1044,6 +1044,22 @@ impl WindowManager {
         self.outputs.keys().next().copied()
     }
 
+    /// Where an output with no configured position goes: just right of the
+    /// rightmost output, sharing the first output's baseline. Auto-placement:
+    /// because "every output is at 0,0" was a cozy but fraudulent arrangement.
+    pub fn auto_output_position(&self) -> (i32, i32) {
+        let Some(first) = self.outputs.values().next() else {
+            return (0, 0);
+        };
+        let right = self
+            .outputs
+            .values()
+            .map(|output| output.geometry.x.saturating_add(output.geometry.width as i32))
+            .max()
+            .unwrap_or(0);
+        (right, first.geometry.y)
+    }
+
     pub fn outputs(&self) -> impl Iterator<Item = &Output> {
         self.outputs.values()
     }
