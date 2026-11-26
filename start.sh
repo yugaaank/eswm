@@ -12,13 +12,15 @@ export HYPR="$RUNTIME_DIR/hypr/${SIG}"
 export HYPR_CMD="$HYPR/.socket.sock"
 export LEGACY_EVENT="$HYPR/.socket2.sock"
 export LOG="${LOG:-/tmp/opencode/eswm-events.jsonl}"
+export READY_LOG="${READY_LOG:-/tmp/opencode/uat-ready.jsonl}"
 
 usage() {
   cat <<'EOF'
-Usage: start.sh [watch|status|ctl JSON|hcmd TEXT|legacy|help]
+Usage: start.sh [watch|ready|status|ctl JSON|hcmd TEXT|legacy|help]
 
   status          print resolved paths and socket modes
   watch           subscribe to the NDJSON event stream (default)
+  ready           wait for a fresh listener, then subscribe before the first tick
   legacy          subscribe to the old .socket2.sock stream
   ctl JSON        send one request to the native control socket
   hcmd TEXT       send one command to the hyprctl-compat socket
@@ -94,6 +96,26 @@ watch() {
   fi
 }
 
+ready() {
+  echo "waiting for a fresh listener on $EVT; log: $READY_LOG" >&2
+  python3 -u - "$EVT" <<'PY' | tee "$READY_LOG"
+import socket, sys, time
+path = sys.argv[1]
+while True:
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        sock.connect(path)
+        break
+    except OSError:
+        sock.close()
+        time.sleep(0.005)
+with sock:
+    for line in sock.makefile():
+        sys.stdout.write(line)
+        sys.stdout.flush()
+PY
+}
+
 send_line() {
   local target="$1"
   shift
@@ -117,6 +139,7 @@ legacy() {
 case "${1:-watch}" in
   status) check_sockets ;;
   watch) watch ;;
+  ready) ready ;;
   legacy) legacy ;;
   ctl) shift; send_line "$CTL" "$@" ;;
   hcmd) shift; send_line "$HYPR_CMD" "$@" ;;

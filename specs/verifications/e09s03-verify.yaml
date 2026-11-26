@@ -55,18 +55,20 @@ phases:
       - "Two subscribers started before the action received identical seq 31 workspace_active and seq 32 window_active frames; the agent compared parsed frames in uat-sub1.jsonl and uat-sub2.jsonl"
       - "hcmd 'reload' produced config_reloaded seq 33 on the new socket and configreloaded>> on the legacy .socket2.sock"
       - "workspace.focus id 10 emitted workspace_created {id:10,name:10} seq 95 then workspace_active seq 96; window.move id 1 to 10 emitted window_workspace seq 99, and moving it back emitted seq 100"
+    na_checks:
+      - check: "Real monitor hotplug produces monitor_added/removed/layout"
+        decision: "N/A by operator at 2026-11-26T04:49:03Z"
+        reason: "One display available; no second monitor to plug or unplug. Explicit risk acceptance, not a waiver. Unit tests output_events_add_output_queues_monitor_added, output_events_remove_output_queues_monitor_removed and output_events_geometry_change_queues_monitor_layout cover the emission paths."
     pending_checks:
-      - "Real monitor hotplug produces monitor_added/removed/layout"
       - "ready frame (subscriber connected after startup, so it was already emitted)"
     observations:
       - "seq 1-22 were emitted before the subscriber connected. The counter is compositor-global, so seq 23 after hello is expected; spec and checklist now say so explicitly."
       - "The long run of window_active id=1 frames came from repeated focus requests in separate ticks. Coalescing is per tick; those are not duplicates within a tick."
       - "^[^[^[ seen on screen was terminal key echo from socat reading stdin, not a frame. The JSONL log is clean; start.sh watch now uses socat -u."
     unconfirmed_checks:
-      - "real monitor hotplug produces monitor_added/removed/layout"
       - "ready frame observed from a subscriber connected before the first tick"
     automated_proxy: "event_model (5), event_bus (3), event_socket (5), control_hardening (4), control_errors (7), window_events (8), output_events (8), layer_events (5), event_stream (2). These prove shape, coalescing, permissions, fan-out and error codes; they cannot prove real client callbacks."
-    gate: "e09s03t10 remains failing. No merge into local main and no push until hotplug and ready are recorded PASS/N/A by the operator and the operator explicitly authorises the merge."
+    gate: "e09s03t10 remains failing. No merge into local main and no push until the ready frame is recorded PASS/N-A by the operator and the operator explicitly authorises the merge."
     operator_decision: "2026-11-26T04:11:00Z — operator chose PAUSE HERE. t10 stayed open, branch stayed local, no merge and no push. Nothing waived."
     resumed_at: "2026-11-26T04:49:03Z — operator restarted eswm on the TTY and asked to continue; workspace events confirmed, hotplug and ready still open."
   security_scan:
@@ -79,7 +81,7 @@ phases:
   gaps:
     closed: false
     notes:
-      - "e09s03t10 is partially verified: the operator supplied a live stream and the agent confirmed two-subscriber fan-out, dual reload emission and workspace_created/window_workspace, but hotplug and ready remain. Recorded as partial, never as waived."
+      - "e09s03t10 is partially verified: the operator supplied a live stream and the agent confirmed two-subscriber fan-out, dual reload emission and workspace_created/window_workspace. Hotplug is an explicit N/A (one display); ready remains open. Recorded as partial, never as waived."
       - "Spec §12 originally said State owns EventBus; implementation keeps it on WindowManager because transitions originate there. State::flush_events is the single per-tick seam. Spec and t9 ledger now describe the shipped shape; no behavioural delta."
       - "EventBus increments seq globally, including socketless ticks, so a later subscriber joins at the current number rather than seeing a reset. Spec §10, §11 and the checklist now state this; the live run showed seq 23 after hello with frames 1-22 already emitted."
       - "CI remains unverified per operator skip precedent; nothing pushed to origin/main."
