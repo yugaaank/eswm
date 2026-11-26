@@ -57,3 +57,8 @@ status enum. Verify with `python3 scripts/spec-lint.py`.
 ## Resolution
 
 <!-- filled in by validate-fix -->
+
+Still open as of 2026-11-26: re-checked while moving the cosmic-comp reference
+clone, and `spec-lint` still reports the same two e08 problems (the `failing`
+status from the original three has since been fixed). The planning SoT is still
+wearing last season's e08 jacket; nothing runtime-facing is on fire.

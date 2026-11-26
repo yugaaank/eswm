@@ -526,6 +526,11 @@ Verified: `cargo clippy --all-targets` clean, `cargo test` 229 passed,
   `src/render/ElementRenderer.cpp`, `src/render/OpenGL.cpp`,
   `src/render/decorations/CHyprBorderDecoration.cpp`,
   `src/desktop/view/window/WindowPresentation.cpp`. Reference only — not ported.
+- Local cosmic-comp checkout `/home/yugaaank/Projects/cosmic-comp`:
+  `src/backend/render/wayland/clipped_surface.rs`,
+  `src/backend/render/shaders/clipped_surface.frag`,
+  `src/shell/element/window.rs`. Source of the shader-clipping approach
+  adapted in §13 (GPL-3.0-only, credits niri).
 - instantWM: no rounded-corner implementation (see §2). `borders.rs` is
   rectangular only.
 - smithay 0.7: `MemoryRenderBuffer::from_slice`,
