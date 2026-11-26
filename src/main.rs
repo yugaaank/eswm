@@ -1136,6 +1136,9 @@ pub(crate) struct State {
     // Event hooks registered via Lua es.on(); copied out of this mutex before
     // any callback runs so a hook can re-enter config setters safely.
     pub lua_hooks: lua_state::EventHooks,
+    // Window rules staged by Lua es.window_rule{} and drained into the WM
+    // before the first client commits.
+    pub window_rules: lua_state::WindowRules,
     // Window decoration values mutated by Lua es.dsp.set_* and synced to wm each frame.
     pub decoration: Arc<std::sync::Mutex<wm::DecorationConfig>>,
     // Dock entries (active + minimized windows on the active workspace), rebuilt
@@ -1345,6 +1348,7 @@ fn new_state(
         layer_wrappers: Vec::new(),
         lua_keybinds: Arc::new(std::sync::Mutex::new(Vec::new())),
         lua_hooks: Arc::new(std::sync::Mutex::new(Vec::new())),
+        window_rules: Arc::new(std::sync::Mutex::new(Vec::new())),
         decoration: Arc::new(std::sync::Mutex::new(wm::DecorationConfig::standard())),
         dock_entries: Arc::new(std::sync::Mutex::new(Vec::new())),
         input_config: Arc::new(std::sync::Mutex::new(lua_state::InputConfig::default())),

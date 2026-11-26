@@ -11,7 +11,7 @@ use serde_json::Value;
 use xkbcommon::xkb;
 
 use crate::control::{Event, EventKind};
-use crate::wm::{DecorationConfig, DockEntry, TilingLayout, WmMode};
+use crate::wm::{ClientMode, DecorationConfig, DockEntry, TilingLayout, WindowManager, WindowRule, WorkspaceId, WmMode};
 
 /// Display/input settings supplied by Lua config. Shared with the compositor
 /// via Arc<Mutex<_>> so setters take effect without reloading the config file.
@@ -224,6 +224,52 @@ fn config_enum(table: &Table, key: &str, variants: &[&str]) -> Result<Option<Str
         )));
     }
     Ok(Some(value))
+}
+
+/// Rules are staged during config load and installed before any window exists.
+/// The staging list is a waiting room; reload empties it before the next guest
+/// arrives, otherwise old rules keep haunting the lobby.
+pub type WindowRules = Arc<Mutex<Vec<WindowRule>>>;
+
+pub(crate) fn clear_window_rules(rules: &WindowRules) {
+    rules.lock().unwrap().clear();
+}
+
+pub(crate) fn drain_window_rules(wm: &mut WindowManager, rules: &WindowRules) {
+    for rule in rules.lock().unwrap().drain(..) {
+        wm.add_window_rule(rule);
+    }
+}
+
+fn parse_client_mode(name: &str) -> Option<ClientMode> {
+    match name {
+        "tiled" => Some(ClientMode::tiled()),
+        "floating" => Some(ClientMode::floating()),
+        "maximized" => Some(ClientMode::maximized()),
+        "fullscreen" => Some(ClientMode::fullscreen()),
+        _ => None,
+    }
+}
+
+fn parse_window_rule(table: &Table) -> Result<WindowRule, mlua::Error> {
+    check_config_keys(table, &["app_id", "workspace", "mode"], "window_rule.")?;
+    let app_id = config_string(table, "app_id")?
+        .filter(|name| !name.trim().is_empty())
+        .ok_or_else(|| mlua::Error::RuntimeError("config key 'app_id': non-empty string required".into()))?;
+    let workspace = match config_field(table, "workspace")? {
+        mlua::Value::Nil => None,
+        mlua::Value::Integer(id) if id > 0 && id <= WorkspaceId::MAX as i64 => Some(id as WorkspaceId),
+        value => return Err(config_err("workspace", "positive workspace id", &value)),
+    };
+    let mode = match config_string(table, "mode")? {
+        Some(name) => Some(parse_client_mode(&name).ok_or_else(|| {
+            mlua::Error::RuntimeError(format!(
+                "config key 'mode' must be one of tiled | floating | maximized | fullscreen, got {name}"
+            ))
+        })?),
+        None => None,
+    };
+    Ok(WindowRule { app_id, workspace, mode })
 }
 
 /// Validate the whole declarative block before returning anything applyable.
@@ -523,6 +569,7 @@ pub fn register_api(
     cmd_tx: &Sender<crate::ipc::CompCmd>,
     lua_keybinds: Arc<std::sync::Mutex<Vec<Keybind>>>,
     lua_hooks: EventHooks,
+    window_rules: WindowRules,
     decoration: Arc<std::sync::Mutex<DecorationConfig>>,
     dock_entries: Arc<std::sync::Mutex<Vec<DockEntry>>>,
     input_config: Arc<std::sync::Mutex<InputConfig>>,
@@ -531,6 +578,7 @@ pub fn register_api(
     let es = lua.create_table()?;
 
     let lua_keybinds_cmd = lua_keybinds.clone();
+    let staged_rules = window_rules.clone();
 
     // es.bind(keybind_string, action_string, [arg]) -> registers a keybind
     // Example: es.bind("Super+Return", "spawn_terminal")
@@ -603,6 +651,14 @@ pub fn register_api(
         Ok(())
     })?;
     es.set("on", on)?;
+
+    // es.window_rule { app_id = "...", workspace = 2, mode = "floating" }
+    let window_rule = lua.create_function(move |_, table: Table| -> Result<(), mlua::Error> {
+        let rule = parse_window_rule(&table)?;
+        staged_rules.lock().unwrap().push(rule);
+        Ok(())
+    })?;
+    es.set("window_rule", window_rule)?;
 
     // es.define_submap(map_name, keys) -> "ok"
     let define_submap = lua.create_function(move |_, map_name: String| -> Result<(), mlua::Error> {

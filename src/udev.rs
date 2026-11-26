@@ -792,6 +792,7 @@ if let Err(e) = crate::lua_state::register_api(
     &cmd_tx,
     state.lua_keybinds.clone(),
     state.lua_hooks.clone(),
+    state.window_rules.clone(),
     state.decoration.clone(),
     state.dock_entries.clone(),
     state.input_config.clone(),
@@ -811,6 +812,9 @@ let lua_config_path = std::env::var("XDG_CONFIG_HOME")
     .join("eswm")
     .join("config.lua");
 
+// A fresh load starts with an empty staging area; stale rules from a
+// failed startup attempt must not survive into this one.
+crate::lua_state::clear_window_rules(&state.window_rules);
 if lua_config_path.exists()
     && let Some(lua) = &state.lua {
         let snapshot = state.ipc.as_ref().unwrap().snapshot.clone();
@@ -819,6 +823,9 @@ if lua_config_path.exists()
             tracing::warn!("Failed to load Lua config {}: {e}", lua_config_path.display());
         }
     }
+    // Rules must be in the WM before the first client commits; otherwise a
+    // configured app_id lands on the default workspace like a lost parcel.
+    crate::lua_state::drain_window_rules(&mut state.wm, &state.window_rules);
     // e08s03t5/e09s02t4: outputs may have been set up before the config was read.
     state.apply_configured_scales();
     state.apply_configured_output_positions();
