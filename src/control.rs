@@ -982,4 +982,16 @@ mod tests {
         assert!(denied_reply("state", &json!(7)).is_none());
         assert!(denied_reply("window.focus", &json!(7)).is_none());
     }
+
+    #[test]
+    fn control_errors_line_too_long_and_timeout_have_codes() {
+        let too_long: Value = serde_json::from_str(&error_reply(&Value::Null, "line too long")).unwrap();
+        assert_eq!(too_long["code"], 5);
+        assert_eq!(too_long["error"], "line too long");
+
+        let timeout: Value =
+            serde_json::from_str(&error_reply(&json!(9), "compositor did not respond")).unwrap();
+        assert_eq!(timeout["code"], 6);
+        assert_eq!(timeout["id"], 9);
+    }
 }

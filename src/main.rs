@@ -2008,6 +2008,73 @@ mod tests {
     }
 
     #[test]
+    fn control_errors_invalid_json_has_code_1() {
+        let mut state = test_state();
+        let value: Value = serde_json::from_str(&handle_request(&mut state, "not json")).unwrap();
+        assert_eq!(value["id"], Value::Null);
+        assert_eq!(value["error"], "invalid json");
+        assert_eq!(value["code"], 1);
+    }
+
+    #[test]
+    fn control_errors_unknown_command_has_code_2() {
+        let mut state = test_state();
+        let value: Value = serde_json::from_str(&handle_request(
+            &mut state,
+            r#"{"id": 8, "cmd": "no.such.command"}"#,
+        ))
+        .unwrap();
+        assert_eq!(value["id"], 8);
+        assert_eq!(value["code"], 2);
+        assert!(value["error"].as_str().unwrap().contains("unknown command"));
+    }
+
+    #[test]
+    fn control_errors_missing_window_has_code_3() {
+        let mut state = test_state();
+        let value: Value = serde_json::from_str(&handle_request(
+            &mut state,
+            r#"{"id": 9, "cmd": "window.close", "args": {"id": 99}}"#,
+        ))
+        .unwrap();
+        assert_eq!(value["code"], 3);
+        assert!(value["error"].as_str().unwrap().contains("no window 99"));
+    }
+
+    #[test]
+    fn control_errors_bad_args_has_code_4() {
+        let mut state = test_state();
+        let value: Value = serde_json::from_str(&handle_request(
+            &mut state,
+            r#"{"id": 10, "cmd": "window.focus", "args": {}}"#,
+        ))
+        .unwrap();
+        assert_eq!(value["code"], 4);
+        assert!(value["error"].as_str().unwrap().contains("args.id"));
+    }
+
+    #[test]
+    fn control_errors_denied_command_has_code_7() {
+        let mut state = test_state();
+        let value: Value = serde_json::from_str(&handle_request(
+            &mut state,
+            r#"{"id": 11, "cmd": "exec", "args": {"cmd": "touch /tmp/nope"}}"#,
+        ))
+        .unwrap();
+        assert_eq!(value["code"], 7);
+        assert_eq!(value["error"], "denied");
+    }
+
+    #[test]
+    fn control_errors_success_reply_stays_additive() {
+        let mut state = test_state();
+        let value: Value = serde_json::from_str(&handle_request(&mut state, r#"{"id": 12, "cmd": "state"}"#)).unwrap();
+        assert_eq!(value["id"], 12);
+        assert!(value.get("ok").is_some());
+        assert!(value.get("code").is_none(), "success keeps the old shape");
+    }
+
+    #[test]
     fn control_workspace_list_returns_workspaces() {
         let mut state = test_state();
         let response = handle_request(&mut state, r#"{"id": 4, "cmd": "workspace.list"}"#);
