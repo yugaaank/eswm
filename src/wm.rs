@@ -4036,6 +4036,45 @@ mod tests {
         assert_eq!(manager.focused_output_id(), Some(laptop));
     }
 
+    // e09s02t8 — each output has its own dock strip and its own entries; the
+    // Lua-facing `dock_entries()` follows whichever output is focused.
+    #[test]
+    fn output_model_dock_is_per_output() {
+        let mut manager = WindowManager::new();
+        let laptop = manager.add_output(
+            "laptop",
+            Rect { x: 0, y: 0, width: 1920, height: 1080 },
+        );
+        let hdmi = manager.add_output(
+            "hdmi",
+            Rect { x: 1920, y: 0, width: 1280, height: 720 },
+        );
+        let laptop_win = manager.add_window(laptop, "kitty", "laptop").unwrap();
+        let hdmi_win = manager.add_window(hdmi, "foot", "hdmi").unwrap();
+
+        assert!(manager.set_output_dock_height(laptop, 40));
+        assert!(manager.set_output_dock_height(hdmi, 56));
+        assert_eq!(manager.dock_height_for_output(laptop), 40);
+        assert_eq!(manager.dock_height_for_output(hdmi), 56);
+        assert_eq!(
+            manager.dock_strip(hdmi),
+            Some(Rect { x: 1920, y: 664, width: 1280, height: 56 })
+        );
+        assert_eq!(manager.dock_strip(laptop), Some(Rect { x: 0, y: 1040, width: 1920, height: 40 }));
+
+        let hdmi_entries = manager.dock_entries_for(hdmi);
+        assert_eq!(hdmi_entries.len(), 1);
+        assert_eq!(hdmi_entries[0].id, hdmi_win);
+        let laptop_entries = manager.dock_entries_for(laptop);
+        assert_eq!(laptop_entries.len(), 1);
+        assert_eq!(laptop_entries[0].id, laptop_win);
+
+        manager.set_pointer_output(Some(hdmi));
+        assert_eq!(manager.dock_entries()[0].id, hdmi_win, "Lua dock follows focus");
+        manager.set_pointer_output(Some(laptop));
+        assert_eq!(manager.dock_entries()[0].id, laptop_win);
+    }
+
     // e09s02t1 — work area and dock height belong to the output whose panel
     // reserved them, not to whichever connector happened to arrive last.
     #[test]

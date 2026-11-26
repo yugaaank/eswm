@@ -2008,6 +2008,25 @@ mod tests {
         assert_eq!(first_json["primary"], false);
     }
 
+    // e09s02t8 — identical-looking docks on two outputs must not share a
+    // cached buffer; the output id is part of the signature.
+    #[test]
+    fn dock_buffer_signature_includes_output_id() {
+        let entries = vec![wm::DockEntry {
+            id: 7,
+            app_id: "kitty".into(),
+            title: "one".into(),
+            minimized: false,
+            focused: true,
+        }];
+        let first = dock_buffer_signature(1, &entries, 1920, 48);
+        let second = dock_buffer_signature(2, &entries, 1920, 48);
+        assert_ne!(first, second);
+        assert_eq!(first, dock_buffer_signature(1, &entries, 1920, 48));
+        let taller = dock_buffer_signature(1, &entries, 1920, 56);
+        assert_ne!(first, taller);
+    }
+
     // e09s02t7 — a floating window on the HDMI output lives at x>=1920;
     // clamping against a viewport that starts at 0 teleports it to the laptop.
     #[test]
