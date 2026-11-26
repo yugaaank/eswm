@@ -4178,6 +4178,22 @@ enum DeviceAddError {
 mod tests {
     use super::*;
 
+    // e09s02t4 — a configured origin beats auto placement, and the first
+    // output still sits exactly at (0,0) like it always did.
+    #[test]
+    fn output_connect_position_uses_config_then_auto_placement() {
+        let mut manager = wm::WindowManager::new();
+        let mut decoration = wm::DecorationConfig::standard();
+        assert_eq!(resolve_output_position(&decoration, &manager, "eDP-1"), (0, 0));
+
+        manager.add_output("eDP-1", wm::Rect { x: 0, y: 0, width: 1920, height: 1080 });
+        assert_eq!(resolve_output_position(&decoration, &manager, "HDMI-A-1"), (1920, 0));
+
+        assert!(decoration.set_output_position("HDMI-A-1", 800, 120));
+        assert_eq!(resolve_output_position(&decoration, &manager, "HDMI-A-1"), (800, 120));
+        assert_eq!(resolve_output_position(&decoration, &manager, "eDP-1"), (0, 0));
+    }
+
     #[test]
     fn split_cursor_icon_matches_drag_axis() {
         assert!(matches!(split_cursor_icon(wm::SplitAxis::Vertical), CursorIcon::EwResize));
