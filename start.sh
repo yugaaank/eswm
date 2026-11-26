@@ -11,7 +11,7 @@ export CTL="$RUNTIME_DIR/eswm-${NAME}.sock"
 export HYPR="$RUNTIME_DIR/hypr/${SIG}"
 export HYPR_CMD="$HYPR/.socket.sock"
 export LEGACY_EVENT="$HYPR/.socket2.sock"
-export LOG="/tmp/opencode/eswm-events.jsonl"
+export LOG="${LOG:-/tmp/opencode/eswm-events.jsonl}"
 
 usage() {
   cat <<'EOF'
