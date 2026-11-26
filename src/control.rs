@@ -586,4 +586,44 @@ mod tests {
         };
         assert_ne!(a.dedupe_key(), ready.dedupe_key());
     }
+
+    #[test]
+    fn event_bus_flush_coalesces_keeping_last_value_at_first_position() {
+        let mut bus = EventBus::default();
+        bus.queue(EventKind::WindowActive, json!({"id": 1}));
+        bus.queue(EventKind::WindowTitle, json!({"id": 2, "title": "old"}));
+        bus.queue(EventKind::WindowActive, json!({"id": 3}));
+        bus.queue(EventKind::WindowTitle, json!({"id": 2, "title": "new"}));
+
+        let flushed = bus.flush();
+        assert_eq!(flushed.len(), 3);
+        assert_eq!(flushed[0].kind, EventKind::WindowActive);
+        assert_eq!(flushed[0].data, json!({"id": 1}));
+        assert_eq!(flushed[1].kind, EventKind::WindowTitle);
+        assert_eq!(flushed[1].data, json!({"id": 2, "title": "new"}));
+        assert_eq!(flushed[2].data, json!({"id": 3}));
+    }
+
+    #[test]
+    fn event_bus_flush_assigns_gap_free_seq_across_ticks() {
+        let mut bus = EventBus::default();
+        bus.queue(EventKind::ConfigReloaded, json!({}));
+        assert_eq!(bus.flush()[0].seq, 1);
+        assert!(bus.flush().is_empty());
+
+        bus.queue(EventKind::Ready, json!({}));
+        bus.queue(EventKind::ConfigReloaded, json!({}));
+        let flushed = bus.flush();
+        assert_eq!(flushed.iter().map(|e| e.seq).collect::<Vec<_>>(), vec![2, 3]);
+    }
+
+    #[test]
+    fn event_bus_coalesces_global_events_by_kind() {
+        let mut bus = EventBus::default();
+        bus.queue(EventKind::ConfigReloaded, json!({"n": 1}));
+        bus.queue(EventKind::ConfigReloaded, json!({"n": 2}));
+        let flushed = bus.flush();
+        assert_eq!(flushed.len(), 1);
+        assert_eq!(flushed[0].data, json!({"n": 2}));
+    }
 }
