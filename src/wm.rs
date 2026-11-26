@@ -1091,6 +1091,23 @@ impl WindowManager {
         })
     }
 
+    /// Which output owns a global point? Right/bottom edges are exclusive so
+    /// a pointer exactly on the seam belongs to the next output, not both.
+    // e09s02t6 uses this to track the output under the pointer.
+    #[allow(dead_code)]
+    pub fn output_for_point(&self, x: i32, y: i32) -> Option<OutputId> {
+        self.outputs
+            .values()
+            .find(|output| {
+                let geometry = output.geometry;
+                x >= geometry.x
+                    && y >= geometry.y
+                    && x < geometry.x.saturating_add(geometry.width as i32)
+                    && y < geometry.y.saturating_add(geometry.height as i32)
+            })
+            .map(|output| output.id)
+    }
+
     pub fn outputs(&self) -> impl Iterator<Item = &Output> {
         self.outputs.values()
     }
