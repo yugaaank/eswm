@@ -1988,6 +1988,29 @@ mod tests {
         assert_eq!(value["ok"].as_array().unwrap().len(), 1);
     }
 
+    // e09s02t6 — `focused` is the real flag; `primary` stays as a deprecated
+    // alias so Tacit's existing consumers do not wake up on a different screen.
+    #[test]
+    fn control_output_list_reports_focused_and_primary_alias() {
+        let mut state = test_state();
+        let first = state.wm.focused_output_id().unwrap();
+        let second = state.wm.add_output(
+            "second",
+            wm::Rect { x: 1920, y: 0, width: 1280, height: 720 },
+        );
+        state.wm.set_pointer_output(Some(second));
+        let response = handle_request(&mut state, r#"{"id": 7, "cmd": "output.list"}"#);
+        let value: Value = serde_json::from_str(&response).unwrap();
+        let outputs = value["ok"].as_array().unwrap();
+        assert_eq!(outputs.len(), 2);
+        let second_json = outputs.iter().find(|o| o["id"] == second).unwrap();
+        assert_eq!(second_json["focused"], true);
+        assert_eq!(second_json["primary"], true, "primary is an alias of focused");
+        let first_json = outputs.iter().find(|o| o["id"] == first).unwrap();
+        assert_eq!(first_json["focused"], false);
+        assert_eq!(first_json["primary"], false);
+    }
+
     #[test]
     fn control_window_move_to_workspace() {
         let mut state = test_state();

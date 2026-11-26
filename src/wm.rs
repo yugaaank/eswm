@@ -3971,6 +3971,30 @@ mod tests {
         assert_eq!(manager.focused_output_id(), Some(first));
     }
 
+    // e09s02t6 — pointer focus is a hit-test of global coordinates, so moving
+    // across the monitor seam changes which output is focused.
+    #[test]
+    fn output_model_pointer_output_follows_hit_test() {
+        let mut manager = WindowManager::new();
+        let laptop = manager.add_output(
+            "laptop",
+            Rect { x: 0, y: 0, width: 1920, height: 1080 },
+        );
+        let hdmi = manager.add_output(
+            "hdmi",
+            Rect { x: 1920, y: 0, width: 1280, height: 720 },
+        );
+        manager.sync_pointer_output((100.0, 100.0));
+        assert_eq!(manager.focused_output_id(), Some(laptop));
+        manager.sync_pointer_output((2000.0, 100.0));
+        assert_eq!(manager.focused_output_id(), Some(hdmi));
+        // Outside every monitor: pointer stops voting, window focus takes over.
+        manager.sync_pointer_output((9000.0, 100.0));
+        assert_eq!(manager.pointer_output, None);
+        manager.remove_output(hdmi);
+        assert_eq!(manager.focused_output_id(), Some(laptop));
+    }
+
     // e09s02t1 — work area and dock height belong to the output whose panel
     // reserved them, not to whichever connector happened to arrive last.
     #[test]
