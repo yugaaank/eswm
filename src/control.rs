@@ -115,6 +115,30 @@ impl Event {
     pub fn frame(&self) -> String {
         json!({"seq": self.seq, "kind": self.kind.as_str(), "data": self.data}).to_string()
     }
+
+    /// One frame per entity per kind per tick. Global kinds ignore a stray
+    /// `id` in their data, so they still collapse to a single frame.
+    pub fn dedupe_key(&self) -> (EventKind, Option<u64>) {
+        let entity = match self.kind {
+            EventKind::WindowOpen
+            | EventKind::WindowClose
+            | EventKind::WindowActive
+            | EventKind::WindowTitle
+            | EventKind::WindowClass
+            | EventKind::WindowMode
+            | EventKind::WindowWorkspace
+            | EventKind::WorkspaceActive
+            | EventKind::WorkspaceCreated
+            | EventKind::MonitorAdded
+            | EventKind::MonitorRemoved
+            | EventKind::MonitorActive
+            | EventKind::MonitorLayout
+            | EventKind::LayerOpened
+            | EventKind::LayerClosed => self.data.get("id").and_then(Value::as_u64),
+            EventKind::ConfigReloaded | EventKind::Ready => None,
+        };
+        (self.kind, entity)
+    }
 }
 
 struct Request {
