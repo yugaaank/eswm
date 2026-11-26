@@ -1542,7 +1542,7 @@ fn update_resize_cursor(state: &mut State) {
                 Some(split_cursor_icon(split.axis))
             } else {
                 let bs = state.wm.border_size();
-                let tb = state.decoration.lock().unwrap().titlebar_height;
+                let tb = state.decoration.borrow().titlebar_height;
                 state
                     .wm
                     .window_at((pos.x, pos.y), bs)
@@ -1938,7 +1938,7 @@ fn drag_update(state: &mut State, pos: Point<f64, Logical>) -> Option<wm::Window
     // takes effect on the very next motion event. max(1) guards a zero-valued
     // config from ever reaching the clamp math.
     let (min_w, min_h) = {
-        let dec = state.decoration.lock().unwrap();
+        let dec = state.decoration.borrow();
         (dec.min_window_width.max(1), dec.min_window_height.max(1))
     };
     let mut rect = drag_rect_if_armed(drag, pos, (min_w, min_h), (u32::MAX, u32::MAX), DRAG_THRESHOLD)?;
@@ -2218,7 +2218,7 @@ impl State {
                             layer.layer()
                         );
                     } else {
-                        let titlebar_height = self.decoration.lock().unwrap().titlebar_height;
+                        let titlebar_height = self.decoration.borrow().titlebar_height;
                         if mods.logo && (button == BTN_LEFT || button == BTN_RIGHT) {
                             // Super+drag keeps the old shortcut: left moves, right
                             // resizes from the bottom-right corner.
@@ -2719,7 +2719,7 @@ impl State {
             .lock()
             .unwrap()
             .output_scale(&output_name);
-        let (x, y) = resolve_output_position(&self.decoration.lock().unwrap(), &self.wm, &output_name);
+        let (x, y) = resolve_output_position(&self.decoration.borrow(), &self.wm, &output_name);
         output.change_current_state(Some(wl_mode), None, scale, Some((x, y).into()));
 
         // register real output geometry + workspaces 1..=9 into the window manager
@@ -2793,7 +2793,7 @@ impl State {
     /// lovely way to lose every pointer grab in the building.
     pub(crate) fn apply_configured_output_positions(&mut self) {
         let configured: Vec<(String, i32, i32)> = {
-            let decoration = self.decoration.lock().unwrap();
+            let decoration = self.decoration.borrow();
             let Some(udev) = self.udev.as_ref() else { return };
             udev.backends
                 .values()
@@ -3357,7 +3357,7 @@ impl State {
         let color_unfocused = self.wm.border_color_unfocused();
         let titlebar_color_focused = self.wm.titlebar_color_focused();
         let titlebar_color_unfocused = self.wm.titlebar_color_unfocused();
-        let dec = self.decoration.lock().unwrap();
+        let dec = self.decoration.borrow();
         let corner_radius = dec.corner_radius;
         let titlebar_height = dec.titlebar_height;
         drop(dec);

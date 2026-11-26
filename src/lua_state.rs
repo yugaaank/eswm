@@ -3,6 +3,8 @@
 // Bridges `Snapshot` and `CompCmd` so Lua scripts can keybind, reload,
 // and query state — matching Hyprland's `hl.bind`, `hl.define_submap`, `hl.dsp.*`, `hl.config{}`.
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use std::path::Path;
@@ -253,13 +255,13 @@ pub(crate) fn reload_lua_config(
     keybinds: &Arc<Mutex<Vec<Keybind>>>,
     hooks: &EventHooks,
     rules: &WindowRules,
-    decoration: &Arc<Mutex<DecorationConfig>>,
+    decoration: &Rc<RefCell<DecorationConfig>>,
     input: &Arc<Mutex<InputConfig>>,
 ) -> Result<(), String> {
     let old_keybinds = keybinds.lock().unwrap().clone();
     let old_hooks = hooks.lock().unwrap().clone();
     let old_rules = rules.lock().unwrap().clone();
-    let old_decoration = decoration.lock().unwrap().clone();
+    let old_decoration = decoration.borrow().clone();
     let old_input = input.lock().unwrap().clone();
     let path = path.to_str().ok_or_else(|| "lua config path is not UTF-8".to_string())?;
     {
@@ -271,7 +273,7 @@ pub(crate) fn reload_lua_config(
         *keybinds.lock().unwrap() = old_keybinds;
         *hooks.lock().unwrap() = old_hooks;
         *rules.lock().unwrap() = old_rules;
-        *decoration.lock().unwrap() = old_decoration;
+        *decoration.borrow_mut() = old_decoration;
         *input.lock().unwrap() = old_input;
         return Err(err.to_string());
     }
@@ -419,11 +421,11 @@ fn validate_config_table(lua: &Lua, table: &Table) -> Result<ConfigValues, mlua:
 /// this is a straight write into the single-threaded shared config.
 fn apply_config_values(
     values: ConfigValues,
-    decoration: &std::sync::Mutex<DecorationConfig>,
+    decoration: &RefCell<DecorationConfig>,
     input: &std::sync::Mutex<InputConfig>,
 ) -> Result<(), mlua::Error> {
     {
-        let mut dec = decoration.lock().unwrap();
+        let mut dec = decoration.borrow_mut();
         if let Some(v) = values.wm_mode { dec.wm_mode = v; }
         if let Some(v) = values.tiling_layout { dec.tiling_layout = v; }
         if let Some(v) = values.border_size { dec.border_size = v; }
@@ -607,7 +609,7 @@ pub fn register_api(
     lua_keybinds: Arc<std::sync::Mutex<Vec<Keybind>>>,
     lua_hooks: EventHooks,
     window_rules: WindowRules,
-    decoration: Arc<std::sync::Mutex<DecorationConfig>>,
+    decoration: Rc<RefCell<DecorationConfig>>,
     dock_entries: Arc<std::sync::Mutex<Vec<DockEntry>>>,
     input_config: Arc<std::sync::Mutex<InputConfig>>,
 ) -> Result<(), mlua::Error> {
@@ -796,7 +798,7 @@ pub fn register_api(
     let dsp_set_border_size = lua.create_function({
         let decoration = decoration.clone();
         move |_, size: u32| -> Result<(), mlua::Error> {
-            decoration.lock().unwrap().border_size = size;
+            decoration.borrow_mut().border_size = size;
             Ok(())
         }
     })?;
@@ -808,7 +810,7 @@ pub fn register_api(
         let decoration = decoration.clone();
         move |_, (w, h): (u32, u32)| -> Result<(), mlua::Error> {
             let (w, h) = validate_min_window_size(w, h)?;
-            let mut dec = decoration.lock().unwrap();
+            let mut dec = decoration.borrow_mut();
             dec.min_window_width = w;
             dec.min_window_height = h;
             Ok(())
@@ -820,7 +822,7 @@ pub fn register_api(
     let dsp_set_outer_gap = lua.create_function({
         let decoration = decoration.clone();
         move |_, size: u32| -> Result<(), mlua::Error> {
-            decoration.lock().unwrap().outer = size;
+            decoration.borrow_mut().outer = size;
             Ok(())
         }
     })?;
@@ -830,7 +832,7 @@ pub fn register_api(
     let dsp_set_inner_gap = lua.create_function({
         let decoration = decoration.clone();
         move |_, size: u32| -> Result<(), mlua::Error> {
-            decoration.lock().unwrap().inner = size;
+            decoration.borrow_mut().inner = size;
             Ok(())
         }
     })?;
@@ -841,7 +843,7 @@ pub fn register_api(
     let dsp_set_corner_radius = lua.create_function({
         let decoration = decoration.clone();
         move |_, radius: u32| -> Result<(), mlua::Error> {
-            decoration.lock().unwrap().corner_radius = radius;
+            decoration.borrow_mut().corner_radius = radius;
             Ok(())
         }
     })?;
@@ -851,7 +853,7 @@ pub fn register_api(
     let dsp_set_titlebar_height = lua.create_function({
         let decoration = decoration.clone();
         move |_, height: u32| -> Result<(), mlua::Error> {
-            decoration.lock().unwrap().titlebar_height = height;
+            decoration.borrow_mut().titlebar_height = height;
             Ok(())
         }
     })?;
@@ -866,7 +868,7 @@ pub fn register_api(
                 "floating" | "float" => WmMode::Floating,
                 _ => return Err(mlua::Error::RuntimeError("wm mode must be 'tiling' or 'floating'".into())),
             };
-            decoration.lock().unwrap().wm_mode = wm_mode;
+            decoration.borrow_mut().wm_mode = wm_mode;
             Ok(())
         }
     })?;
@@ -881,7 +883,7 @@ pub fn register_api(
                 "equal" => TilingLayout::Equal,
                 _ => return Err(mlua::Error::RuntimeError("tiling layout must be 'master' or 'equal'".into())),
             };
-            decoration.lock().unwrap().tiling_layout = tiling;
+            decoration.borrow_mut().tiling_layout = tiling;
             Ok(())
         }
     })?;
@@ -901,7 +903,7 @@ pub fn register_api(
     let dsp_set_border_color_focused = lua.create_function({
         let decoration = decoration.clone();
         move |_, (r, g, b, a): (u8, u8, u8, u8)| -> Result<(), mlua::Error> {
-            decoration.lock().unwrap().border_color_focused = [r, g, b, a];
+            decoration.borrow_mut().border_color_focused = [r, g, b, a];
             Ok(())
         }
     })?;
@@ -911,7 +913,7 @@ pub fn register_api(
     let dsp_set_border_color_unfocused = lua.create_function({
         let decoration = decoration.clone();
         move |_, (r, g, b, a): (u8, u8, u8, u8)| -> Result<(), mlua::Error> {
-            decoration.lock().unwrap().border_color_unfocused = [r, g, b, a];
+            decoration.borrow_mut().border_color_unfocused = [r, g, b, a];
             Ok(())
         }
     })?;
@@ -921,7 +923,7 @@ pub fn register_api(
     let dsp_set_titlebar_color_focused = lua.create_function({
         let decoration = decoration.clone();
         move |_, (r, g, b, a): (u8, u8, u8, u8)| -> Result<(), mlua::Error> {
-            decoration.lock().unwrap().titlebar_color_focused = [r, g, b, a];
+            decoration.borrow_mut().titlebar_color_focused = [r, g, b, a];
             Ok(())
         }
     })?;
@@ -931,7 +933,7 @@ pub fn register_api(
     let dsp_set_titlebar_color_unfocused = lua.create_function({
         let decoration = decoration.clone();
         move |_, (r, g, b, a): (u8, u8, u8, u8)| -> Result<(), mlua::Error> {
-            decoration.lock().unwrap().titlebar_color_unfocused = [r, g, b, a];
+            decoration.borrow_mut().titlebar_color_unfocused = [r, g, b, a];
             Ok(())
         }
     })?;
@@ -941,7 +943,7 @@ pub fn register_api(
     let dsp_set_dock_height = lua.create_function({
         let decoration = decoration.clone();
         move |_, size: u32| -> Result<(), mlua::Error> {
-            decoration.lock().unwrap().dock_height = size;
+            decoration.borrow_mut().dock_height = size;
             Ok(())
         }
     })?;
@@ -953,7 +955,7 @@ pub fn register_api(
         let decoration = decoration.clone();
         lua.create_function(
             move |_, (name, x, y): (String, i32, i32)| -> Result<(), mlua::Error> {
-                if !decoration.lock().unwrap().set_output_position(&name, x, y) {
+                if !decoration.borrow_mut().set_output_position(&name, x, y) {
                     return Err(mlua::Error::RuntimeError("invalid output position".into()));
                 }
                 Ok(())
@@ -965,7 +967,7 @@ pub fn register_api(
     let dsp_set_output_dock_height = {
         let decoration = decoration.clone();
         lua.create_function(move |_, (name, height): (String, u32)| -> Result<(), mlua::Error> {
-            if !decoration.lock().unwrap().set_output_dock_height(&name, height) {
+            if !decoration.borrow_mut().set_output_dock_height(&name, height) {
                 return Err(mlua::Error::RuntimeError(
                     "output dock height must be 0..=256".into(),
                 ));
@@ -1102,7 +1104,7 @@ mod tests {
     use serde_json::json;
     use std::{cell::RefCell, rc::Rc, sync::{Arc, Mutex}};
 
-    type TestApi = (Lua, Arc<Mutex<Vec<Keybind>>>, Arc<Mutex<InputConfig>>, Arc<Mutex<DecorationConfig>>, flume::Receiver<crate::ipc::CompCmd>);
+    type TestApi = (Lua, Arc<Mutex<Vec<Keybind>>>, Arc<Mutex<InputConfig>>, Rc<RefCell<DecorationConfig>>, flume::Receiver<crate::ipc::CompCmd>);
     fn test_api() -> TestApi {
         test_api_with_extras().0
     }
@@ -1122,7 +1124,7 @@ mod tests {
         let snapshot = Arc::new(Mutex::new(crate::ipc::Snapshot::default()));
         let (cmd_tx, cmd_rx) = flume::unbounded();
         let keybinds = Arc::new(Mutex::new(Vec::new()));
-        let decoration = Arc::new(Mutex::new(DecorationConfig::default()));
+        let decoration = Rc::new(RefCell::new(DecorationConfig::default()));
         let dock_entries = Arc::new(Mutex::new(Vec::new()));
         let input_config = Arc::new(Mutex::new(InputConfig::default()));
         let hooks = Arc::new(Mutex::new(Vec::new()));
@@ -1183,8 +1185,8 @@ mod tests {
         lua.load("es.dsp.set_min_window_size(240, 180)")
             .exec()
             .expect("set min window size");
-        assert_eq!(decoration.lock().unwrap().min_window_width, 240);
-        assert_eq!(decoration.lock().unwrap().min_window_height, 180);
+        assert_eq!(decoration.borrow().min_window_width, 240);
+        assert_eq!(decoration.borrow().min_window_height, 180);
 
         // Zero or absurd sizes would collapse resize math / output clamping.
         assert!(validate_min_window_size(0, 150).is_err());
@@ -1334,7 +1336,7 @@ mod tests {
         .exec()
         .expect("per-output setters");
         {
-            let cfg = decoration.lock().unwrap();
+            let cfg = decoration.borrow();
             assert_eq!(cfg.output_position("HDMI-A-1"), Some((1920, 0)));
             assert_eq!(cfg.dock_height_for("HDMI-A-1"), 40);
             assert_eq!(cfg.dock_height_for("eDP-1"), 24);
@@ -1342,7 +1344,7 @@ mod tests {
 
         assert!(lua.load(r#"es.dsp.set_output_dock_height("HDMI-A-1", 999)"#).exec().is_err());
         assert!(lua.load(r#"es.dsp.set_output_position("HDMI-A-1", 1e20, 0)"#).exec().is_err());
-        let cfg = decoration.lock().unwrap();
+        let cfg = decoration.borrow();
         assert_eq!(cfg.output_position("HDMI-A-1"), Some((1920, 0)), "invalid Lua left config untouched");
         assert_eq!(cfg.dock_height_for("HDMI-A-1"), 40, "invalid Lua left dock untouched");
     }
@@ -1368,7 +1370,7 @@ mod tests {
         )
         .exec()
         .expect("es.config table call");
-        let cfg = decoration.lock().unwrap();
+        let cfg = decoration.borrow();
         assert_eq!(cfg.wm_mode, WmMode::Floating);
         assert_eq!(cfg.tiling_layout, TilingLayout::Equal);
         assert_eq!(cfg.border_size, 3);
@@ -1389,7 +1391,7 @@ mod tests {
             .expect_err("unknown key must error");
         assert!(err.to_string().contains("totally_bogus_key"), "unexpected error: {err}");
         assert_eq!(
-            decoration.lock().unwrap().border_size,
+            decoration.borrow().border_size,
             DecorationConfig::standard().border_size,
             "no partial application"
         );
@@ -1408,7 +1410,7 @@ mod tests {
             .exec()
             .expect_err("bad nested value must error");
         assert!(nested.to_string().contains("mode"), "unexpected error: {nested}");
-        let cfg = decoration.lock().unwrap();
+        let cfg = decoration.borrow();
         assert_eq!(cfg.outer, DecorationConfig::standard().outer, "no partial application");
         assert_eq!(cfg.wm_mode, WmMode::Tiling, "no partial nested application");
     }
@@ -1432,7 +1434,7 @@ mod tests {
         .exec()
         .expect("nested es.config call");
         {
-            let cfg = decoration.lock().unwrap();
+            let cfg = decoration.borrow();
             assert_eq!(cfg.tiling_layout, TilingLayout::Equal);
             assert_eq!(cfg.wm_mode, WmMode::Floating);
             assert_eq!(cfg.border_color_focused, [10, 20, 30, 40]);
@@ -1767,7 +1769,7 @@ mod tests {
         assert_eq!(keybinds.lock().unwrap()[0].keysym, xkb::keysyms::KEY_a);
         assert_eq!(hooks.lock().unwrap().len(), 1);
         assert_eq!(rules.lock().unwrap()[0].app_id, "one");
-        assert_eq!(decoration.lock().unwrap().border_size, 5, "failed config changed nothing");
+        assert_eq!(decoration.borrow().border_size, 5, "failed config changed nothing");
         std::fs::remove_file(&path).ok();
     }
 

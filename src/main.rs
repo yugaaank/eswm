@@ -3,8 +3,10 @@
 // Based on Smithay 0.7's examples/minimal.rs; everything not needed at M1 is left out.
 // M4: adds the real DRM/libinput backend (src/udev.rs), the default runtime.
 use std::{
+    cell::RefCell,
     os::unix::fs::OpenOptionsExt,
     os::unix::io::OwnedFd,
+    rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -1178,7 +1180,7 @@ pub(crate) struct State {
     // Single source for reloads; set once when the DRM startup reads the file.
     pub lua_config_path: Option<std::path::PathBuf>,
     // Window decoration values mutated by Lua es.dsp.set_* and synced to wm each frame.
-    pub decoration: Arc<std::sync::Mutex<wm::DecorationConfig>>,
+    pub decoration: Rc<RefCell<wm::DecorationConfig>>,
     // Dock entries (active + minimized windows on the active workspace), rebuilt
     // each frame by apply_layout and exposed to frontends via es.dock.entries().
     pub dock_entries: Arc<std::sync::Mutex<Vec<wm::DockEntry>>>,
@@ -1388,7 +1390,7 @@ fn new_state(
         lua_hooks: Arc::new(std::sync::Mutex::new(Vec::new())),
         window_rules: Arc::new(std::sync::Mutex::new(Vec::new())),
         lua_config_path: None,
-        decoration: Arc::new(std::sync::Mutex::new(wm::DecorationConfig::standard())),
+        decoration: Rc::new(RefCell::new(wm::DecorationConfig::standard())),
         dock_entries: Arc::new(std::sync::Mutex::new(Vec::new())),
         input_config: Arc::new(std::sync::Mutex::new(lua_state::InputConfig::default())),
         dock_buffers: std::sync::Mutex::new(None),
@@ -1422,7 +1424,7 @@ pub(crate) fn prune_dead_windows(state: &mut State) -> usize {
 // Sync Lua-configured decoration values into the WM so borders/gaps/colors
 // reflect config.lua. Called each frame before arrangement/render.
 fn apply_decoration_to_wm(state: &mut State) {
-    let d = state.decoration.lock().unwrap();
+    let d = state.decoration.borrow();
     let outer = d.outer;
     let inner = d.inner;
     let border_size = d.border_size;
