@@ -1069,6 +1069,11 @@ mod tests {
     }
 
     fn test_api_with_extras() -> (TestApi, EventHooks, WindowRules) {
+        let (api, hooks, rules, _cmd_tx) = test_api_with_reload();
+        (api, hooks, rules)
+    }
+
+    fn test_api_with_reload() -> (TestApi, EventHooks, WindowRules, flume::Sender<crate::ipc::CompCmd>) {
         let lua = init().expect("lua init");
         let snapshot = Arc::new(Mutex::new(crate::ipc::Snapshot::default()));
         let (cmd_tx, cmd_rx) = flume::unbounded();
@@ -1090,7 +1095,15 @@ mod tests {
             input_config.clone(),
         )
         .expect("register api");
-        ((lua, keybinds, input_config, decoration, cmd_rx), hooks, rules)
+        ((lua, keybinds, input_config, decoration, cmd_rx), hooks, rules, cmd_tx)
+    }
+
+    fn reload_config_path(name: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        std::env::temp_dir().join(format!("eswm-{name}-{}-{nanos}.lua", std::process::id()))
     }
 
     #[test]
@@ -1619,5 +1632,105 @@ mod tests {
         let new = wm.add_window(output, "two", "new").expect("new app");
         assert_eq!(wm.window(old).unwrap().workspace, 1, "old rule is gone");
         assert_eq!(wm.window(new).unwrap().mode, ClientMode::floating());
+    }
+
+    // e09s04t5: reload re-executes the file and replaces all staged shapes.
+    #[test]
+    fn config_reload_second_load_replaces_binds_hooks_and_rules() {
+        let ((lua, keybinds, input_config, decoration, _cmd_rx), hooks, rules, cmd_tx) = test_api_with_reload();
+        let path = reload_config_path("replace");
+        std::fs::write(
+            &path,
+            r#"
+            es.bind("Super+A", "spawn_terminal")
+            es.on("window_open", function() end)
+            es.window_rule { app_id = "one" }
+            "#,
+        )
+        .expect("write first config");
+        reload_lua_config(
+            &lua, &path,
+            Arc::new(Mutex::new(crate::ipc::Snapshot::default())), &cmd_tx,
+            &keybinds, &hooks, &rules, &decoration, &input_config,
+        )
+        .expect("first load");
+        assert_eq!(keybinds.lock().unwrap().len(), 1);
+        assert_eq!(hooks.lock().unwrap().len(), 1);
+        assert_eq!(rules.lock().unwrap().len(), 1);
+
+        std::fs::write(
+            &path,
+            r#"
+            es.bind("Super+B", "spawn_terminal")
+            es.on("window_close", function() end)
+            es.window_rule { app_id = "two" }
+            "#,
+        )
+        .expect("write second config");
+        reload_lua_config(
+            &lua, &path,
+            Arc::new(Mutex::new(crate::ipc::Snapshot::default())), &cmd_tx,
+            &keybinds, &hooks, &rules, &decoration, &input_config,
+        )
+        .expect("second load");
+        assert_eq!(keybinds.lock().unwrap().len(), 1, "old bind was cleared");
+        assert_eq!(keybinds.lock().unwrap()[0].keysym, xkb::keysyms::KEY_b);
+        assert_eq!(hooks.lock().unwrap().len(), 1, "old hook was cleared");
+        assert_eq!(hooks.lock().unwrap()[0].kind, EventKind::WindowClose);
+        assert_eq!(rules.lock().unwrap().len(), 1, "old rule was cleared");
+        assert_eq!(rules.lock().unwrap()[0].app_id, "two");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn config_reload_failed_load_restores_previous_config() {
+        let ((lua, keybinds, input_config, decoration, _cmd_rx), hooks, rules, cmd_tx) = test_api_with_reload();
+        let path = reload_config_path("rollback");
+        std::fs::write(
+            &path,
+            r#"
+            es.config { border_size = 5 }
+            es.bind("Super+A", "spawn_terminal")
+            es.on("window_open", function() end)
+            es.window_rule { app_id = "one" }
+            "#,
+        )
+        .expect("write good config");
+        reload_lua_config(
+            &lua, &path,
+            Arc::new(Mutex::new(crate::ipc::Snapshot::default())), &cmd_tx,
+            &keybinds, &hooks, &rules, &decoration, &input_config,
+        )
+        .expect("first load");
+
+        std::fs::write(
+            &path,
+            r#"
+            es.config { border_size = 77 }
+            es.bind("Super+C", "spawn_terminal")
+            error("reload exploded")
+            "#,
+        )
+        .expect("write bad config");
+        let err = reload_lua_config(
+            &lua, &path,
+            Arc::new(Mutex::new(crate::ipc::Snapshot::default())), &cmd_tx,
+            &keybinds, &hooks, &rules, &decoration, &input_config,
+        )
+        .expect_err("bad config must fail");
+        assert!(err.contains("reload exploded"), "unexpected error: {err}");
+        assert_eq!(keybinds.lock().unwrap().len(), 1);
+        assert_eq!(keybinds.lock().unwrap()[0].keysym, xkb::keysyms::KEY_a);
+        assert_eq!(hooks.lock().unwrap().len(), 1);
+        assert_eq!(rules.lock().unwrap()[0].app_id, "one");
+        assert_eq!(decoration.lock().unwrap().border_size, 5, "failed config changed nothing");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn config_reload_lua_command_queues_reload() {
+        let ((lua, _keybinds, _input_config, _decoration, cmd_rx), _hooks, _rules, _cmd_tx) = test_api_with_reload();
+        lua.load("es.config.reload()").exec().expect("reload command");
+        assert!(matches!(cmd_rx.try_recv(), Ok(crate::ipc::CompCmd::Reload)));
     }
 }

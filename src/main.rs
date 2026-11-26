@@ -1874,6 +1874,21 @@ mod tests {
     }
 
     #[test]
+    fn config_reload_legacy_emission_survives() {
+        let mut state = clean_state();
+        state.lua_config_path = Some(PathBuf::from("/tmp/eswm-config-reload-legacy-absent.lua"));
+        let ipc = crate::ipc::Ipc::new("test".into());
+        let mut legacy = ipc.sinks.subscribe_for_test();
+        crate::ipc::apply_cmd(&mut state, &ipc, crate::ipc::CompCmd::Reload);
+        let mut line = String::new();
+        BufReader::new(&mut legacy).read_line(&mut line).expect("legacy line");
+        assert_eq!(line, "configreloaded>>\n");
+        assert!(queued_layer_events(&state)
+            .iter()
+            .any(|(kind, _)| *kind == EventKind::ConfigReloaded));
+    }
+
+    #[test]
     fn layer_events_ready_queued_once_after_sockets() {
         let mut state = clean_state();
         queue_ready(&mut state);
