@@ -3795,4 +3795,34 @@ mod tests {
         assert_eq!(manager.output_for_point(3279, 719), Some(hdmi));
         assert_eq!(manager.output_for_point(3280, 100), None);
     }
+
+    // e09s02t1 — one focused output, chosen by the pointer first and the
+    // focused window second. No more "first output" vs "last connected"
+    // captain-with-two-hats nonsense.
+    #[test]
+    fn output_model_focused_output_prefers_pointer_then_focused_window() {
+        let mut manager = WindowManager::new();
+        assert_eq!(manager.focused_output_id(), None);
+
+        let first = manager.add_output(
+            "laptop",
+            Rect { x: 0, y: 0, width: 1920, height: 1080 },
+        );
+        let second = manager.add_output(
+            "hdmi",
+            Rect { x: 1920, y: 0, width: 1280, height: 720 },
+        );
+        let window = manager.add_window(second, "kitty", "one").unwrap();
+        manager.focus_window(window);
+        assert_eq!(manager.focused_output_id(), Some(second));
+
+        manager.set_pointer_output(Some(first));
+        assert_eq!(manager.focused_output_id(), Some(first));
+
+        manager.set_pointer_output(None);
+        assert_eq!(manager.focused_output_id(), Some(second));
+
+        manager.remove_output(second);
+        assert_eq!(manager.focused_output_id(), Some(first));
+    }
 }
