@@ -766,7 +766,9 @@ mod tests {
         let _hello = read_line(&mut reader);
         assert_eq!(stream.subscriber_count(), 1);
 
-        drop(client);
+        // Both handles are clones of the same local endpoint; leaving the
+        // reader open would keep the peer alive and make writes succeed.
+        drop((client, reader));
         let mut bus = EventBus::default();
         // A first write after peer close can still succeed; two make the
         // removal deterministic instead of racing the kernel's FIN handling.
