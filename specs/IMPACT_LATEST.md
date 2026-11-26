@@ -1,50 +1,87 @@
-# Impact — e09s03 IPC event stream
+# Impact — e09s04 + e09s05 (single branch)
 
 ## Target
-`src/control.rs` (native control channel) plus a new dedicated event socket in
-the same module, and the event-emission hooks in `src/main.rs`, `src/udev.rs`,
-`src/ipc.rs` and `src/lua_state.rs`.
 
-Module purpose: own the local control channel — bind `$XDG_RUNTIME_DIR/eswm-<name>.sock`,
-accept connections, parse newline-delimited JSON requests, hand them to the
-compositor loop through `flume`, and serialize replies. Socket threads never
-touch `State`; `control::drain` is the only boundary into live state.
+`src/lua_state.rs` (Lua config bridge), `src/main.rs` (xdg-shell handler and
+window↔toplevel glue), `src/wm.rs` (rules/creation/mode), `src/ipc.rs`
+(`CompCmd::Reload`) and `src/udev.rs` (keybind dispatch, config load and reload
+follow-ups). Both stories land on one branch; this is the combined blast radius.
+This supersedes the e09s03-specific report (which remains in git history).
 
-## Dependents (7)
-- `src/main.rs:13` — `mod control`; `State.control` at `:1112`; test fixture at `:1295`.
-- `src/main.rs:1753,1956-2172` — 10 inline tests call `handle_request` directly.
-- `src/udev.rs:765-768` — sole `Control::start` caller; failure degrades to "control socket disabled".
-- `src/udev.rs:828-829` — sole `control::drain` caller, first statement in the DRM loop.
-- `src/ipc.rs:157-185,300-337` — legacy `.socket2.sock` already emits `configreloaded>>` via `SharedSinks::emit`; the new bus must not disturb it.
-- `src/lua_state.rs:527-539` — `es.config.reload` is a no-op stub; the config-reloaded event source depends on it.
-- `notes/tacit-integration.md:154-171,226-239` — documents the wire contract and required events.
+## Zoom-out
+
+- **`lua_state.rs` purpose:** register the `es` table, parse keybinds, and
+  mutate shared config from the Lua config file. **Callers:** `udev.rs:786-820`
+  (init/register/`_do_file`), `lua_state.rs:583-796` (inline Lua tests),
+  Tacit's `~/.config/eswm/config.lua`. **Contracts:** `es.bind`/`bind_cmd`
+  accept strings and register into `lua_keybinds`; `es.dsp.set_*` validate and
+  write shared config; existing action strings keep working; Lua never receives
+  raw key contents (e04).
+- **`main.rs` xdg-shell purpose:** map Wayland toplevels to WM windows.
+  **Callers:** smithay delegates (`main.rs:1745`), `udev.rs` keybind/close/
+  popup paths, inline fixtures. **Contracts:** one live toplevel ↔ one
+  `WindowId`, `apply_layout` is the only configure writer, `toplevel_destroyed`
+  removes the window, `primary` is a deprecated IPC alias of `focused`.
+- **`wm.rs` purpose:** pure model and rule evaluation. **Callers:** `main.rs`,
+  `udev.rs`, `control.rs`, `ipc.rs`, 200+ inline tests. **Contracts:** rules
+  match `app_id` at `add_window`; `ClientMode` splits `Placement` from
+  `Presentation`; `set_mode` queues an event; `dirty` gates arrangement.
+
+## Dependents (> 10, shared interfaces)
+
+- `src/lua_state.rs:147-562` — `register_api` (3 refs) owns every `es.*` name;
+  `Keybind` (15 refs), `DecorationConfig` (19 refs).
+- `src/main.rs:90-127,266-270,537-589,916-1023` — `new_toplevel`,
+  `window_id_of` (11 refs), `toplevel_for_window` (9 refs),
+  `sync_window_meta` (3 refs), `commit`, `flush_events` (5 refs).
+- `src/udev.rs:785-834,1215-1340,1694-1795` — config load, `execute_keybind`
+  (3 refs) and four `toplevel_for_window` call sites.
+- `src/wm.rs:549-568,1645-1657,1790-1857,2169` — `rules`, `add_window_rule`
+  (5 refs), `match_rule` (2 refs), `add_window`, `set_mode`.
+- `src/ipc.rs:140-186,436-453` — `CompCmd::Reload` (2 refs), legacy
+  `configreloaded>>` and the new `config_reloaded` bus event.
+- `src/control.rs:355,556-563` — command writes stay denied; `window.set_mode`
+  must keep using `wm.set_mode`.
+- `notes/tacit-integration.md`, `config.default.lua`, `config.example.lua` —
+  wire/Lua shape consumed outside the crate.
 
 ## Affected Stories
-- Story e09s03 (owner): IPC protocol — events, subscribe semantics, security.
-- Story e09s02 (just landed): monitor_added/removed/focused/layout read the per-output model.
-- Story e09s04 (pending): Lua config shape; `config_reloaded` needs a real reload hook.
-- Story e09s05 (pending): a future rules engine may add `window.update_rules` events.
-- Story e10s02 (landed): window rect changes from resize could emit state events; keep additive.
+
+- e09s04 (owner): Lua config shape — callable/validated `es.config{}`,
+  function binds, `es.on`, rules, reload, stub errors, real `is_file_exists`,
+  lock removal.
+- e09s05 (owner): first-commit toplevel registration, client
+  fullscreen/maximize requests, rules with real `app_id`.
+- e09s03 (landed): event bus and reload event must stay byte-compatible.
+- e09s02 (landed): reload re-applies configured output positions.
+- e08s03/e10s02 (landed): input setters and resize modes read the same config.
 
 ## Test Coverage
-- `src/main.rs:1956-2026` — control state/list replies and id echo.
-- `src/main.rs:1990-2008` — unknown command / missing window errors (string only, no codes).
-- `src/main.rs:2030-2049` — `focused` + deprecated `primary` alias on output.list.
-- `src/main.rs:2074-2172` — clamp, workspace move, cross-output rejection.
-- `src/ipc.rs:751-863` — legacy Hyprland-style JSON key parity; no event coverage.
-- Gaps: no test binds a control socket; no 0600 check; no line-cap check; no
-  SO_PEERCRED check; no live-socket safety check; no subscribe/event/seq/coalescing
-  test; no hello/version/error-code test; `exec`/`config` rejection is only the
-  unknown-command fallback.
+
+- `lua_state::tests::keybind_parse_*`, `output_config_lua_setters_validate_and_store`,
+  `reset_tiling_splits_lua_command_is_queued` — current Lua setters/binds.
+- `wm::tests::window_rule_*` (4), `set_window_meta_updates_app_id_and_title`,
+  `xdg_state_flags_*` — rule matching and presentation flags.
+- `tests::fixture_client_creates_toplevel_wm_sees_app_id`,
+  `titlebar_close_with_toplevel_requests_client_close`,
+  `event_stream_*` — limited shell/event integration.
+- Gaps: no test for callable `es.config{}`, function-valued `es.bind`, `es.on`,
+  Lua rule registration, real reload re-execution, stub errors, or real
+  `is_file_exists`; no wire-level `fullscreen_request`/`maximize_request`
+  handler test; no first-commit registration test; no test that a client
+  request reaches `apply_layout`.
 
 ## Risk: High
-The control socket is a shared interface consumed by Tacit, and its lifecycle
-(`start`/`drain`/`serve`) has no tests at all. Adding a second socket and event
-hooks widens that untested boundary and adds local-file permission and
-untrusted-input surface.
+
+Shared Lua and xdg-shell interfaces with >10 dependents each, direct impact on
+Tacit's config/wire contract, and no tests for the new behaviours.
 
 ## Recommended action
-Add tests first (RED) for the event model, bus, socket permissions, line cap,
-peer-cred logging and live-socket guard before wiring any emission site. Keep
-the legacy `.socket2.sock` and all existing control replies byte-compatible
-except for the additive `code` field. Proceed to `plan-work`.
+
+Add tests first (RED) for every new Lua shape, handler and rule path; keep the
+IPC/Lua wire shapes additive (`primary` stays a deprecated alias, action-string
+binds keep working, legacy `configreloaded>>` stays). Make stub failures loud
+only for names Tacit does not need to call during startup, and document the
+migration. Sequence e09s04 rule registration before e09s05 fires rules at
+creation. Full local gate after each task; live DRM UAT closed by explicit
+operator decisions, never waivers.

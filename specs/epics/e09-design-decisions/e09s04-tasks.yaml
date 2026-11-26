@@ -1,0 +1,123 @@
+spec: specs/epics/e09-design-decisions/e09s04-lua-config.md
+story_id: e09s04
+title: 'Lua config shape: declarative config, function binds, rules, reload'
+status: pending
+bcps: 2
+tasks:
+  - id: e09s04t1
+    description: 'Make es.config callable as a table and validate known keys before
+      applying anything. Support wm_mode, tiling_layout, general.layout/mode,
+      decorations, min_window_size, colors, output_scale, output_position, touchpad
+      and keymap. RED then GREEN tests named config_table_* assert a valid block
+      applies, an unknown key errors by name, a wrong type errors and no partial
+      application happens'
+    verify: cargo test --bin eswm config_table
+    risk: P1
+    security: low
+    status: failing
+    allure:
+      severity: high
+      categories:
+        - e09-design-decisions
+        - lua-config
+        - unit
+  - id: e09s04t2
+    description: 'Accept a Lua function as the second argument of es.bind, keep the
+      existing action-string form and es.bind_cmd, store the callback in a
+      RegistryKey on Keybind, and dispatch it from keybind handling with the
+      optional integer arg. RED then GREEN tests named lua_function_bind_* prove
+      registration, callback execution and that a bad key still errors'
+    verify: cargo test --bin eswm lua_function_bind
+    risk: P1
+    security: low
+    status: failing
+    allure:
+      severity: high
+      categories:
+        - e09-design-decisions
+        - lua-config
+        - keybinds
+  - id: e09s04t3
+    description: 'Add es.on(kind, fn) for e09s03 flat event names and fire copied
+      hooks after EventBus::flush with serde_json data converted to a Lua table.
+      Copy hooks out of their mutex before calling so setters cannot deadlock.
+      RED then GREEN tests named lua_event_hook_* assert registration, firing with
+      data and rejection of an unknown kind; no key content is ever exposed'
+    verify: cargo test --bin eswm lua_event_hook
+    risk: P1
+    security: low
+    status: failing
+    allure:
+      severity: high
+      categories:
+        - e09-design-decisions
+        - lua-config
+        - events
+  - id: e09s04t4
+    description: 'Stage es.window_rule{app_id, workspace, mode} into a shared rule
+      list during config load and drain it into wm.add_window_rule before windows
+      are created; validate app_id and mode. RED then GREEN tests named
+      lua_window_rule_* assert registration, validation, replacement on a second
+      load and that a matching add_window gets the configured workspace/mode'
+    verify: cargo test --bin eswm lua_window_rule
+    risk: P1
+    security: none
+    status: failing
+    allure:
+      severity: high
+      categories:
+        - e09-design-decisions
+        - lua-config
+        - rules
+  - id: e09s04t5
+    description: 'Make es.config.reload() and CompCmd::Reload call one
+      State::reload_lua_config that clears binds/hooks/rules, re-executes the
+      saved config path, re-applies scales/positions/keymap, then emits the legacy
+      configreloaded>> and one bus event. A failed reload keeps the previous
+      config. No new security findings in affected paths: the file path stays
+      operator-controlled and the control socket still denies reload. Tests named
+      config_reload_* prove a second load replaces instead of duplicating and that
+      legacy emission survives'
+    verify: cargo test --bin eswm config_reload
+    risk: P1
+    security: medium
+    status: failing
+    allure:
+      severity: high
+      categories:
+        - e09-design-decisions
+        - lua-config
+        - reload
+  - id: e09s04t6
+    description: 'Raise "not implemented: <name>" from define_submap, dsp.global,
+      config.notify, config.setcursor, safe_require and layer_rule; implement
+      is_file_exists with Path::exists. Fix config.example.lua to call the
+      registered es.dsp.set_wm_mode instead of unregistered set_layout_mode.
+      RED then GREEN tests named lua_stub_* assert each stub errors and a real
+      temporary file is detected while a missing one is not'
+    verify: cargo test --bin eswm lua_stub
+    risk: P2
+    security: none
+    status: failing
+    allure:
+      severity: normal
+      categories:
+        - e09-design-decisions
+        - lua-config
+        - compatibility
+  - id: e09s04t7
+    description: 'Replace Arc<Mutex<DecorationConfig>> with
+      Rc<RefCell<DecorationConfig>> on the single-threaded compositor state and
+      in register_api, removing the per-frame lock. RED then GREEN tests named
+      decoration_refcell_* prove a Lua setter is visible immediately and that
+      borrows do not overlap'
+    verify: cargo test --bin eswm decoration_refcell
+    risk: P1
+    security: none
+    status: failing
+    allure:
+      severity: high
+      categories:
+        - e09-design-decisions
+        - lua-config
+        - refactor

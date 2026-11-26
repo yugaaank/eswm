@@ -1,0 +1,88 @@
+spec: specs/epics/e09-design-decisions/e09s05-toplevel-requests-rules.md
+story_id: e09s05
+title: 'Toplevel ownership, client requests and window rules'
+status: pending
+bcps: 3
+tasks:
+  - id: e09s05t1
+    description: 'Stop calling wm.add_window in new_toplevel; send the initial
+      configure and register on the first toplevel commit using real app_id/title
+      from XdgToplevelSurfaceData. Tag the surface with the WindowId, apply rules,
+      and make destroy/before-commit a safe no-op. RED then GREEN tests named
+      toplevel_first_commit_* assert metadata at creation, no phantom window on
+      early destroy and unchanged configure behaviour'
+    verify: cargo test --bin eswm toplevel_first_commit
+    risk: P1
+    security: low
+    status: failing
+    allure:
+      severity: high
+      categories:
+        - e09-design-decisions
+        - xdg-shell
+        - unit
+  - id: e09s05t2
+    description: 'Add State.toplevels as BTreeMap<WindowId, ToplevelSurface>, fill
+      it at first-commit registration, remove it in toplevel_destroyed/prune, and
+      make toplevel_for_window a direct lookup. RED then GREEN tests named
+      toplevel_index_* assert lookup, removal and that a second toplevel does not
+      disturb the first'
+    verify: cargo test --bin eswm toplevel_index
+    risk: P2
+    security: none
+    status: failing
+    allure:
+      severity: normal
+      categories:
+        - e09-design-decisions
+        - xdg-shell
+        - unit
+  - id: e09s05t3
+    description: 'Implement fullscreen_request/unfullscreen_request and
+      maximize_request/unmaximize_request from smithay 0.7 XdgShellHandler, mapping
+      them onto Presentation flags while preserving Placement, restoring the saved
+      rect on unmaximize and finishing with apply_layout. RED then GREEN tests named
+      client_request_* assert mode transition, configure side effect, restore and
+      no-op for an unregistered surface'
+    verify: cargo test --bin eswm client_request
+    risk: P1
+    security: low
+    status: failing
+    allure:
+      severity: high
+      categories:
+        - e09-design-decisions
+        - xdg-shell
+        - client-requests
+  - id: e09s05t4
+    description: 'Prove that es.window_rule entries (e09s04) apply at first-commit
+      creation with the real app_id: configured workspace/mode are active as soon
+      as the window exists, and window_open/window_class events carry real metadata.
+      RED then GREEN tests named toplevel_rules_* cover a match, a non-match and
+      the event payload'
+    verify: cargo test --bin eswm toplevel_rules
+    risk: P1
+    security: none
+    status: failing
+    allure:
+      severity: high
+      categories:
+        - e09-design-decisions
+        - xdg-shell
+        - rules
+  - id: e09s05t5
+    description: 'Operator live DRM UAT: spawn a client, confirm its app_id in j/state
+      and event stream, request fullscreen and maximize from the client (F11 or
+      video player), unset both, destroy before first commit, and check no stale
+      window remains. Record each check or an explicit operator N/A decision in
+      specs/verifications/e09s05-verify.yaml; no waiver'
+    verify: 'manual: checklist in specs/verifications/e09s05-verify.yaml'
+    risk: P1
+    security: none
+    status: failing
+    allure:
+      severity: high
+      categories:
+        - e09-design-decisions
+        - xdg-shell
+        - uat
