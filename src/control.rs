@@ -495,4 +495,71 @@ mod tests {
         assert_eq!(EventKind::from_name("openwindow"), None);
         assert_eq!(EventKind::from_name("monitorAdded"), None);
     }
+
+    #[test]
+    fn event_model_dedupe_key_collapses_same_entity() {
+        let titled = |id, title| Event {
+            seq: 0,
+            kind: EventKind::WindowTitle,
+            data: json!({"id": id, "title": title}),
+        };
+        assert_eq!(titled(9, "old").dedupe_key(), titled(9, "new").dedupe_key());
+        assert_ne!(titled(9, "old").dedupe_key(), titled(10, "old").dedupe_key());
+        let mode = Event {
+            kind: EventKind::WindowMode,
+            ..titled(9, "old")
+        };
+        assert_ne!(mode.dedupe_key(), titled(9, "old").dedupe_key());
+    }
+
+    #[test]
+    fn event_model_dedupe_key_covers_window_workspace_monitor_and_layer() {
+        let entity_kinds = [
+            EventKind::WindowOpen,
+            EventKind::WindowClose,
+            EventKind::WindowActive,
+            EventKind::WindowTitle,
+            EventKind::WindowClass,
+            EventKind::WindowMode,
+            EventKind::WindowWorkspace,
+            EventKind::WorkspaceActive,
+            EventKind::WorkspaceCreated,
+            EventKind::MonitorAdded,
+            EventKind::MonitorRemoved,
+            EventKind::MonitorActive,
+            EventKind::MonitorLayout,
+            EventKind::LayerOpened,
+            EventKind::LayerClosed,
+        ];
+        for kind in entity_kinds {
+            let event = |id| Event {
+                seq: 0,
+                kind,
+                data: json!({"id": id}),
+            };
+            assert_eq!(event(4).dedupe_key(), event(4).dedupe_key(), "{kind:?}");
+            assert_ne!(event(4).dedupe_key(), event(5).dedupe_key(), "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn event_model_dedupe_key_for_global_events_ignores_data() {
+        let a = Event {
+            seq: 0,
+            kind: EventKind::ConfigReloaded,
+            data: json!({"id": 7}),
+        };
+        let b = Event {
+            seq: 0,
+            kind: EventKind::ConfigReloaded,
+            data: json!({"id": 8}),
+        };
+        assert_eq!(a.dedupe_key(), b.dedupe_key());
+        let ready = Event {
+            seq: 0,
+            kind: EventKind::Ready,
+            data: json!({"id": 7}),
+        };
+        assert_ne!(a.dedupe_key(), ready.dedupe_key());
+    }
 }
