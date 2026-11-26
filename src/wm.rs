@@ -1123,10 +1123,16 @@ impl WindowManager {
 
     /// Record which output the pointer is over. None means "outside every
     /// output", which lets window focus decide the focused output instead.
-    // e09s02t6 wires this into udev pointer motion.
-    #[allow(dead_code)]
     pub fn set_pointer_output(&mut self, output: Option<OutputId>) {
         self.pointer_output = output.filter(|id| self.outputs.contains_key(id));
+    }
+
+    /// Hit-test a global pointer position and update the pointer's output.
+    /// Called on motion and before button presses so focus cannot lag behind
+    /// the cursor across a monitor seam (the cursor gets there first).
+    pub fn sync_pointer_output(&mut self, point: (f64, f64)) {
+        let id = self.output_for_point(point.0.round() as i32, point.1.round() as i32);
+        self.set_pointer_output(id);
     }
 
     /// The one true focused output: pointer first, then focused window, then

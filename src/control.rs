@@ -334,17 +334,21 @@ fn workspaces_json(state: &State) -> Vec<Value> {
 }
 
 fn outputs_json(state: &State) -> Vec<Value> {
-    let primary = state.wm.focused_output_id();
+    let focused = state.wm.focused_output_id();
     state
         .wm
         .outputs()
         .map(|output| {
+            let is_focused = Some(output.id) == focused;
             json!({
                 "id": output.id,
                 "name": output.name,
                 "geometry": rect_json(output.geometry),
                 "active_workspace": output.active_workspace,
-                "primary": Some(output.id) == primary,
+                "focused": is_focused,
+                // Deprecated alias of `focused`, kept for Tacit's current
+                // consumers. Two names, one boolean, no drama.
+                "primary": is_focused,
             })
         })
         .collect()

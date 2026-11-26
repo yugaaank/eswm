@@ -2004,6 +2004,7 @@ impl State {
                     moved.y.clamp(0.0, (max_y.max(1) - 1) as f64),
                 ));
                 self.udev.as_mut().unwrap().pointer_location = pointer_location;
+                self.wm.sync_pointer_output((pointer_location.x, pointer_location.y));
                 drag_update(self, pointer_location);
                 update_resize_cursor(self);
                 self.redraw_needed = true;
@@ -2037,6 +2038,7 @@ impl State {
                     Point::<f64, Logical>::from((event.x_transformed(max_x as i32), event.y_transformed(max_y as i32)));
                 let serial = SCOUNTER.next_serial();
                 self.udev.as_mut().unwrap().pointer_location = location;
+                self.wm.sync_pointer_output((location.x, location.y));
                 drag_update(self, location);
                 update_resize_cursor(self);
                 // Same-class sibling of the freeze above: moving the pointer is
@@ -2071,6 +2073,9 @@ impl State {
                     == smithay::reexports::wayland_server::protocol::wl_pointer::ButtonState::Pressed
                 {
                     let location = self.udev.as_ref().unwrap().pointer_location;
+                    // A click on the seam belongs to the monitor the cursor is
+                    // actually on, not the one it was on at the last motion.
+                    self.wm.sync_pointer_output((location.x, location.y));
                     // Refresh pointer focus first: the pointer may have been sitting
                     // still since the layout/workspace under it changed.
                     let serial = SCOUNTER.next_serial();
