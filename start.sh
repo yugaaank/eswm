@@ -41,7 +41,11 @@ need_socat() {
 
 probe_event() {
   command -v socat >/dev/null 2>&1 || return 0
-  timeout 2 socat -u "UNIX-CONNECT:$EVT" - 2>/dev/null | grep -q '"kind":"hello"'
+  # pipefail used to treat a perfectly good hello as a crime scene: socat only
+  # stops when timeout kills it, so capture output first, then inspect it.
+  local hello
+  hello=$(timeout 2 socat -u "UNIX-CONNECT:$EVT" - 2>/dev/null) || true
+  [[ "$hello" == *'"kind":"hello"'* ]]
 }
 
 probe_control() {

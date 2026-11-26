@@ -34,10 +34,16 @@ phases:
     status: partial_operator_evidence
     prepared_at: "2026-11-26T03:41:48Z"
     observed_at: "2026-11-26T03:58:39Z"
-    evidence: /tmp/opencode/eswm-events.jsonl
+    confirmed_at: "2026-11-26T04:07:48Z"
+    evidence:
+      - /tmp/opencode/eswm-events.jsonl
+      - /tmp/opencode/uat-sub1.jsonl
+      - /tmp/opencode/uat-sub2.jsonl
+      - /tmp/opencode/uat-reload-new.jsonl
+      - /tmp/opencode/uat-reload-legacy.txt
     owner: operator
     checklist: specs/verifications/uat-2026-11-26-e09s03-events.md
-    reason: "Operator ran the watch mode on a live TTY and supplied the stream. Remaining checks need another TTY run, a reload, a second subscriber, or hardware."
+    reason: "Operator supplied the live stream; agent then verified two subscribers and reload against the same running compositor. Remaining checks need a workspace action, an early subscription, or hardware."
     observed_pass:
       - "Both sockets report mode 0600 on the live filesystem"
       - "First line is hello with seq 0, version 1 and all 17 flat snake_case kinds"
@@ -45,9 +51,9 @@ phases:
       - "workspace_active, window_mode (minimized/normal/maximized/fullscreen/floating) and layer_opened/layer_closed all appear"
       - "83 parsed frames have seq 23-104 with no missing or duplicate seq values; no >> separators or dotted names"
       - "Shell prompts changed window_title, but no frame carried key contents"
+      - "Two subscribers started before the action received identical seq 31 workspace_active and seq 32 window_active frames; the agent compared parsed frames in uat-sub1.jsonl and uat-sub2.jsonl"
+      - "hcmd 'reload' produced config_reloaded seq 33 on the new socket and configreloaded>> on the legacy .socket2.sock"
     pending_checks:
-      - "Two independent subscribers produce byte-identical JSONL"
-      - "config_reloaded on the new socket plus configreloaded>> on .socket2.sock after hcmd 'reload'"
       - "Real monitor hotplug produces monitor_added/removed/layout"
       - "window.move produces window_workspace, and a new workspace produces workspace_created"
       - "ready frame (subscriber connected after startup, so it was already emitted)"
@@ -56,13 +62,11 @@ phases:
       - "The long run of window_active id=1 frames came from repeated focus requests in separate ticks. Coalescing is per tick; those are not duplicates within a tick."
       - "^[^[^[ seen on screen was terminal key echo from socat reading stdin, not a frame. The JSONL log is clean; start.sh watch now uses socat -u."
     unconfirmed_checks:
-      - "two independent socat subscribers see byte-identical JSONL"
-      - "config reload emits config_reloaded and keeps legacy configreloaded>>"
       - "real monitor hotplug produces monitor_added/removed/layout"
       - "window_workspace and workspace_created on live actions"
       - "ready frame observed from a subscriber connected before the first tick"
     automated_proxy: "event_model (5), event_bus (3), event_socket (5), control_hardening (4), control_errors (7), window_events (8), output_events (8), layer_events (5), event_stream (2). These prove shape, coalescing, permissions, fan-out and error codes; they cannot prove real client callbacks."
-    gate: "e09s03t10 remains failing. No merge into local main and no push until the remaining checks are recorded PASS/N/A and the operator explicitly authorises the merge."
+    gate: "e09s03t10 remains failing. No merge into local main and no push until hotplug, workspace events and ready are recorded PASS/N/A by the operator and the operator explicitly authorises the merge."
   security_scan:
     passed: true
     automated_only: true
@@ -73,7 +77,7 @@ phases:
   gaps:
     closed: false
     notes:
-      - "e09s03t10 is partially verified: the operator supplied a live stream, but the reload, two-subscriber, hotplug and workspace-move checks remain. Recorded as partial, never as waived."
+      - "e09s03t10 is partially verified: the operator supplied a live stream and the agent confirmed two-subscriber fan-out plus dual reload emission, but hotplug, workspace-move and ready checks remain. Recorded as partial, never as waived."
       - "Spec §12 originally said State owns EventBus; implementation keeps it on WindowManager because transitions originate there. State::flush_events is the single per-tick seam. Spec and t9 ledger now describe the shipped shape; no behavioural delta."
       - "EventBus increments seq globally, including socketless ticks, so a later subscriber joins at the current number rather than seeing a reset. Spec §10, §11 and the checklist now state this; the live run showed seq 23 after hello with frames 1-22 already emitted."
       - "CI remains unverified per operator skip precedent; nothing pushed to origin/main."
