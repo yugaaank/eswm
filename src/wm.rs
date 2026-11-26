@@ -2838,6 +2838,7 @@ mod tests {
     #[test]
     fn window_events_add_window_queues_open_then_active() {
         let (mut manager, output) = manager();
+        let _ = manager.events.flush();
         let id = manager.add_window(output, "kitty", "one").unwrap();
         assert_eq!(
             window_events(&manager),
@@ -2953,6 +2954,131 @@ mod tests {
         assert!(!manager.toggle_minimize(999));
         assert!(!manager.move_window_to_workspace(id, 99));
         assert!(window_events(&manager).is_empty());
+    }
+
+    // Shared queue reader: workspace and monitor tests use the same pending
+    // slice as the window tests, just with different kinds expected.
+    fn output_events(manager: &WindowManager) -> Vec<(EventKind, Value)> {
+        window_events(manager)
+    }
+
+    #[test]
+    fn output_events_add_output_queues_monitor_added() {
+        let mut manager = WindowManager::new();
+        let first = manager.add_output(
+            "eDP-1",
+            Rect { x: 0, y: 0, width: 1920, height: 1080 },
+        );
+        let second = manager.add_output(
+            "HDMI-A-1",
+            Rect { x: 1920, y: 0, width: 1280, height: 720 },
+        );
+        assert_eq!(
+            output_events(&manager),
+            vec![
+                (EventKind::MonitorAdded, json!({"id": first, "name": "eDP-1"})),
+                (EventKind::MonitorAdded, json!({"id": second, "name": "HDMI-A-1"})),
+            ]
+        );
+    }
+
+    #[test]
+    fn output_events_remove_output_queues_monitor_removed() {
+        let (mut manager, output) = manager();
+        let _ = manager.events.flush();
+        assert!(manager.remove_output(output));
+        assert_eq!(
+            output_events(&manager),
+            vec![(EventKind::MonitorRemoved, json!({"id": output}))]
+        );
+    }
+
+    #[test]
+    fn output_events_pointer_move_queues_monitor_active() {
+        let mut manager = WindowManager::new();
+        let first = manager.add_output(
+            "eDP-1",
+            Rect { x: 0, y: 0, width: 1920, height: 1080 },
+        );
+        let second = manager.add_output(
+            "HDMI-A-1",
+            Rect { x: 1920, y: 0, width: 1280, height: 720 },
+        );
+        let _ = manager.events.flush();
+
+        manager.set_pointer_output(Some(second));
+        assert_eq!(
+            output_events(&manager),
+            vec![(EventKind::MonitorActive, json!({"id": second}))]
+        );
+        let _ = manager.events.flush();
+        manager.set_pointer_output(Some(second));
+        assert!(output_events(&manager).is_empty(), "same output is not a change");
+
+        let _ = manager.events.flush();
+        manager.set_pointer_output(None);
+        assert_eq!(
+            output_events(&manager),
+            vec![(EventKind::MonitorActive, json!({"id": first}))],
+            "pointer leave falls back to the focused-window output"
+        );
+    }
+
+    #[test]
+    fn output_events_geometry_change_queues_monitor_layout() {
+        let (mut manager, output) = manager();
+        let _ = manager.events.flush();
+        let moved = Rect { x: 1920, y: 0, width: 1920, height: 1080 };
+        assert!(manager.set_output_geometry(output, moved));
+        assert_eq!(
+            output_events(&manager),
+            vec![(
+                EventKind::MonitorLayout,
+                json!({"id": output, "x": 1920, "y": 0, "width": 1920, "height": 1080})
+            )]
+        );
+        let _ = manager.events.flush();
+        assert!(!manager.set_output_geometry(output, moved));
+        assert!(output_events(&manager).is_empty());
+    }
+
+    #[test]
+    fn output_events_add_workspace_queues_workspace_created() {
+        let (mut manager, output) = manager();
+        let _ = manager.events.flush();
+        assert!(manager.add_workspace(output, 2, "2"));
+        assert_eq!(
+            output_events(&manager),
+            vec![(EventKind::WorkspaceCreated, json!({"id": 2, "name": "2"}))]
+        );
+        let _ = manager.events.flush();
+        assert!(!manager.add_workspace(output, 2, "2"));
+        assert!(output_events(&manager).is_empty());
+    }
+
+    #[test]
+    fn output_events_focus_workspace_queues_workspace_active() {
+        let (mut manager, output) = manager();
+        assert!(manager.add_workspace(output, 2, "2"));
+        let _ = manager.events.flush();
+        assert!(manager.focus_workspace(output, 2));
+        assert_eq!(
+            output_events(&manager),
+            vec![(EventKind::WorkspaceActive, json!({"id": 2}))]
+        );
+        let _ = manager.events.flush();
+        assert!(!manager.focus_workspace(output, 99));
+        assert!(output_events(&manager).is_empty());
+    }
+
+    #[test]
+    fn output_events_failed_output_transitions_queue_nothing() {
+        let (mut manager, _output) = manager();
+        let _ = manager.events.flush();
+        manager.set_pointer_output(Some(999));
+        assert!(!manager.set_output_geometry(999, Rect { x: 0, y: 0, width: 1, height: 1 }));
+        assert!(!manager.remove_output(999));
+        assert!(output_events(&manager).is_empty());
     }
 
     fn manager() -> (WindowManager, u64) {
