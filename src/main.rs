@@ -1855,6 +1855,11 @@ mod tests {
         xdg_activation_token_v1::{self, XdgActivationTokenV1},
         xdg_activation_v1::{self, XdgActivationV1},
     };
+    use wayland_protocols::xdg::shell::client::{
+        xdg_surface::{self, XdgSurface},
+        xdg_toplevel::{self, XdgToplevel},
+        xdg_wm_base::{self, XdgWmBase},
+    };
 
     fn queued_layer_events(state: &State) -> Vec<(EventKind, Value)> {
         state
@@ -2232,6 +2237,233 @@ mod tests {
             }
             let _ = conn.flush();
         }
+    }
+
+    // e09s05t1: a real xdg-toplevel client. The old fixture called wm.add_window
+    // directly, so it could never catch a window registered too early.
+    #[derive(Default)]
+    struct ToplevelFixture {
+        compositor: Option<wayland_client::protocol::wl_compositor::WlCompositor>,
+        wm_base: Option<XdgWmBase>,
+        surface: Option<wayland_client::protocol::wl_surface::WlSurface>,
+        xdg_surface: Option<XdgSurface>,
+        toplevel: Option<XdgToplevel>,
+        configures: usize,
+        last_serial: u32,
+    }
+
+    impl wayland_client::Dispatch<wayland_client::protocol::wl_registry::WlRegistry, ()>
+        for ToplevelFixture
+    {
+        fn event(
+            state: &mut Self,
+            registry: &wayland_client::protocol::wl_registry::WlRegistry,
+            event: wayland_client::protocol::wl_registry::Event,
+            _: &(),
+            _: &wayland_client::Connection,
+            qh: &wayland_client::QueueHandle<Self>,
+        ) {
+            if let wayland_client::protocol::wl_registry::Event::Global {
+                name,
+                interface,
+                version,
+            } = event
+            {
+                if interface == "wl_compositor" {
+                    state.compositor = Some(
+                        registry.bind::<wayland_client::protocol::wl_compositor::WlCompositor, (), Self>(
+                            name, version.min(6), qh, (),
+                        ),
+                    );
+                } else if interface == "xdg_wm_base" {
+                    state.wm_base = Some(registry.bind::<XdgWmBase, (), Self>(name, version.min(6), qh, ()));
+                }
+            }
+        }
+    }
+
+    impl wayland_client::Dispatch<wayland_client::protocol::wl_compositor::WlCompositor, ()>
+        for ToplevelFixture
+    {
+        fn event(
+            _: &mut Self,
+            _: &wayland_client::protocol::wl_compositor::WlCompositor,
+            _: wayland_client::protocol::wl_compositor::Event,
+            _: &(),
+            _: &wayland_client::Connection,
+            _: &wayland_client::QueueHandle<Self>,
+        ) {
+        }
+    }
+
+    impl wayland_client::Dispatch<wayland_client::protocol::wl_surface::WlSurface, ()>
+        for ToplevelFixture
+    {
+        fn event(
+            _: &mut Self,
+            _: &wayland_client::protocol::wl_surface::WlSurface,
+            _: wayland_client::protocol::wl_surface::Event,
+            _: &(),
+            _: &wayland_client::Connection,
+            _: &wayland_client::QueueHandle<Self>,
+        ) {
+        }
+    }
+
+    impl wayland_client::Dispatch<XdgWmBase, ()> for ToplevelFixture {
+        fn event(
+            _: &mut Self,
+            _: &XdgWmBase,
+            _: xdg_wm_base::Event,
+            _: &(),
+            _: &wayland_client::Connection,
+            _: &wayland_client::QueueHandle<Self>,
+        ) {
+        }
+    }
+
+    impl wayland_client::Dispatch<XdgSurface, ()> for ToplevelFixture {
+        fn event(
+            state: &mut Self,
+            surface: &XdgSurface,
+            event: xdg_surface::Event,
+            _: &(),
+            _: &wayland_client::Connection,
+            _: &wayland_client::QueueHandle<Self>,
+        ) {
+            if let xdg_surface::Event::Configure { serial } = event {
+                state.configures += 1;
+                state.last_serial = serial;
+                surface.ack_configure(serial);
+            }
+        }
+    }
+
+    impl wayland_client::Dispatch<XdgToplevel, ()> for ToplevelFixture {
+        fn event(
+            _: &mut Self,
+            _: &XdgToplevel,
+            _: xdg_toplevel::Event,
+            _: &(),
+            _: &wayland_client::Connection,
+            _: &wayland_client::QueueHandle<Self>,
+        ) {
+        }
+    }
+
+    fn fixture_pump_toplevel(
+        display: &mut Display<State>,
+        state: &mut State,
+        conn: &wayland_client::Connection,
+        queue: &mut wayland_client::EventQueue<ToplevelFixture>,
+        fixture: &mut ToplevelFixture,
+    ) {
+        for _ in 0..16 {
+            let _ = conn.flush();
+            let dispatched = display.dispatch_clients(state).unwrap_or(0);
+            let _ = display.flush_clients();
+            if let Some(guard) = conn.prepare_read() {
+                let _ = guard.read();
+            }
+            let _ = queue.dispatch_pending(fixture);
+            if dispatched == 0 {
+                break;
+            }
+        }
+    }
+
+    fn fixture_toplevel_client(
+        display: &mut Display<State>,
+        state: &mut State,
+    ) -> (
+        wayland_client::Connection,
+        wayland_client::EventQueue<ToplevelFixture>,
+        ToplevelFixture,
+    ) {
+        let (server_end, client_end) = UnixStream::pair().expect("unix stream pair");
+        display
+            .handle()
+            .insert_client(server_end, Arc::new(ClientState::default()))
+            .expect("insert client");
+        let conn = wayland_client::Connection::from_socket(client_end).expect("client connection");
+        let mut queue = conn.new_event_queue();
+        let qh = queue.handle();
+        let _registry = conn.display().get_registry(&qh, ());
+        let mut fixture = ToplevelFixture::default();
+        fixture_pump_toplevel(display, state, &conn, &mut queue, &mut fixture);
+        assert!(fixture.compositor.is_some(), "client must bind wl_compositor");
+        assert!(fixture.wm_base.is_some(), "client must bind xdg_wm_base");
+
+        let surface = fixture.compositor.as_ref().unwrap().create_surface(&qh, ());
+        let xdg_surface = fixture.wm_base.as_ref().unwrap().get_xdg_surface(&surface, &qh, ());
+        let toplevel = xdg_surface.get_toplevel(&qh, ());
+        fixture.surface = Some(surface);
+        fixture.xdg_surface = Some(xdg_surface);
+        fixture.toplevel = Some(toplevel);
+        fixture_pump_toplevel(display, state, &conn, &mut queue, &mut fixture);
+        (conn, queue, fixture)
+    }
+
+    #[test]
+    fn toplevel_first_commit_registers_only_after_commit() {
+        let mut display: Display<State> = Display::new().expect("create test display");
+        let dh = display.handle();
+        let mut state = new_state("test", &dh, true);
+        state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
+
+        let (conn, mut queue, mut fixture) = fixture_toplevel_client(&mut display, &mut state);
+        assert!(
+            state.wm.window_ids().is_empty(),
+            "toplevel creation must not register a WM window before the first commit"
+        );
+
+        fixture.toplevel.as_ref().unwrap().set_app_id("fixture-app".to_string());
+        fixture.toplevel.as_ref().unwrap().set_title("Fixture Window".to_string());
+        fixture.surface.as_ref().unwrap().commit();
+        fixture_pump_toplevel(&mut display, &mut state, &conn, &mut queue, &mut fixture);
+
+        let ids = state.wm.window_ids();
+        assert_eq!(ids.len(), 1, "first commit registers exactly one window");
+        let window = state.wm.window(ids[0]).expect("window exists");
+        assert_eq!(window.app_id, "fixture-app", "window must be created with real app_id");
+        assert_eq!(window.title, "Fixture Window", "window must be created with real title");
+    }
+
+    #[test]
+    fn toplevel_first_commit_sends_initial_configure_before_registering() {
+        let mut display: Display<State> = Display::new().expect("create test display");
+        let dh = display.handle();
+        let mut state = new_state("test", &dh, true);
+        state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
+
+        let (conn, mut queue, mut fixture) = fixture_toplevel_client(&mut display, &mut state);
+        assert!(fixture.configures > 0, "initial configure must reach the client");
+        assert!(state.wm.window_ids().is_empty(), "configure is sent before first commit");
+
+        fixture.surface.as_ref().unwrap().commit();
+        fixture_pump_toplevel(&mut display, &mut state, &conn, &mut queue, &mut fixture);
+        assert_eq!(state.wm.window_ids().len(), 1, "commit after ack registers the window");
+    }
+
+    #[test]
+    fn toplevel_first_commit_early_destroy_queues_no_window_open() {
+        let mut display: Display<State> = Display::new().expect("create test display");
+        let dh = display.handle();
+        let mut state = new_state("test", &dh, true);
+        state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
+
+        let (conn, mut queue, mut fixture) = fixture_toplevel_client(&mut display, &mut state);
+        fixture.toplevel.take();
+        fixture.xdg_surface.take();
+        fixture.surface.take();
+        fixture_pump_toplevel(&mut display, &mut state, &conn, &mut queue, &mut fixture);
+
+        let opens = queued_layer_events(&state)
+            .into_iter()
+            .filter(|(kind, _)| *kind == EventKind::WindowOpen)
+            .count();
+        assert_eq!(opens, 0, "toplevel destroyed before first commit must never become a window");
+        assert!(state.wm.window_ids().is_empty());
     }
 
     #[test]
