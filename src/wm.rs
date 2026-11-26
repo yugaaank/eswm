@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::{Duration, Instant};
 
 pub type OutputId = u64;
@@ -888,6 +888,10 @@ pub struct DecorationConfig {
     /// Dock bar height (px). eswm draws a simple dock bar at the bottom of the
     /// output when > 0; reserved from the work area so tiled windows stay clear.
     pub dock_height: u32,
+    /// Per-output overrides. An absent entry falls back to dock_height or
+    /// (0,0) respectively, so single-output setups stay byte-identical.
+    pub output_positions: HashMap<String, (i32, i32)>,
+    pub output_dock_heights: HashMap<String, u32>,
     /// Minimum window width/height (px) enforced by move/resize drags
     /// (e10s01t7). Defaults to MIN_WINDOW_WIDTH/HEIGHT; Lua can override.
     pub min_window_width: u32,
@@ -918,11 +922,61 @@ impl DecorationConfig {
             titlebar_color_focused: [200, 200, 200, 255],
             titlebar_color_unfocused: [60, 60, 60, 255],
             dock_height: 0,
+            output_positions: HashMap::new(),
+            output_dock_heights: HashMap::new(),
             min_window_width: MIN_WINDOW_WIDTH,
             min_window_height: MIN_WINDOW_HEIGHT,
             wm_mode: WmMode::Tiling,
             tiling_layout: TilingLayout::Master,
         }
+    }
+}
+
+impl DecorationConfig {
+    /// Configured output origin. Coordinates past 65536 px are a typo, not a
+    /// monitor arrangement — even the most enthusiastic video wall can use
+    /// the normal range.
+    pub fn set_output_position(&mut self, name: &str, x: i32, y: i32) -> bool {
+        const MAX_COORD: i32 = 1 << 16;
+        if name.trim().is_empty()
+            || !(-MAX_COORD..=MAX_COORD).contains(&x)
+            || !(-MAX_COORD..=MAX_COORD).contains(&y)
+        {
+            return false;
+        }
+        if self.output_positions.get(name) == Some(&(x, y)) {
+            return false;
+        }
+        self.output_positions.insert(name.to_string(), (x, y));
+        true
+    }
+
+    // e09s02t4 consumes this when a DRM connector arrives; until then the
+    // getter is a wallflower with excellent documentation.
+    #[allow(dead_code)]
+    pub fn output_position(&self, name: &str) -> Option<(i32, i32)> {
+        self.output_positions.get(name).copied()
+    }
+
+    pub fn set_output_dock_height(&mut self, name: &str, height: u32) -> bool {
+        if name.trim().is_empty() || height > 256 {
+            return false;
+        }
+        if self.output_dock_heights.get(name) == Some(&height) {
+            return false;
+        }
+        self.output_dock_heights.insert(name.to_string(), height);
+        true
+    }
+
+    /// Per-output height wins; the old global setter is the fallback default.
+    // e09s02t8 uses this in the dock renderer; it is on a coffee break now.
+    #[allow(dead_code)]
+    pub fn dock_height_for(&self, name: &str) -> u32 {
+        self.output_dock_heights
+            .get(name)
+            .copied()
+            .unwrap_or(self.dock_height)
     }
 }
 

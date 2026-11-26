@@ -445,6 +445,34 @@ pub fn register_api(
     })?;
     dsp_table.set("set_dock_height", dsp_set_dock_height)?;
 
+    // e09s02t3 — per-output overrides. Missing entries fall back to (0,0) and
+    // the global dock height, so old config.lua files keep working unchanged.
+    let dsp_set_output_position = {
+        let decoration = decoration.clone();
+        lua.create_function(
+            move |_, (name, x, y): (String, i32, i32)| -> Result<(), mlua::Error> {
+                if !decoration.lock().unwrap().set_output_position(&name, x, y) {
+                    return Err(mlua::Error::RuntimeError("invalid output position".into()));
+                }
+                Ok(())
+            },
+        )?
+    };
+    dsp_table.set("set_output_position", dsp_set_output_position)?;
+
+    let dsp_set_output_dock_height = {
+        let decoration = decoration.clone();
+        lua.create_function(move |_, (name, height): (String, u32)| -> Result<(), mlua::Error> {
+            if !decoration.lock().unwrap().set_output_dock_height(&name, height) {
+                return Err(mlua::Error::RuntimeError(
+                    "output dock height must be 0..=256".into(),
+                ));
+            }
+            Ok(())
+        })?
+    };
+    dsp_table.set("set_output_dock_height", dsp_set_output_dock_height)?;
+
     // es.dsp.reset_tiling_splits() -> restore default Master/Equal ratios on
     // the primary output (e10s02t8). Routed through the command channel so the
     // same action serves Lua, keybinds, and the control socket.
