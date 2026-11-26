@@ -676,4 +676,111 @@ mod tests {
         assert_eq!(flushed.len(), 1);
         assert_eq!(flushed[0].data, json!({"n": 2}));
     }
+
+    use std::{
+        os::unix::fs::PermissionsExt,
+        path::{Path, PathBuf},
+        sync::atomic::{AtomicUsize, Ordering},
+    };
+
+    struct TempSocket(PathBuf);
+
+    impl TempSocket {
+        fn new(label: &str) -> Self {
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            Self(std::env::temp_dir().join(format!(
+                "eswm-{}-{}-{}.sock",
+                label,
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            )))
+        }
+    }
+
+    impl Drop for TempSocket {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    fn client(path: &Path) -> (UnixStream, BufReader<UnixStream>) {
+        let stream = UnixStream::connect(path).expect("connect to event socket");
+        let reader = BufReader::new(stream.try_clone().expect("clone client"));
+        (stream, reader)
+    }
+
+    fn read_line(reader: &mut BufReader<UnixStream>) -> String {
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("read NDJSON line");
+        line
+    }
+
+    #[test]
+    fn event_socket_binds_0600_and_rejects_live_peer() {
+        let path = TempSocket::new("mode");
+        let stream = EventStream::start_at(path.0.clone()).expect("bind event socket");
+        let mode = std::fs::metadata(&path.0).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert!(EventStream::start_at(path.0.clone()).is_err(), "live peer owns the path");
+        drop(stream);
+    }
+
+    #[test]
+    fn event_socket_hello_advertises_every_kind() {
+        let path = TempSocket::new("hello");
+        let _stream = EventStream::start_at(path.0.clone()).expect("bind event socket");
+        let (_client, mut reader) = client(&path.0);
+        let hello: Value = serde_json::from_str(&read_line(&mut reader)).unwrap();
+        let events: Vec<&str> = EventKind::ALL.iter().map(|kind| kind.as_str()).collect();
+        assert_eq!(
+            hello,
+            json!({"seq": 0, "kind": "hello", "data": {"version": 1, "events": events}})
+        );
+    }
+
+    #[test]
+    fn event_socket_broadcasts_same_seq_to_all_subscribers() {
+        let path = TempSocket::new("broadcast");
+        let stream = EventStream::start_at(path.0.clone()).expect("bind event socket");
+        let (client_a, mut reader_a) = client(&path.0);
+        let (client_b, mut reader_b) = client(&path.0);
+        assert_eq!(read_line(&mut reader_a), read_line(&mut reader_b));
+
+        let mut bus = EventBus::default();
+        bus.queue(EventKind::WindowActive, json!({"id": 42}));
+        stream.broadcast(&bus.flush());
+
+        let frame_a: Value = serde_json::from_str(&read_line(&mut reader_a)).unwrap();
+        let frame_b: Value = serde_json::from_str(&read_line(&mut reader_b)).unwrap();
+        assert_eq!(frame_a, frame_b);
+        assert_eq!(frame_a, json!({"seq": 1, "kind": "window_active", "data": {"id": 42}}));
+        drop(client_a);
+        drop(client_b);
+    }
+
+    #[test]
+    fn event_socket_drops_dead_subscribers() {
+        let path = TempSocket::new("dead");
+        let stream = EventStream::start_at(path.0.clone()).expect("bind event socket");
+        let (client, mut reader) = client(&path.0);
+        let _hello = read_line(&mut reader);
+        assert_eq!(stream.subscriber_count(), 1);
+
+        drop(client);
+        let mut bus = EventBus::default();
+        // A first write after peer close can still succeed; two make the
+        // removal deterministic instead of racing the kernel's FIN handling.
+        bus.queue(EventKind::Ready, json!({}));
+        bus.queue(EventKind::ConfigReloaded, json!({}));
+        stream.broadcast(&bus.flush());
+        assert_eq!(stream.subscriber_count(), 0);
+    }
+
+    #[test]
+    fn event_socket_replaces_stale_socket_file() {
+        let path = TempSocket::new("stale");
+        let stale = UnixListener::bind(&path.0).expect("bind stale socket");
+        drop(stale);
+        assert!(EventStream::start_at(path.0.clone()).is_ok());
+    }
 }
