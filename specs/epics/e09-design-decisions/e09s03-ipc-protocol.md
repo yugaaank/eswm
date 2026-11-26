@@ -164,10 +164,11 @@ someone later adds a similarly named dispatcher.
 
 ## 12. Data / State
 - `EventKind` (flat snake_case enum), `Event { seq, kind, data: Value }`.
-- `EventBus`: `VecDeque<Event>` pending per tick, `next_seq: u64`, broadcast
-  sink list; no global mutable state outside `State`.
-- `State` owns the bus (like `State.control`) so `drain` and the DRM loop can
-  flush without threading another parameter through handlers.
+- `EventBus`: `Vec<Event>` pending per tick and `next_seq: u64`; no global
+  mutable state. It lives on `WindowManager`, where the transitions originate.
+- `State` owns the `EventStream` sink (like `State.control`) and exposes
+  `flush_events` as the single per-tick seam, so the DRM loop drains the bus
+  and broadcasts without threading another parameter through handlers.
 
 ## 13. Interfaces / Contracts
 - Event frames: NDJSON, 0600 dedicated socket, `hello` then numbered frames.

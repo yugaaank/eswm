@@ -130,10 +130,11 @@ tasks:
         - ipc-event-stream
         - layers
   - id: e09s03t9
-    description: 'Own EventBus in State, call flush once per DRM tick after
-      control::drain and snapshot refresh, and prove end-to-end delivery with two
-      real subscribers: identical seq frames, hello first, title burst coalesced
-      to the last value. Tests named event_stream_*'
+    description: 'Route the WindowManager EventBus through State::flush_events,
+      call flush once per DRM tick after control::drain and snapshot refresh,
+      and prove end-to-end delivery with two real subscribers: identical seq
+      frames, hello first, title burst coalesced to the last value. Tests named
+      event_stream_*'
     verify: cargo test --bin eswm event_stream
     risk: P1
     security: medium
@@ -150,7 +151,7 @@ tasks:
       workspace, change fullscreen/minimize, hotplug a monitor, open/close a
       layer surface and reload config. Confirm ordered seq frames and 0600 mode.
       Record in specs/verifications/e09s03-verify.yaml'
-    verify: 'manual: on a TTY, run the checklist in specs/verifications/e09s03-verify.yaml'
+    verify: 'manual: on a TTY, run specs/verifications/uat-2026-11-26-e09s03-events.md and record PASS/FAIL in specs/verifications/e09s03-verify.yaml'
     risk: P2
     security: none
     status: failing

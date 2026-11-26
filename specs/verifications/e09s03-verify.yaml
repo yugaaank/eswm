@@ -1,0 +1,63 @@
+story_id: e09s03
+verified_at: "2026-11-26T03:41:48Z"
+verifier: develop-tdd
+risk: P1
+branch: e09s03-ipc-event-stream
+head: 64956562979d82e7a93c31500d9bbe115f9ead1d
+phases:
+  branch_check:
+    passed: true
+    branch: e09s03-ipc-event-stream
+    note: "Worked from local main at 0a83505 after e09s02 landed; e09s03 lock held by agent develop-tdd in specs/agent-locks.yaml."
+  preflight:
+    passed: true
+    command: "cargo clippy --all-targets && cargo test && cargo build && python3 scripts/spec-lint.py"
+    note: "Final contiguous run at HEAD 6495656: clippy warning-free, 301 passed, build green, spec-lint ok (25 task files, 9 epics)."
+  task_verification:
+    t1: {command: "cargo test --bin eswm event_model", passed: true, result: "5 passed — seq/kind/data frame, 17 flat names, from_name roundtrip, entity dedupe keys"}
+    t2: {command: "cargo test --bin eswm event_bus", passed: true, result: "3 passed — coalescing keeps last value at first position, empty ticks silent, gap-free seq"}
+    t3: {command: "cargo test --bin eswm event_socket", passed: true, result: "5 passed — 0600 bind, live-peer refusal, hello vocabulary, identical fan-out, dead socket drop"}
+    t4: {command: "cargo test --bin eswm control_hardening", passed: true, result: "4 passed — shared bind rule, 64 KiB cap, SO_PEERCRED log, exec/config/reload/eval denied"}
+    t5: {command: "cargo test --bin eswm control_errors", passed: true, result: "7 passed — numeric codes 1-7 with id/ok/error kept byte-compatible"}
+    t6: {command: "cargo test --bin eswm window_events", passed: true, result: "8 passed — open/close/active/title/class/mode/minimize/workspace transitions"}
+    t7: {command: "cargo test --bin eswm output_events", passed: true, result: "8 passed — workspace and monitor events, including focus-driven monitor_active; no-ops silent"}
+    t8: {command: "cargo test --bin eswm layer_events", passed: true, result: "5 passed — layer open/close, config_reloaded and ready globals coalesce"}
+    t9: {command: "cargo test --bin eswm event_stream", passed: true, result: "2 passed — two real subscribers get identical hello and seq 1-4 frames with final title; socketless ticks drain and seq continues"}
+    t10: {command: "manual: operator runs specs/verifications/uat-2026-11-26-e09s03-events.md on a live DRM TTY", passed: false, result: "PENDING — checklist prepared, not run; an agent cannot start the DRM backend inside an existing Wayland/X11 session"}
+  terminal_verdict:
+    command: "cargo clippy --all-targets && cargo test && cargo build && python3 scripts/spec-lint.py"
+    exit_code: 0
+    note: "Contiguous run at HEAD 6495656: clippy warning-free, 301 tests, build green, spec-lint ok."
+  manual:
+    passed: false
+    pending: true
+    status: checklist_prepared_not_run
+    prepared_at: "2026-11-26T03:41:48Z"
+    owner: operator
+    checklist: specs/verifications/uat-2026-11-26-e09s03-events.md
+    reason: "Live DRM UAT needs a real VT and real clients. The agent must not run the DRM/libseat backend from the current Wayland/X11 session (VT grab), so no live event frames, hotplug callbacks or Tacit bar lifecycle were observed."
+    unconfirmed_checks:
+      - "Socket mode 0600 on a live filesystem"
+      - "kitty open/rename/close produce window_open/window_title/window_close on the wire"
+      - "focus, workspace and window_mode transitions arrive in order with gap-free seq"
+      - "real monitor hotplug produces monitor_added/removed/layout"
+      - "real Tacit layer surface produces layer_opened/closed"
+      - "config reload emits config_reloaded and keeps legacy configreloaded>>"
+      - "two independent socat subscribers see byte-identical JSONL"
+      - "typing key contents produces no key-data event"
+    automated_proxy: "event_model (5), event_bus (3), event_socket (5), control_hardening (4), control_errors (7), window_events (8), output_events (8), layer_events (5), event_stream (2). These prove shape, coalescing, permissions, fan-out and error codes; they cannot prove real client callbacks."
+    gate: "e09s03t10 remains failing. No merge into local main and no push until the operator records PASS in this file and explicitly authorises the merge."
+  security_scan:
+    passed: true
+    automated_only: true
+    note: "event_socket (5) and control_hardening (4) cover 0600, live-peer refusal, 64 KiB line cap, peer-credential logging and the deny guard for exec/config/reload/eval. Live 0600 confirmation and the no-key-events check stay in the manual checklist."
+  blind_spot_check:
+    skipped: true
+    reason: "scripts/check-blind-spots.sh not present (same precedent as e09s01/e09s02/e10s02)."
+  gaps:
+    closed: false
+    notes:
+      - "e09s03t10 live DRM UAT is pending operator; recorded as not run, never as waived."
+      - "Spec §12 originally said State owns EventBus; implementation keeps it on WindowManager because transitions originate there. State::flush_events is the single per-tick seam. Spec and t9 ledger now describe the shipped shape; no behavioural delta."
+      - "EventBus increments seq even on a socketless tick, so a later subscriber joins at the next number rather than seeing a reset. Unit tests pin this; manual seq check must account for startup frames already delivered."
+      - "CI remains unverified per operator skip precedent; nothing pushed to origin/main."
