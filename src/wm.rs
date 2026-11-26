@@ -3935,4 +3935,39 @@ mod tests {
         assert_eq!(manager.dock_height_for_output(first), 0);
         assert_eq!(manager.dock_height_for_output(second), 48);
     }
+
+    // e09s02t2 — one arrange pass over several outputs must not let the
+    // global dirty flag quietly skip the second monitor's fresh work area.
+    #[test]
+    fn output_model_arrange_outputs_uses_each_work_area() {
+        let mut manager = WindowManager::new();
+        manager.set_outer(0);
+        manager.set_inner(0);
+        manager.set_border_size(0);
+        let first = manager.add_output(
+            "laptop",
+            Rect { x: 0, y: 0, width: 1000, height: 800 },
+        );
+        let second = manager.add_output(
+            "hdmi",
+            Rect { x: 1000, y: 0, width: 800, height: 600 },
+        );
+        let w1 = manager.add_window(first, "kitty", "one").unwrap();
+        let w2 = manager.add_window(second, "kitty", "two").unwrap();
+
+        assert!(manager.set_output_work_area(
+            first,
+            Some(Rect { x: 0, y: 100, width: 1000, height: 700 })
+        ));
+        assert!(manager.set_output_work_area(
+            second,
+            Some(Rect { x: 1000, y: 50, width: 800, height: 550 })
+        ));
+        manager.arrange_outputs([first, second]);
+
+        let r1 = manager.window(w1).unwrap().target_rect;
+        let r2 = manager.window(w2).unwrap().target_rect;
+        assert_eq!(r1, Rect { x: 0, y: 100, width: 1000, height: 700 });
+        assert_eq!(r2, Rect { x: 1000, y: 50, width: 800, height: 550 });
+    }
 }
