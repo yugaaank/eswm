@@ -116,7 +116,12 @@ pub struct Ipc {
 /// change is visible to clients on the next frame.
 pub fn apply_cmd(state: &mut State, ipc: &Ipc, cmd: CompCmd) {
     match cmd {
-        CompCmd::Reload => ipc.sinks.emit("configreloaded", ""),
+        CompCmd::Reload => {
+            // e09s02t4: a reload can change where monitors live; re-apply the
+            // configured origins before telling Tacit the config changed.
+            state.apply_configured_output_positions();
+            ipc.sinks.emit("configreloaded", "");
+        }
         CompCmd::GotoWorkspace(ws) => {
             if let Some(output) = state.wm.focused_output_id() {
                 state.wm.focus_workspace(output, ws);

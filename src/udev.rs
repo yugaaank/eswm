@@ -808,8 +808,9 @@ if lua_config_path.exists()
             tracing::warn!("Failed to load Lua config {}: {e}", lua_config_path.display());
         }
     }
-    // e08s03t5: outputs may have been set up before the config was read.
+    // e08s03t5/e09s02t4: outputs may have been set up before the config was read.
     state.apply_configured_scales();
+    state.apply_configured_output_positions();
     // e08s03t8: apply a config-provided XKB keymap; an invalid string leaves
     // smithay's default keymap in place and is logged for the operator.
     let configured_keymap = state.input_config.lock().unwrap().keymap.clone();
@@ -1933,6 +1934,18 @@ fn switch_workspace(state: &mut State, ws: i32) {
     }
 }
 
+/// Where a newly connected output belongs. Config wins; otherwise the next
+/// free slot to the right. No output yet? The origin, like the good old days.
+fn resolve_output_position(
+    decoration: &wm::DecorationConfig,
+    manager: &wm::WindowManager,
+    name: &str,
+) -> (i32, i32) {
+    decoration
+        .output_position(name)
+        .unwrap_or_else(|| manager.auto_output_position())
+}
+
 impl State {
     fn process_input_event<B: InputBackend>(&mut self, event: &InputEvent<B>) {
         // Input arriving while nothing presents is a freeze the user feels.
@@ -2676,15 +2689,16 @@ impl State {
             .lock()
             .unwrap()
             .output_scale(&output_name);
-        output.change_current_state(Some(wl_mode), None, scale, Some((0, 0).into()));
+        let (x, y) = resolve_output_position(&self.decoration.lock().unwrap(), &self.wm, &output_name);
+        output.change_current_state(Some(wl_mode), None, scale, Some((x, y).into()));
 
         // register real output geometry + workspaces 1..=9 into the window manager
         let mode_size = wl_mode.size;
         let wm_output = self.wm.add_output(
             output_name.as_str(),
             wm::Rect {
-                x: 0,
-                y: 0,
+                x,
+                y,
                 width: mode_size.w as u32,
                 height: mode_size.h as u32,
             },
@@ -2699,6 +2713,9 @@ impl State {
             crtc,
         });
         self.primary_output = Some(output.clone());
+        // Every connected output gets a handle so layer surfaces can find the
+        // map belonging to *their* monitor instead of the last one plugged in.
+        self.layer_outputs.insert(wm_output, output.clone());
 
         let drm_output = match device
             .drm_output_manager
@@ -2740,9 +2757,56 @@ impl State {
         });
     }
 
+    /// Re-apply configured origins once the Lua config is known (config may
+    /// load after DRM outputs are created). Unconfigured outputs keep their
+    /// auto-placed origin; reshuffling every monitor on reload would be a
+    /// lovely way to lose every pointer grab in the building.
+    pub(crate) fn apply_configured_output_positions(&mut self) {
+        let configured: Vec<(String, i32, i32)> = {
+            let decoration = self.decoration.lock().unwrap();
+            let Some(udev) = self.udev.as_ref() else { return };
+            udev.backends
+                .values()
+                .flat_map(|backend| backend.surfaces.values())
+                .filter_map(|surface| {
+                    let name = surface.output.name();
+                    decoration.output_position(&name).map(|(x, y)| (name, x, y))
+                })
+                .collect()
+        };
+        let mut moved = Vec::new();
+        for (name, x, y) in configured {
+            let Some(udev) = self.udev.as_ref() else { return };
+            for surface in udev.backends.values().flat_map(|b| b.surfaces.values()) {
+                if surface.output.name() != name {
+                    continue;
+                }
+                surface
+                    .output
+                    .change_current_state(None, None, None, Some((x, y).into()));
+                if let Some(id) = self.wm.output_id_by_name(&name)
+                    && let Some(output) = self.wm.output(id)
+                {
+                    let mut geometry = output.geometry;
+                    geometry.x = x;
+                    geometry.y = y;
+                    moved.push((id, geometry));
+                }
+            }
+        }
+        for (id, geometry) in moved {
+            self.wm.set_output_geometry(id, geometry);
+        }
+        if self.wm.focused_output_id().is_some() {
+            let ids = self.wm.outputs().map(|output| output.id).collect::<Vec<_>>();
+            self.wm.arrange_outputs(ids);
+            crate::apply_layout(self);
+        }
+    }
+
     /// Apply configured scales to outputs created before the Lua config was
     /// loaded (e08s03t5). Hotplugged outputs get their scale at setup instead.
-    fn apply_configured_scales(&self) {
+    pub(crate) fn apply_configured_scales(&self) {
         let Some(udev) = self.udev.as_ref() else { return };
         let config = self.input_config.lock().unwrap();
         for backend in udev.backends.values() {
@@ -2764,6 +2828,9 @@ impl State {
         // become unreachable (no hit-test, no focus, never rendered).
         let output_name = format!("{}-{}", connector.interface().as_str(), connector.interface_id());
         if let Some(output) = self.wm.output_id_by_name(&output_name) {
+            // Drop the stale smithay handle before the WM id disappears;
+            // otherwise layer maps keep pointing at a monitor that left town.
+            self.layer_outputs.remove(&output);
             self.wm.remove_output(output);
             crate::apply_layout(self);
         }
@@ -4191,7 +4258,11 @@ mod tests {
 
         assert!(decoration.set_output_position("HDMI-A-1", 800, 120));
         assert_eq!(resolve_output_position(&decoration, &manager, "HDMI-A-1"), (800, 120));
-        assert_eq!(resolve_output_position(&decoration, &manager, "eDP-1"), (0, 0));
+        assert_eq!(
+            resolve_output_position(&decoration, &manager, "DP-1"),
+            (1920, 0),
+            "an unrelated new output still auto-places beside connected ones"
+        );
     }
 
     #[test]

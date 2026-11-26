@@ -951,9 +951,6 @@ impl DecorationConfig {
         true
     }
 
-    // e09s02t4 consumes this when a DRM connector arrives; until then the
-    // getter is a wallflower with excellent documentation.
-    #[allow(dead_code)]
     pub fn output_position(&self, name: &str) -> Option<(i32, i32)> {
         self.output_positions.get(name).copied()
     }
@@ -1022,6 +1019,27 @@ impl WindowManager {
 
     pub fn output(&self, id: OutputId) -> Option<&Output> {
         self.outputs.get(&id)
+    }
+
+    /// Move an output in global coordinates (config reload / hotplug). Any
+    /// explicit work area travels with it; an implicit one derives from the
+    /// new geometry automatically.
+    pub fn set_output_geometry(&mut self, id: OutputId, geometry: Rect) -> bool {
+        let Some(output) = self.outputs.get_mut(&id) else {
+            return false;
+        };
+        if output.geometry == geometry {
+            return false;
+        }
+        let dx = geometry.x.saturating_sub(output.geometry.x);
+        let dy = geometry.y.saturating_sub(output.geometry.y);
+        if let Some(area) = output.work_area.as_mut() {
+            area.x = area.x.saturating_add(dx);
+            area.y = area.y.saturating_add(dy);
+        }
+        output.geometry = geometry;
+        self.dirty = true;
+        true
     }
 
     pub fn output_id_by_name(&self, name: &str) -> Option<OutputId> {
@@ -1177,9 +1195,6 @@ impl WindowManager {
     /// Where an output with no configured position goes: just right of the
     /// rightmost output, sharing the first output's baseline. Auto-placement:
     /// because "every output is at 0,0" was a cozy but fraudulent arrangement.
-    // e09s02t4 calls this from DRM connect; until then it is a very well-tested
-    // wallflower at the method dance.
-    #[allow(dead_code)]
     pub fn auto_output_position(&self) -> (i32, i32) {
         let Some(first) = self.outputs.values().next() else {
             return (0, 0);

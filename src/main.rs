@@ -1027,6 +1027,10 @@ pub(crate) struct State {
     /// The smithay Output the backend renders on (DRM connector, or the test
     /// virtual output); layer surfaces are arranged against it via LayerMap.
     primary_output: Option<Output>,
+    /// Every connected output's smithay handle, keyed by the WM's OutputId.
+    /// Layer surfaces and dock geometry look up their own monitor here instead
+    /// of fighting over `primary_output` like seagulls over one chip.
+    layer_outputs: std::collections::BTreeMap<wm::OutputId, Output>,
     /// desktop::LayerSurface wrappers, created once per layer surface (LayerMap
     /// needs the stable desktop wrapper, not the raw shell surface).
     layer_wrappers: Vec<smithay::desktop::LayerSurface>,
@@ -1203,6 +1207,7 @@ fn new_state(
         handle: None,
         control: None,
         primary_output: None,
+        layer_outputs: std::collections::BTreeMap::new(),
         layer_wrappers: Vec::new(),
         lua_keybinds: Arc::new(std::sync::Mutex::new(Vec::new())),
         decoration: Arc::new(std::sync::Mutex::new(wm::DecorationConfig::standard())),
