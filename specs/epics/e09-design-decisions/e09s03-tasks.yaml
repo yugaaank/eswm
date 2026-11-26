@@ -76,7 +76,7 @@ tasks:
     verify: cargo test --bin eswm control_errors
     risk: P2
     security: low
-    status: failing
+    status: passing
     allure:
       severity: normal
       categories:
