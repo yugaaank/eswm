@@ -517,6 +517,9 @@ pub struct WindowManager {
     pub work_area: Option<Rect>,
     /// App-id/class -> workspace/mode rules, matched at window creation.
     rules: Vec<WindowRule>,
+    /// Output under the pointer (e09s02). Stale ids are filtered out so an
+    /// unplugged monitor cannot keep pretending to own the cursor.
+    pointer_output: Option<OutputId>,
     /// Globally focused window — single source of truth (e09s01t4).
     pub focused: Option<WindowId>,
     /// Most-recently-used focus order; front = most recent.
@@ -1042,6 +1045,31 @@ impl WindowManager {
 
     pub fn primary_output_id(&self) -> Option<OutputId> {
         self.outputs.keys().next().copied()
+    }
+
+    /// Record which output the pointer is over. None means "outside every
+    /// output", which lets window focus decide the focused output instead.
+    // e09s02t6 wires this into udev pointer motion.
+    #[allow(dead_code)]
+    pub fn set_pointer_output(&mut self, output: Option<OutputId>) {
+        self.pointer_output = output.filter(|id| self.outputs.contains_key(id));
+    }
+
+    /// The one true focused output: pointer first, then focused window, then
+    /// first surviving output. Two "primaries" walk into a bar; only one gets
+    /// served, and it is this one.
+    // e09s02t2 migrates callers off primary_output_id().
+    #[allow(dead_code)]
+    pub fn focused_output_id(&self) -> Option<OutputId> {
+        self.pointer_output
+            .filter(|id| self.outputs.contains_key(id))
+            .or_else(|| {
+                self.focused
+                    .and_then(|id| self.windows.get(&id))
+                    .filter(|window| self.outputs.contains_key(&window.output))
+                    .map(|window| window.output)
+            })
+            .or_else(|| self.outputs.keys().next().copied())
     }
 
     /// Where an output with no configured position goes: just right of the
