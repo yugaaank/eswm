@@ -1772,4 +1772,48 @@ mod tests {
         lua.load("es.config.reload()").exec().expect("reload command");
         assert!(matches!(cmd_rx.try_recv(), Ok(crate::ipc::CompCmd::Reload)));
     }
+
+    // e09s04t6: unimplemented Lua names must fail loudly, not smile and lie.
+    #[test]
+    fn lua_stub_names_raise_not_implemented() {
+        let (lua, _keybinds, _input_config, _decoration, _cmd_rx) = test_api();
+        for (source, name) in [
+            (r#"es.define_submap("nav", {})"#, "define_submap"),
+            (r#"es.dsp.global("quickshell:panel")"#, "dsp.global"),
+            (r#"es.config.notify("hello")"#, "config.notify"),
+            (r#"es.config.setcursor("left_ptr")"#, "config.setcursor"),
+            (r#"es.safe_require("module")"#, "safe_require"),
+            (r#"es.layer_rule { namespace = "bar" }"#, "layer_rule"),
+        ] {
+            let err = lua.load(source).exec().expect_err("stub must raise");
+            let message = err.to_string();
+            assert!(message.contains("not implemented"), "source: {source}; error: {message}");
+            assert!(message.contains(name), "source: {source}; error: {message}");
+        }
+    }
+
+    #[test]
+    fn lua_stub_is_file_exists_detects_real_file() {
+        let (lua, _keybinds, _input_config, _decoration, _cmd_rx) = test_api();
+        let path = reload_config_path("stub-file");
+        std::fs::write(&path, "-- a real file").expect("write temp file");
+        let exists: bool = lua
+            .load(format!("return es.is_file_exists({:?})", path.to_str().expect("utf8 path")))
+            .eval()
+            .expect("is_file_exists call");
+        std::fs::remove_file(&path).ok();
+        assert!(exists, "a real file must exist");
+        let missing: bool = lua
+            .load(format!("return es.is_file_exists({:?})", path.to_str().expect("utf8 path")))
+            .eval()
+            .expect("is_file_exists call");
+        assert!(!missing, "a removed file must not exist");
+    }
+
+    #[test]
+    fn lua_stub_example_config_uses_registered_mode_setter() {
+        let source = include_str!("../config.example.lua");
+        assert!(source.contains("es.dsp.set_wm_mode("), "example must use the registered setter");
+        assert!(!source.contains("set_layout_mode"), "stale setter would break startup");
+    }
 }
