@@ -1,67 +1,50 @@
-# Impact — e09s02 output model
+# Impact — e09s03 IPC event stream
 
 ## Target
+`src/control.rs` (native control channel) plus a new dedicated event socket in
+the same module, and the event-emission hooks in `src/main.rs`, `src/udev.rs`,
+`src/ipc.rs` and `src/lua_state.rs`.
 
-`wm::Output` / `WindowManager::{primary_output_id, work_area, dock_height}` in
-`src/wm.rs`, plus the `State::primary_output` / `layer_wrappers` plumbing in
-`src/main.rs`, output setup, pointer bounds and layer/dock render/hit paths in
-`src/udev.rs`, snapshots in `src/control.rs` and `src/ipc.rs`, and display
-setters in `src/lua_state.rs`.
+Module purpose: own the local control channel — bind `$XDG_RUNTIME_DIR/eswm-<name>.sock`,
+accept connections, parse newline-delimited JSON requests, hand them to the
+compositor loop through `flume`, and serialize replies. Socket threads never
+touch `State`; `control::drain` is the only boundary into live state.
 
-## Dependents (> 10 callers)
-
-- `src/wm.rs`: `primary_output_id()` at 1043, consumed by placement, popup
-  constraint, dock entries, `surface_under`, `window_at`, cycle focus, workspace
-  commands, tiling layout sync.
-- `src/main.rs`: new toplevel placement (90), popup constraint (390), layer
-  map/work area (558–746 and 821–849), decoration sync (1260).
-- `src/udev.rs`: layer hit-test (1550–1585), pointer absolute clamp / bounds
-  (1977–2018, 2419–2432), dock strip (2249–2274), layer render (3208–3231),
-  scale handling (3122, 3253, 3533, 3591, 3860).
-- `src/control.rs`: `outputs_json` (336–351), `clamp_to_output` (262–279),
-  workspace focus command (227–242).
-- `src/ipc.rs`: single-monitor snapshot (426–464), `CompCmd` routing (121–143).
-- `src/lua_state.rs`: `InputConfig.output_scales` (18), `set_output_scale`
-  (219–230), dock/tile setters (373–456).
-- Inline tests in all of the above (e.g. `remove_output_moves_windows_to_survivor`,
-  `control_output_list_returns_outputs`, `output_scale_config_stores_and_looks_up_by_name`).
+## Dependents (7)
+- `src/main.rs:13` — `mod control`; `State.control` at `:1112`; test fixture at `:1295`.
+- `src/main.rs:1753,1956-2172` — 10 inline tests call `handle_request` directly.
+- `src/udev.rs:765-768` — sole `Control::start` caller; failure degrades to "control socket disabled".
+- `src/udev.rs:828-829` — sole `control::drain` caller, first statement in the DRM loop.
+- `src/ipc.rs:157-185,300-337` — legacy `.socket2.sock` already emits `configreloaded>>` via `SharedSinks::emit`; the new bus must not disturb it.
+- `src/lua_state.rs:527-539` — `es.config.reload` is a no-op stub; the config-reloaded event source depends on it.
+- `notes/tacit-integration.md:154-171,226-239` — documents the wire contract and required events.
 
 ## Affected Stories
-
-- e09s02 — output model (this story; owner of the change).
-- e08s03 — per-output scale setter must keep working (wire/Lua compatibility).
-- e10s01/e10s02 — resize/split geometry reads `inner_rect_for_output`, so
-  per-output work areas must not regress their byte-identical geometry tests.
-- e06s01/e06s03 — popup constraints and layer keyboard focus.
-- e09s03 — IPC protocol will inherit any `outputs_json` field additions.
-- e09s04 — Lua config shape will inherit the new per-output setters.
+- Story e09s03 (owner): IPC protocol — events, subscribe semantics, security.
+- Story e09s02 (just landed): monitor_added/removed/focused/layout read the per-output model.
+- Story e09s04 (pending): Lua config shape; `config_reloaded` needs a real reload hook.
+- Story e09s05 (pending): a future rules engine may add `window.update_rules` events.
+- Story e10s02 (landed): window rect changes from resize could emit state events; keep additive.
 
 ## Test Coverage
-
-- `src/wm.rs` inline tests: arrange, focus MRU, remove-output migration,
-  split geometry — cover most geometry paths, but not per-output work area or
-  focused-output derivation.
-- `src/main.rs` inline tests: control snapshots, layer keyboard focus, popup
-  work-area constraint — mostly single virtual output.
-- `src/lua_state.rs` inline tests: output scale validation/storage.
-- `src/udev.rs` inline tests: mode selection, dock segment math, render order —
-  no test for union bounds with displaced outputs.
-- Gaps: multi-output position/scale/work area, layer surface requesting a
-  specific output, pointer bounds with non-zero origins, per-output dock
-  entries, `focused` output with pointer/window fallback.
+- `src/main.rs:1956-2026` — control state/list replies and id echo.
+- `src/main.rs:1990-2008` — unknown command / missing window errors (string only, no codes).
+- `src/main.rs:2030-2049` — `focused` + deprecated `primary` alias on output.list.
+- `src/main.rs:2074-2172` — clamp, workspace move, cross-output rejection.
+- `src/ipc.rs:751-863` — legacy Hyprland-style JSON key parity; no event coverage.
+- Gaps: no test binds a control socket; no 0600 check; no line-cap check; no
+  SO_PEERCRED check; no live-socket safety check; no subscribe/event/seq/coalescing
+  test; no hello/version/error-code test; `exec`/`config` rejection is only the
+  unknown-command fallback.
 
 ## Risk: High
-
-Shared WM and snapshot interfaces with > 10 callers, and new multi-output
-behavior has no automated coverage yet. Mitigate with pure helpers plus inline
-tests before each call-site migration, and keep IPC/Lua wire shapes additive.
+The control socket is a shared interface consumed by Tacit, and its lifecycle
+(`start`/`drain`/`serve`) has no tests at all. Adding a second socket and event
+hooks widens that untested boundary and adds local-file permission and
+untrusted-input surface.
 
 ## Recommended action
-
-Add tests first (pure geometry/focus/output-config helpers), then migrate call
-sites in small TDD steps. Preserve `primary` JSON key as a deprecated alias of
-the new focused output so Tacit does not break. `plan-work` may proceed; the
-design decisions were confirmed with the operator on 2026-11-26.
-
-<!-- The output model had two "primaries"; this is the compositor equivalent of
-     two captains on one ship. e09s02 promotes one and retires the other. -->
+Add tests first (RED) for the event model, bus, socket permissions, line cap,
+peer-cred logging and live-socket guard before wiring any emission site. Keep
+the legacy `.socket2.sock` and all existing control replies byte-compatible
+except for the additive `code` field. Proceed to `plan-work`.

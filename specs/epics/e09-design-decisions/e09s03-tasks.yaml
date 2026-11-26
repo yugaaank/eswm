@@ -1,0 +1,161 @@
+spec: specs/epics/e09-design-decisions/e09s03-ipc-protocol.md
+story_id: e09s03
+title: 'IPC protocol: events stream, subscribe semantics, socket security'
+status: pending
+bcps: 2
+tasks:
+  - id: e09s03t1
+    description: 'Define EventKind (flat snake_case), Event {seq, kind, data} and
+      frame serialization in src/control.rs; add the dedupe-key table (entity id
+      for window/workspace/monitor/layer, kind otherwise). Inline RED then GREEN
+      tests named event_model_* prove exact JSON shape and that no Hyprland >> or
+      dotted names leak into the format'
+    verify: cargo test --bin eswm event_model
+    risk: P2
+    security: none
+    status: failing
+    allure:
+      severity: normal
+      categories:
+        - e09-design-decisions
+        - ipc-event-stream
+        - unit
+  - id: e09s03t2
+    description: 'Add EventBus with a per-tick pending queue, queue(), flush()
+      that coalesces by (kind, dedupe key) keeping the last value while
+      preserving first-occurrence order, and a monotonic seq assigned at flush.
+      RED then GREEN tests named event_bus_* cover coalescing, ordering, seq gaps
+      and empty flush'
+    verify: cargo test --bin eswm event_bus
+    risk: P2
+    security: none
+    status: failing
+    allure:
+      severity: normal
+      categories:
+        - e09-design-decisions
+        - ipc-event-stream
+        - unit
+  - id: e09s03t3
+    description: 'Bind a dedicated $XDG_RUNTIME_DIR/eswm-<name>.events.sock with
+      mode 0600; subscribe on connect, send hello {seq:0,kind:hello,data:{version:1,events:[...]}},
+      broadcast flushed frames, drop dead sockets, and refuse to unlink a live
+      peer by probing with UnixStream::connect first. No new crates. No new
+      security findings in affected paths'
+    verify: cargo test --bin eswm event_socket
+    risk: P1
+    security: high
+    status: failing
+    allure:
+      severity: high
+      categories:
+        - e09-design-decisions
+        - ipc-event-stream
+        - socket-security
+  - id: e09s03t4
+    description: 'Harden both sockets: chmod 0600 after bind, 64 KiB read cap
+      with line-too-long reply and disconnect, SO_PEERCRED uid/pid/gid logging on
+      accept, and an explicit deny guard for exec/config/reload/eval writes so a
+      future dispatcher cannot silently expose them. No new security findings in
+      affected paths'
+    verify: cargo test --bin eswm control_hardening
+    risk: P1
+    security: high
+    status: failing
+    allure:
+      severity: high
+      categories:
+        - e09-design-decisions
+        - ipc-event-stream
+        - socket-security
+  - id: e09s03t5
+    description: 'Add an additive numeric code to control replies: 1 invalid
+      json, 2 unknown command, 3 no such window, 4 bad args, 5 line too long, 6
+      compositor timeout, 7 denied. Keep id/ok/error byte-compatible for clients
+      that ignore extra fields. RED then GREEN tests named control_errors_*'
+    verify: cargo test --bin eswm control_errors
+    risk: P2
+    security: low
+    status: failing
+    allure:
+      severity: normal
+      categories:
+        - e09-design-decisions
+        - ipc-event-stream
+        - compatibility
+  - id: e09s03t6
+    description: 'Emit window_open/window_close/window_active/window_title/
+      window_class/window_mode/window_workspace from wm.add_window, mapped
+      commit, toplevel_destroyed, sync_window_meta, set_mode, toggle_minimize,
+      focus and move_window_to_workspace. Tests named window_events_* assert one
+      queued event per transition'
+    verify: cargo test --bin eswm window_events
+    risk: P1
+    security: none
+    status: failing
+    allure:
+      severity: high
+      categories:
+        - e09-design-decisions
+        - ipc-event-stream
+        - wm
+  - id: e09s03t7
+    description: 'Emit workspace_active/workspace_created and monitor_added/
+      monitor_removed/monitor_active/monitor_layout from wm.focus_workspace,
+      add_workspace, udev connector connect/disconnect, focused_output_id changes
+      and apply_configured_output_positions. Tests named output_events_*'
+    verify: cargo test --bin eswm output_events
+    risk: P1
+    security: none
+    status: failing
+    allure:
+      severity: high
+      categories:
+        - e09-design-decisions
+        - ipc-event-stream
+        - output-model
+  - id: e09s03t8
+    description: 'Emit layer_opened/layer_closed from new_layer_surface and
+      layer_destroyed; queue config_reloaded from the legacy CompCmd::Reload path
+      while leaving the .socket2.sock configreloaded>> emission untouched, and
+      emit ready once sockets are live. Tests named layer_events_*'
+    verify: cargo test --bin eswm layer_events
+    risk: P2
+    security: none
+    status: failing
+    allure:
+      severity: normal
+      categories:
+        - e09-design-decisions
+        - ipc-event-stream
+        - layers
+  - id: e09s03t9
+    description: 'Own EventBus in State, call flush once per DRM tick after
+      control::drain and snapshot refresh, and prove end-to-end delivery with two
+      real subscribers: identical seq frames, hello first, title burst coalesced
+      to the last value. Tests named event_stream_*'
+    verify: cargo test --bin eswm event_stream
+    risk: P1
+    security: medium
+    status: failing
+    allure:
+      severity: high
+      categories:
+        - e09-design-decisions
+        - ipc-event-stream
+        - integration
+  - id: e09s03t10
+    description: 'MANUAL UAT (operator, live DRM): subscribe with socat to the
+      events socket; open/close/focus a kitty window, rename it, switch
+      workspace, change fullscreen/minimize, hotplug a monitor, open/close a
+      layer surface and reload config. Confirm ordered seq frames and 0600 mode.
+      Record in specs/verifications/e09s03-verify.yaml'
+    verify: 'manual: on a TTY, run the checklist in specs/verifications/e09s03-verify.yaml'
+    risk: P2
+    security: none
+    status: failing
+    allure:
+      severity: normal
+      categories:
+        - e09-design-decisions
+        - manual-uat
