@@ -1,7 +1,7 @@
 spec: specs/epics/e09-design-decisions/e09s03-ipc-protocol.md
 story_id: e09s03
 title: 'IPC protocol: events stream, subscribe semantics, socket security'
-status: pending
+status: completed
 bcps: 2
 tasks:
   - id: e09s03t1

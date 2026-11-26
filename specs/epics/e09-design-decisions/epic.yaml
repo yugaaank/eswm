@@ -23,7 +23,7 @@ stories:
     title: "IPC protocol: events stream, subscribe semantics, security"
     bcps: 2
     delta: ADDED
-    status: pending
+    status: completed
   - id: e09s04
     title: "Lua config shape: declarative es.config{}, es.bind with function/action"
     bcps: 2

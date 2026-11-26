@@ -4,7 +4,7 @@
 **type:** feat
 **risk:** P1 (revised from P3: shared IPC interface consumed by Tacit, no lifecycle tests — see `specs/IMPACT_LATEST.md`)
 **context:** ipc
-**status:** pending
+**status:** completed
 **bcps:** 2
 **delta:** ADDED + MODIFIED
 
