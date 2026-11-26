@@ -2630,6 +2630,8 @@ pub fn equal_split(
 #[cfg(test)]
 mod tests {
     use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation, size_action, SizeAction, fill_scale, MAX_SIZE_RESENDS, SIZE_RESEND_INTERVAL, ResizeEdge, resize_edge_at, resize_rect, MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT, TilingSplits, clamp_master_ratio, clamp_point_to_bounds, normalize_weights, MIN_SPLIT_SHARE, weighted_split, SplitAxis, TilingSplitEdge, tiling_split_edge_at};
+    use crate::control::EventKind;
+    use serde_json::{json, Value};
     use std::time::Duration;
 
     // e10s02t1: splits live on the output so they survive re-arrangement.
@@ -2783,6 +2785,135 @@ mod tests {
 
         // Fractional deltas land on whole pixels.
         assert_eq!(resize_rect(r, ResizeEdge::East, 10.6, 0.0, min, max).width, 311);
+    }
+
+    fn window_events(manager: &WindowManager) -> Vec<(EventKind, Value)> {
+        manager
+            .events
+            .pending()
+            .iter()
+            .map(|event| (event.kind, event.data.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn window_events_add_window_queues_open_then_active() {
+        let (mut manager, output) = manager();
+        let id = manager.add_window(output, "kitty", "one").unwrap();
+        assert_eq!(
+            window_events(&manager),
+            vec![
+                (EventKind::WindowOpen, json!({"id": id})),
+                (EventKind::WindowActive, json!({"id": id})),
+            ]
+        );
+    }
+
+    #[test]
+    fn window_events_remove_window_queues_close() {
+        let (mut manager, output) = manager();
+        let id = manager.add_window(output, "kitty", "one").unwrap();
+        let _ = manager.events.flush();
+        assert!(manager.remove_window(id).is_some());
+        assert_eq!(
+            window_events(&manager),
+            vec![(EventKind::WindowClose, json!({"id": id}))]
+        );
+    }
+
+    #[test]
+    fn window_events_focus_window_queues_active() {
+        let (mut manager, output) = manager();
+        let first = manager.add_window(output, "a", "one").unwrap();
+        let second = manager.add_window(output, "b", "two").unwrap();
+        let _ = manager.events.flush();
+        assert!(manager.focus_window(first));
+        assert_eq!(
+            window_events(&manager),
+            vec![(EventKind::WindowActive, json!({"id": first}))]
+        );
+        assert!(second != first, "two windows must have distinct ids");
+        let _ = manager.events.flush();
+        assert!(!manager.focus_window(999));
+        assert!(window_events(&manager).is_empty());
+    }
+
+    #[test]
+    fn window_events_set_window_meta_queues_title_and_class() {
+        let (mut manager, output) = manager();
+        let id = manager.add_window(output, "kitty", "old").unwrap();
+        let _ = manager.events.flush();
+        assert!(manager.set_window_meta(id, "firefox".into(), "new".into()));
+        assert_eq!(
+            window_events(&manager),
+            vec![
+                (EventKind::WindowTitle, json!({"id": id, "title": "new"})),
+                (EventKind::WindowClass, json!({"id": id, "class": "firefox"})),
+            ]
+        );
+        let _ = manager.events.flush();
+        assert!(manager.set_window_meta(id, "firefox".into(), "new".into()));
+        assert!(
+            window_events(&manager).is_empty(),
+            "unchanged metadata is not a transition"
+        );
+    }
+
+    #[test]
+    fn window_events_set_mode_queues_mode() {
+        let (mut manager, output) = manager();
+        let id = manager.add_window(output, "kitty", "one").unwrap();
+        let _ = manager.events.flush();
+        assert!(manager.set_mode(id, ClientMode::fullscreen()));
+        assert_eq!(
+            window_events(&manager),
+            vec![(EventKind::WindowMode, json!({"id": id, "mode": "fullscreen"}))]
+        );
+        let _ = manager.events.flush();
+        assert!(manager.set_mode(id, ClientMode::fullscreen()));
+        assert!(window_events(&manager).is_empty());
+    }
+
+    #[test]
+    fn window_events_toggle_minimize_queues_mode() {
+        let (mut manager, output) = manager();
+        let id = manager.add_window(output, "kitty", "one").unwrap();
+        let _ = manager.events.flush();
+        assert!(manager.toggle_minimize(id));
+        assert_eq!(
+            window_events(&manager),
+            vec![(EventKind::WindowMode, json!({"id": id, "mode": "minimized"}))]
+        );
+        let _ = manager.events.flush();
+        assert!(manager.toggle_minimize(id));
+        assert_eq!(
+            window_events(&manager),
+            vec![(EventKind::WindowMode, json!({"id": id, "mode": "normal"}))]
+        );
+    }
+
+    #[test]
+    fn window_events_move_window_to_workspace_queues_workspace() {
+        let (mut manager, output) = manager();
+        let id = manager.add_window(output, "kitty", "one").unwrap();
+        assert!(manager.add_workspace(output, 2, "2"));
+        let _ = manager.events.flush();
+        assert!(manager.move_window_to_workspace(id, 2));
+        assert_eq!(
+            window_events(&manager),
+            vec![(EventKind::WindowWorkspace, json!({"id": id, "workspace": 2}))]
+        );
+    }
+
+    #[test]
+    fn window_events_failed_transitions_queue_nothing() {
+        let (mut manager, output) = manager();
+        let id = manager.add_window(output, "kitty", "one").unwrap();
+        let _ = manager.events.flush();
+        assert!(!manager.set_mode(999, ClientMode::tiled()));
+        assert!(!manager.toggle_minimize(999));
+        assert!(!manager.move_window_to_workspace(id, 99));
+        assert!(window_events(&manager).is_empty());
     }
 
     fn manager() -> (WindowManager, u64) {
