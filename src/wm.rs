@@ -1047,6 +1047,9 @@ impl WindowManager {
     /// Where an output with no configured position goes: just right of the
     /// rightmost output, sharing the first output's baseline. Auto-placement:
     /// because "every output is at 0,0" was a cozy but fraudulent arrangement.
+    // e09s02t4 calls this from DRM connect; until then it is a very well-tested
+    // wallflower at the method dance.
+    #[allow(dead_code)]
     pub fn auto_output_position(&self) -> (i32, i32) {
         let Some(first) = self.outputs.values().next() else {
             return (0, 0);
