@@ -423,4 +423,17 @@ mod tests {
         assert!(!frame.contains(">>"), "eswm frames are not Hyprland text");
         assert!(!frame.contains("\"window.active\""), "eswm names are flat");
     }
+
+    #[test]
+    fn event_model_names_are_flat_and_roundtrip() {
+        let names: Vec<&str> = EventKind::ALL.iter().map(|kind| kind.as_str()).collect();
+        assert_eq!(names.len(), 17);
+        assert!(names.iter().all(|name| name.chars().all(|c| c.is_ascii_lowercase() || c == '_')));
+        for kind in EventKind::ALL {
+            assert_eq!(EventKind::from_name(kind.as_str()), Some(kind));
+        }
+        assert_eq!(EventKind::from_name("window.active"), None);
+        assert_eq!(EventKind::from_name("openwindow"), None);
+        assert_eq!(EventKind::from_name("monitorAdded"), None);
+    }
 }
