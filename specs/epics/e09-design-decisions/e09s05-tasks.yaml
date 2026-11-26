@@ -14,7 +14,7 @@ tasks:
     verify: cargo test --bin eswm toplevel_first_commit
     risk: P1
     security: low
-    status: failing
+    status: passing
     allure:
       severity: high
       categories:
