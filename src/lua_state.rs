@@ -86,6 +86,290 @@ fn validate_min_window_size(w: u32, h: u32) -> Result<(u32, u32), mlua::Error> {
     Ok((w, h))
 }
 
+/// A fully validated `es.config{...}` block. Nothing is applied until every
+/// key has been accepted, so one bad key cannot leave a half-applied config —
+/// nobody wants a compositor wearing only one border and a monocle.
+#[derive(Debug, Default)]
+struct ConfigValues {
+    wm_mode: Option<WmMode>,
+    tiling_layout: Option<TilingLayout>,
+    border_size: Option<u32>,
+    outer_gap: Option<u32>,
+    inner_gap: Option<u32>,
+    titlebar_height: Option<u32>,
+    dock_height: Option<u32>,
+    corner_radius: Option<u32>,
+    min_size: Option<(u32, u32)>,
+    border_color_focused: Option<[u8; 4]>,
+    border_color_unfocused: Option<[u8; 4]>,
+    titlebar_color_focused: Option<[u8; 4]>,
+    titlebar_color_unfocused: Option<[u8; 4]>,
+    output_scales: Vec<(String, f64)>,
+    output_positions: Vec<(String, i32, i32)>,
+    touchpad_tap: Option<bool>,
+    touchpad_natural_scroll: Option<bool>,
+    touchpad_speed: Option<f64>,
+    keymap: Option<String>,
+}
+
+const CONFIG_KEYS: &[&str] = &[
+    "wm_mode", "tiling_layout", "general", "border_size", "outer_gap", "inner_gap",
+    "titlebar_height", "dock_height", "corner_radius", "min_window_size",
+    "border_color_focused", "border_color_unfocused", "titlebar_color_focused",
+    "titlebar_color_unfocused", "output_scale", "output_position", "touchpad", "keymap",
+];
+
+fn config_err(key: &str, expected: &str, value: &mlua::Value) -> mlua::Error {
+    mlua::Error::RuntimeError(format!(
+        "config key '{key}': expected {expected}, got {}",
+        value.type_name()
+    ))
+}
+
+fn check_config_keys(table: &Table, allowed: &[&str], scope: &str) -> Result<(), mlua::Error> {
+    for entry in table.clone().pairs::<mlua::Value, mlua::Value>() {
+        let (key, _) = entry?;
+        let mlua::Value::String(key) = key else {
+            return Err(mlua::Error::RuntimeError(format!(
+                "config key in '{scope}' must be a string"
+            )));
+        };
+        let name = key.to_str()?.to_string();
+        if !allowed.contains(&name.as_str()) {
+            return Err(mlua::Error::RuntimeError(format!(
+                "unknown config key '{scope}{name}'"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn config_field(table: &Table, key: &str) -> Result<mlua::Value, mlua::Error> {
+    table.get::<mlua::Value>(key)
+}
+
+fn config_uint(table: &Table, key: &str) -> Result<Option<u32>, mlua::Error> {
+    match config_field(table, key)? {
+        mlua::Value::Nil => Ok(None),
+        mlua::Value::Integer(n) if (0..=u32::MAX as i64).contains(&n) => Ok(Some(n as u32)),
+        value => Err(config_err(key, "non-negative integer", &value)),
+    }
+}
+
+fn config_bool(table: &Table, key: &str) -> Result<Option<bool>, mlua::Error> {
+    match config_field(table, key)? {
+        mlua::Value::Nil => Ok(None),
+        mlua::Value::Boolean(v) => Ok(Some(v)),
+        value => Err(config_err(key, "boolean", &value)),
+    }
+}
+
+fn config_string(table: &Table, key: &str) -> Result<Option<String>, mlua::Error> {
+    match config_field(table, key)? {
+        mlua::Value::Nil => Ok(None),
+        mlua::Value::String(s) => Ok(Some(s.to_str()?.to_string())),
+        value => Err(config_err(key, "string", &value)),
+    }
+}
+
+fn config_number(table: &Table, key: &str) -> Result<Option<f64>, mlua::Error> {
+    match config_field(table, key)? {
+        mlua::Value::Nil => Ok(None),
+        mlua::Value::Integer(n) => Ok(Some(n as f64)),
+        mlua::Value::Number(n) => Ok(Some(n)),
+        value => Err(config_err(key, "number", &value)),
+    }
+}
+
+fn config_color(table: &Table, key: &str) -> Result<Option<[u8; 4]>, mlua::Error> {
+    let value = config_field(table, key)?;
+    let mlua::Value::Table(colors) = &value else {
+        if matches!(value, mlua::Value::Nil) {
+            return Ok(None);
+        }
+        return Err(config_err(key, "array of 4 RGBA bytes", &value));
+    };
+    let mut rgba = [0u8; 4];
+    for (index, byte) in rgba.iter_mut().enumerate() {
+        let value = colors.get::<mlua::Value>(index + 1)?;
+        let mlua::Value::Integer(n) = value else {
+            return Err(config_err(key, "array of 4 RGBA bytes", &value));
+        };
+        if !(0..=255).contains(&n) {
+            return Err(config_err(key, "RGBA byte in 0..=255", &value));
+        }
+        *byte = n as u8;
+    }
+    Ok(Some(rgba))
+}
+
+fn config_table_field(table: &Table, key: &str) -> Result<Option<Table>, mlua::Error> {
+    match config_field(table, key)? {
+        mlua::Value::Nil => Ok(None),
+        mlua::Value::Table(nested) => Ok(Some(nested)),
+        value => Err(config_err(key, "table", &value)),
+    }
+}
+
+fn config_enum(table: &Table, key: &str, variants: &[&str]) -> Result<Option<String>, mlua::Error> {
+    let Some(value) = config_string(table, key)? else {
+        return Ok(None);
+    };
+    if !variants.contains(&value.as_str()) {
+        return Err(mlua::Error::RuntimeError(format!(
+            "config key '{key}' must be one of {}",
+            variants.join(" | ")
+        )));
+    }
+    Ok(Some(value))
+}
+
+/// Validate the whole declarative block before returning anything applyable.
+#[allow(clippy::field_reassign_with_default)] // staged validation: each field is checked in order
+fn validate_config_table(lua: &Lua, table: &Table) -> Result<ConfigValues, mlua::Error> {
+    let _ = lua;
+    check_config_keys(table, CONFIG_KEYS, "")?;
+    let mut values = ConfigValues::default();
+
+    values.wm_mode = config_enum(table, "wm_mode", &["tiling", "floating"])?.map(|mode| {
+        if mode == "floating" { WmMode::Floating } else { WmMode::Tiling }
+    });
+    values.tiling_layout = config_enum(table, "tiling_layout", &["master", "equal"])?.map(|mode| {
+        if mode == "equal" { TilingLayout::Equal } else { TilingLayout::Master }
+    });
+    values.border_size = config_uint(table, "border_size")?;
+    values.outer_gap = config_uint(table, "outer_gap")?;
+    values.inner_gap = config_uint(table, "inner_gap")?;
+    values.titlebar_height = config_uint(table, "titlebar_height")?;
+    values.dock_height = config_uint(table, "dock_height")?;
+    values.corner_radius = config_uint(table, "corner_radius")?;
+    values.border_color_focused = config_color(table, "border_color_focused")?;
+    values.border_color_unfocused = config_color(table, "border_color_unfocused")?;
+    values.titlebar_color_focused = config_color(table, "titlebar_color_focused")?;
+    values.titlebar_color_unfocused = config_color(table, "titlebar_color_unfocused")?;
+    values.keymap = config_string(table, "keymap")?;
+    if let Some(keymap) = &values.keymap
+        && !validate_keymap(keymap) {
+            return Err(mlua::Error::RuntimeError("config key 'keymap': empty keymap".into()));
+        }
+
+    if let Some(general) = config_table_field(table, "general")? {
+        check_config_keys(&general, &["layout", "mode"], "general.")?;
+        if let Some(layout) = config_enum(&general, "layout", &["master", "equal"])? {
+            values.tiling_layout = Some(if layout == "equal" { TilingLayout::Equal } else { TilingLayout::Master });
+        }
+        if let Some(mode) = config_enum(&general, "mode", &["tiling", "floating"])? {
+            values.wm_mode = Some(if mode == "floating" { WmMode::Floating } else { WmMode::Tiling });
+        }
+    }
+
+    if let Some(min_size) = config_table_field(table, "min_window_size")? {
+        check_config_keys(&min_size, &["width", "height"], "min_window_size.")?;
+        let width = config_uint(&min_size, "width")?.unwrap_or(0);
+        let height = config_uint(&min_size, "height")?.unwrap_or(0);
+        values.min_size = Some(validate_min_window_size(width, height)?);
+    }
+
+    if let Some(touchpad) = config_table_field(table, "touchpad")? {
+        check_config_keys(&touchpad, &["tap", "natural_scroll", "speed"], "touchpad.")?;
+        values.touchpad_tap = config_bool(&touchpad, "tap")?;
+        values.touchpad_natural_scroll = config_bool(&touchpad, "natural_scroll")?;
+        values.touchpad_speed = config_number(&touchpad, "speed")?;
+        if let Some(speed) = values.touchpad_speed
+            && (!speed.is_finite() || speed < 0.0) {
+                return Err(config_err("touchpad.speed", "number >= 0", &mlua::Value::Number(speed)));
+            }
+    }
+
+    // Reuse the existing strict setters as validators: a bad entry must fail
+    // here, before any value is written to live state.
+    let mut probe_decoration = DecorationConfig::standard();
+    if let Some(scales) = config_table_field(table, "output_scale")? {
+        for entry in scales.clone().pairs::<mlua::Value, mlua::Value>() {
+            let (key, value) = entry?;
+            let mlua::Value::String(key) = key else {
+                return Err(mlua::Error::RuntimeError("config key 'output_scale': output name must be a string".into()));
+            };
+            let name = key.to_str()?.to_string();
+            let scale = match value {
+                mlua::Value::Integer(n) => n as f64,
+                mlua::Value::Number(n) => n,
+                _ => return Err(config_err("output_scale", "number", &value)),
+            };
+            let mut probe_input = InputConfig::default();
+            if !probe_input.set_output_scale(&name, scale) {
+                return Err(mlua::Error::RuntimeError(format!(
+                    "config key 'output_scale.{name}': positive finite scale required"
+                )));
+            }
+            values.output_scales.push((name, scale));
+        }
+    }
+    if let Some(positions) = config_table_field(table, "output_position")? {
+        for entry in positions.clone().pairs::<mlua::Value, mlua::Value>() {
+            let (key, value) = entry?;
+            let mlua::Value::String(key) = key else {
+                return Err(mlua::Error::RuntimeError("config key 'output_position': output name must be a string".into()));
+            };
+            let name = key.to_str()?.to_string();
+            let mlua::Value::Table(pos) = value else {
+                return Err(config_err("output_position", "table with x and y", &value));
+            };
+            check_config_keys(&pos, &["x", "y"], "output_position.")?;
+            let x = config_uint(&pos, "x")?.unwrap_or(0) as i32;
+            let y = config_uint(&pos, "y")?.unwrap_or(0) as i32;
+            if !probe_decoration.set_output_position(&name, x, y) {
+                return Err(mlua::Error::RuntimeError(format!(
+                    "config key 'output_position.{name}': invalid output position"
+                )));
+            }
+            values.output_positions.push((name, x, y));
+        }
+    }
+
+    Ok(values)
+}
+
+/// Apply a validated block. Validation has already rejected bad values, so
+/// this is a straight write into the single-threaded shared config.
+fn apply_config_values(
+    values: ConfigValues,
+    decoration: &std::sync::Mutex<DecorationConfig>,
+    input: &std::sync::Mutex<InputConfig>,
+) -> Result<(), mlua::Error> {
+    {
+        let mut dec = decoration.lock().unwrap();
+        if let Some(v) = values.wm_mode { dec.wm_mode = v; }
+        if let Some(v) = values.tiling_layout { dec.tiling_layout = v; }
+        if let Some(v) = values.border_size { dec.border_size = v; }
+        if let Some(v) = values.outer_gap { dec.outer = v; }
+        if let Some(v) = values.inner_gap { dec.inner = v; }
+        if let Some(v) = values.titlebar_height { dec.titlebar_height = v; }
+        if let Some(v) = values.dock_height { dec.dock_height = v; }
+        if let Some(v) = values.corner_radius { dec.corner_radius = v; }
+        if let Some((w, h)) = values.min_size {
+            dec.min_window_width = w;
+            dec.min_window_height = h;
+        }
+        if let Some(v) = values.border_color_focused { dec.border_color_focused = v; }
+        if let Some(v) = values.border_color_unfocused { dec.border_color_unfocused = v; }
+        if let Some(v) = values.titlebar_color_focused { dec.titlebar_color_focused = v; }
+        if let Some(v) = values.titlebar_color_unfocused { dec.titlebar_color_unfocused = v; }
+        for (name, x, y) in values.output_positions {
+            let _ = dec.set_output_position(&name, x, y);
+        }
+    }
+    let mut cfg = input.lock().unwrap();
+    for (name, scale) in values.output_scales {
+        let _ = cfg.set_output_scale(&name, scale);
+    }
+    if let Some(v) = values.touchpad_tap { cfg.touchpad_tap = Some(v); }
+    if let Some(v) = values.touchpad_natural_scroll { cfg.touchpad_natural_scroll = Some(v); }
+    if let Some(v) = values.touchpad_speed { cfg.touchpad_speed = Some(v); }
+    if let Some(v) = values.keymap { cfg.keymap = Some(v); }
+    Ok(())
+}
+
 /// Initialize a new Lua state with the eswm config API pre-loaded.
 /// Registers `es` table with `bind`, `define_submap`, `dsp`, `config` submodules,
 /// plus `is_file_exists` and `safe_require` helpers.
@@ -256,11 +540,12 @@ pub fn register_api(
         dsp_table.set("set_touchpad_speed", setter)?;
     }
     {
+        let keymap_config = input_config.clone();
         let setter = lua.create_function(move |_, keymap: String| -> Result<(), mlua::Error> {
             if !validate_keymap(&keymap) {
                 return Err(mlua::Error::RuntimeError("empty keymap".into()));
             }
-            input_config.lock().unwrap().keymap = Some(keymap);
+            keymap_config.lock().unwrap().keymap = Some(keymap);
             Ok(())
         })?;
         dsp_table.set("set_keymap", setter)?;
@@ -536,6 +821,21 @@ pub fn register_api(
     config.set("setcursor", lua.create_function(move |_, _: ()| -> Result<(), mlua::Error> {
         Ok(())
     })?)?;
+    // `es.config { ... }` calls the table through __call. Validation happens
+    // on a temporary copy so a rejected key leaves live state untouched.
+    let config_call_meta = lua.create_table()?;
+    let call_decoration = decoration.clone();
+    let call_input = input_config.clone();
+    config_call_meta.set(
+        "__call",
+        lua.create_function(
+            move |lua, (_, block): (Table, Table)| -> Result<(), mlua::Error> {
+                let values = validate_config_table(lua, &block)?;
+                apply_config_values(values, &call_decoration, &call_input)
+            },
+        )?,
+    )?;
+    config.set_metatable(Some(config_call_meta))?;
     es.set("config", config)?;
 
     // is_file_exists(path) -> bool
