@@ -1889,6 +1889,7 @@ impl WindowManager {
         {
             return false;
         }
+        let before_output = self.focused_output_id();
         self.clear_focus_on_output(output);
         // Global focus: clear the derived mirror on every window, not only
         // those on this output (two outputs previously kept two focused flags).
@@ -1907,6 +1908,11 @@ impl WindowManager {
         self.focus_history.retain(|w| *w != id);
         self.focus_history.insert(0, id);
         self.events.queue(EventKind::WindowActive, json!({"id": id}));
+        if let Some(active) = self.focused_output_id()
+            && Some(active) != before_output
+        {
+            self.events.queue(EventKind::MonitorActive, json!({"id": active}));
+        }
         true
     }
 
