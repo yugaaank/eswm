@@ -30,7 +30,7 @@ tasks:
     verify: cargo test --bin eswm lua_function_bind
     risk: P1
     security: low
-    status: failing
+    status: passing
     allure:
       severity: high
       categories:
