@@ -1,0 +1,162 @@
+spec: specs/epics/e09-design-decisions/e09s02-output-model.md
+story_id: e09s02
+title: 'Output model: position, scale, work area, LayerMap per output; focused output'
+status: pending
+bcps: 2
+tasks:
+  - id: e09s02t1
+    description: 'Add per-output work_area/dock_height to wm::Output and pointer_output to
+      WindowManager; pure helpers auto_output_position, outputs_bounds, output_for_point,
+      focused_output_id (pointer -> focused window -> first). Inline RED then GREEN tests
+      for displaced outputs and focus fallback'
+    verify: cargo test --bin eswm output_model
+    risk: P1
+    security: none
+    status: failing
+    allure:
+      severity: high
+      categories:
+        - e09-design-decisions
+        - output-model
+        - unit
+  - id: e09s02t2
+    description: 'Migrate WM internals off primary_output_id(): placement, popup constraint,
+      workspace commands, dock entries, surface_under/window_at, cycle focus and tiling layout
+      sync now use focused_output_id(). Add per-output work_area accessors and arrange_outputs(ids)
+      so a work-area change re-lays out every affected output despite the global dirty flag'
+    verify: cargo test --bin eswm output_model
+    risk: P1
+    security: none
+    status: failing
+    allure:
+      severity: high
+      categories:
+        - e09-design-decisions
+        - output-model
+        - refactor
+  - id: e09s02t3
+    description: 'Add output_positions and output_dock_heights maps to DecorationConfig with
+      Lua es.dsp.set_output_position(name,x,y) and es.dsp.set_output_dock_height(name,n);
+      keep set_dock_height(n) as an all-outputs compatibility setter; invalid values raise
+      Lua errors without mutating live config. Inline validation/storage tests'
+    verify: cargo test --bin eswm output_config
+    risk: P1
+    security: none
+    status: failing
+    allure:
+      severity: high
+      categories:
+        - e09-design-decisions
+        - lua-config
+        - unit
+  - id: e09s02t4
+    description: 'On DRM connect apply configured position or auto side-by-side fallback to
+      both smithay Output location and wm::Output.geometry, apply configured scale, register
+      the handle in State.layer_outputs, and clear it on disconnect/config reload. Single
+      output keeps (0,0) byte-identical. Inline tests for position derivation'
+    verify: cargo test --bin eswm output_connect
+    risk: P1
+    security: none
+    status: failing
+    allure:
+      severity: high
+      categories:
+        - e09-design-decisions
+        - drm
+        - unit
+  - id: e09s02t5
+    description: 'Honor the wl_output requested by layer surfaces via Output::from_resource;
+      tag LayerSurface wrappers with OutputId in user_data(); map/unmap/hit-test/render against
+      that output''s layer_map_for_output. Derive each output work area from its own zone plus
+      origin minus its dock height, without holding two guards on one output. Inline tests'
+    verify: cargo test --bin eswm layer_output
+    risk: P1
+    security: none
+    status: failing
+    allure:
+      severity: high
+      categories:
+        - e09-design-decisions
+        - layer-shell
+        - unit
+  - id: e09s02t6
+    description: 'Track the output under the pointer on motion/enter and use focused_output_id()
+      for new-window placement and workspace commands; add focused to control output.list JSON
+      while keeping primary as a deprecated alias of the same output. Inline focus/JSON tests'
+    verify: cargo test --bin eswm focused_output
+    risk: P1
+    security: none
+    status: failing
+    allure:
+      severity: high
+      categories:
+        - e09-design-decisions
+        - focus
+        - unit
+  - id: e09s02t7
+    description: 'Replace width-summing max_screen_size() with the union of Output.geometry
+      rects; clamp absolute pointer motion and control::clamp_to_output to its min/max edges;
+      constrain popups against their own output work area. Inline bounds/clamp tests'
+    verify: cargo test --bin eswm pointer_bounds
+    risk: P1
+    security: none
+    status: failing
+    allure:
+      severity: high
+      categories:
+        - e09-design-decisions
+        - input
+        - unit
+  - id: e09s02t8
+    description: 'Make dock height and dock_entries(output_id) per output; render and hit-test
+      each output''s dock from its own work area; Lua es.dock.* follows the focused output;
+      include the output id in the cached dock buffer signature. Inline per-output dock tests'
+    verify: cargo test --bin eswm dock_per_output
+    risk: P1
+    security: none
+    status: failing
+    allure:
+      severity: high
+      categories:
+        - e09-design-decisions
+        - dock
+        - unit
+  - id: e09s02t9
+    description: 'Emit one Hyprland-compatible monitors entry per output with position, scale
+      and focused flag; derive Snapshot.monitor from the focused output; keep the single-output
+      first entry shape unchanged. Inline JSON shape tests'
+    verify: cargo test --bin eswm ipc_outputs
+    risk: P1
+    security: none
+    status: failing
+    allure:
+      severity: high
+      categories:
+        - e09-design-decisions
+        - ipc
+        - unit
+  - id: e09s02t10
+    description: 'Run full preflight verification gates for e09s02'
+    verify: cargo clippy --all-targets && cargo test --bin eswm && cargo build
+    risk: P2
+    security: none
+    status: failing
+    allure:
+      severity: normal
+      categories:
+        - e09-design-decisions
+        - verification
+  - id: e09s02t11
+    description: 'MANUAL UAT (operator, live DRM): laptop + HDMI with configured positions;
+      verify bars and windows land on the requested outputs, scale/work area are independent,
+      dock and pointer work on both screens. Automated proxy: output_model/layer_output/
+      pointer_bounds/dock_per_output tests.'
+    verify: 'manual: on a TTY with two outputs, run the checklist in specs/epics/e09-design-decisions/e09s02-output-model.md and record in specs/verifications/e09s02-verify.yaml'
+    risk: P2
+    security: none
+    status: failing
+    allure:
+      severity: normal
+      categories:
+        - e09-design-decisions
+        - manual-uat
