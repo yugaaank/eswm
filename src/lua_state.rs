@@ -1198,4 +1198,67 @@ mod tests {
         assert_eq!(input.touchpad_speed, Some(1.25));
         assert_eq!(input.keymap.as_deref(), Some("xkb_keymap { };"));
     }
+
+    // e09s04t2: a bind may name a Lua function instead of a closed action string.
+    #[test]
+    fn lua_function_bind_registers_callback_and_keeps_string_binds() {
+        let (lua, keybinds, _input_config, _decoration, _cmd_rx) = test_api();
+        lua.load(
+            r#"
+            es.bind("Super+Return", "spawn_terminal")
+            es.bind("Super+F", function(n) callback_arg = n end, 42)
+            "#,
+        )
+        .exec()
+        .expect("function bind");
+        let kbs = keybinds.lock().unwrap();
+        assert_eq!(kbs.len(), 2);
+        assert_eq!(kbs[0].action, "spawn_terminal");
+        assert!(kbs[0].callback.is_none(), "string binds keep their old shape");
+        assert_eq!(kbs[1].action, "lua_function");
+        assert!(kbs[1].callback.is_some());
+        assert_eq!(kbs[1].arg, Some(42));
+    }
+
+    #[test]
+    fn lua_function_bind_runs_callback_with_and_without_arg() {
+        let (lua, keybinds, _input_config, _decoration, _cmd_rx) = test_api();
+        lua.load(
+            r#"
+            callback_hits = {}
+            es.bind("Super+F", function(n) callback_hits[#callback_hits + 1] = n end, 7)
+            es.bind("Super+G", function() callback_hits[#callback_hits + 1] = 0 end)
+            "#,
+        )
+        .exec()
+        .expect("function binds");
+        let binds = keybinds.lock().unwrap().clone();
+        drop(keybinds);
+        call_keybind_callback(&lua, &binds[0]).expect("callback with arg");
+        call_keybind_callback(&lua, &binds[1]).expect("callback without arg");
+        let hits: Vec<i32> = lua.globals().get("callback_hits").expect("hits table");
+        assert_eq!(hits, vec![7, 0]);
+    }
+
+    #[test]
+    fn lua_function_bind_surfaces_callback_errors() {
+        let (lua, keybinds, _input_config, _decoration, _cmd_rx) = test_api();
+        lua.load(r#"es.bind("Super+E", function() error("callback exploded") end)"#)
+            .exec()
+            .expect("function bind");
+        let bind = keybinds.lock().unwrap()[0].clone();
+        let err = call_keybind_callback(&lua, &bind).expect_err("callback error must surface");
+        assert!(err.to_string().contains("callback exploded"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn lua_function_bind_rejects_non_action_value() {
+        let (lua, keybinds, _input_config, _decoration, _cmd_rx) = test_api();
+        let err = lua
+            .load(r#"es.bind("Super+H", 123)"#)
+            .exec()
+            .expect_err("a number is not an action");
+        assert!(err.to_string().contains("string or function"), "unexpected error: {err}");
+        assert!(keybinds.lock().unwrap().is_empty(), "failed bind must not register");
+    }
 }
