@@ -662,6 +662,66 @@ mod tests {
         parity(&monitors_json(&snap())[0], &fixture[0], "monitor");
     }
 
+    // e09s02t9 — one Hyprland-compatible monitors entry per output. Positions,
+    // scale and the focused flag come from the real output model, not a
+    // hardcoded single "winit" entry that pretends the world has one screen.
+    #[test]
+    fn ipc_outputs_one_monitor_entry_per_output() {
+        let mut wm = crate::wm::WindowManager::new();
+        wm.add_output("eDP-1", crate::wm::Rect { x: 0, y: 0, width: 1920, height: 1080 });
+        let hdmi = wm.add_output("HDMI-A-1", crate::wm::Rect { x: 1920, y: 0, width: 1280, height: 720 });
+        wm.set_pointer_output(Some(hdmi));
+        let scales = [("HDMI-A-1".to_string(), 2.0)].into_iter().collect();
+        let monitors = monitors_from_wm(&wm, &scales);
+        assert_eq!(monitors.len(), 2);
+
+        let snap = Snapshot { monitors: monitors.clone(), ..Default::default() };
+        let json = monitors_json(&snap);
+        let arr = json.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["name"], "eDP-1");
+        assert_eq!(arr[0]["x"], 0);
+        assert_eq!(arr[0]["y"], 0);
+        assert_eq!(arr[0]["width"], 1920);
+        assert_eq!(arr[0]["scale"], 1.0);
+        assert_eq!(arr[0]["focused"], false);
+        assert_eq!(arr[1]["name"], "HDMI-A-1");
+        assert_eq!(arr[1]["x"], 1920);
+        assert_eq!(arr[1]["width"], 1280);
+        assert_eq!(arr[1]["scale"], 2.0);
+        assert_eq!(arr[1]["focused"], true);
+        let fixture = load("monitors");
+        parity(&arr[0], &fixture[0], "laptop monitor");
+        parity(&arr[1], &fixture[0], "hdmi monitor");
+    }
+
+    #[test]
+    fn ipc_outputs_single_monitor_shape_unchanged() {
+        // Snapshots without a monitor list (legacy / virtual output) keep the
+        // exact first-entry shape Tacit already consumes.
+        let s = snap();
+        let arr = monitors_json(&s);
+        assert_eq!(arr.as_array().unwrap().len(), 1);
+        assert_eq!(arr[0]["name"], "winit");
+        assert_eq!(arr[0]["width"], 100);
+        assert_eq!(arr[0]["height"], 200);
+        assert_eq!(arr[0]["focused"], true);
+        parity(&arr[0], &load("monitors")[0], "legacy monitor");
+    }
+
+    #[test]
+    fn ipc_outputs_snapshot_monitor_uses_focused_output() {
+        let monitors = vec![
+            MonitorData { name: "eDP-1".into(), width: 1920, height: 1080, scale: 1.0, focused: false, ..Default::default() },
+            MonitorData { name: "HDMI-A-1".into(), width: 1280, height: 720, scale: 2.0, focused: true, ..Default::default() },
+        ];
+        assert_eq!(
+            focused_monitor_data(&monitors, (0, 0, 1.0, 60.0)),
+            (1280, 720, 2.0, 60.0)
+        );
+        assert_eq!(focused_monitor_data(&[], (100, 200, 1.0, 60.0)), (100, 200, 1.0, 60.0));
+    }
+
     #[test]
     fn key_parity_client() {
         let fixture = load("clients");
