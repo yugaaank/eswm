@@ -325,10 +325,27 @@ fn peer_cred(stream: &UnixStream) -> Option<PeerCred> {
     })
 }
 
+/// Stable numeric codes so clients never parse English error text.
+fn error_code(message: &str) -> u32 {
+    match message {
+        "invalid json" => 1,
+        "line too long" => 5,
+        "compositor did not respond" => 6,
+        "denied" => 7,
+        _ if message.starts_with("unknown command") => 2,
+        _ if message.starts_with("no window") || message.starts_with("no live window") => 3,
+        _ => 4,
+    }
+}
+
+fn error_reply(id: &Value, message: &str) -> String {
+    json!({"id": id, "error": message, "code": error_code(message)}).to_string()
+}
+
 /// Config writes never travel over a socket, even if a dispatcher shows up.
 fn denied_reply(cmd: &str, id: &Value) -> Option<String> {
     matches!(cmd, "exec" | "config" | "config.write" | "reload" | "eval")
-        .then(|| json!({"id": id, "error": "denied", "code": 7}).to_string())
+        .then(|| error_reply(id, "denied"))
 }
 
 struct Request {
@@ -399,8 +416,7 @@ fn serve(stream: UnixStream, tx: flume::Sender<Request>) {
         let line = match read_capped_line(&mut reader) {
             CappedLine::Line(line) => line,
             CappedLine::TooLong => {
-                let too_long = json!({"id": null, "error": "line too long", "code": 5});
-                let _ = writeln!(writer, "{too_long}");
+                let _ = writeln!(writer, "{}", error_reply(&Value::Null, "line too long"));
                 return;
             }
             CappedLine::Closed => return,
@@ -411,7 +427,7 @@ fn serve(stream: UnixStream, tx: flume::Sender<Request>) {
         }
         let reply = reply_rx
             .recv_timeout(REPLY_TIMEOUT)
-            .unwrap_or_else(|_| json!({"id": null, "error": "compositor did not respond"}).to_string());
+            .unwrap_or_else(|_| error_reply(&Value::Null, "compositor did not respond"));
         if reply.is_empty() {
             continue;
         }
@@ -428,7 +444,7 @@ pub fn handle_request(state: &mut State, line: &str) -> String {
     }
     let request: Value = match serde_json::from_str(line) {
         Ok(request) => request,
-        Err(_) => return json!({"id": null, "error": "invalid json"}).to_string(),
+        Err(_) => return error_reply(&Value::Null, "invalid json"),
     };
     let id = request.get("id").cloned().unwrap_or(Value::Null);
     let empty = json!({});
@@ -439,7 +455,7 @@ pub fn handle_request(state: &mut State, line: &str) -> String {
     }
     match dispatch(state, cmd, args) {
         Ok(value) => json!({"id": id, "ok": value}).to_string(),
-        Err(message) => json!({"id": id, "error": message}).to_string(),
+        Err(message) => error_reply(&id, &message),
     }
 }
 
