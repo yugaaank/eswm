@@ -1767,9 +1767,16 @@ mod tests {
             .collect()
     }
 
+    fn clean_state() -> State {
+        let mut state = test_state();
+        // The virtual output emits monitor_added during fixture setup.
+        let _ = state.wm.events.flush();
+        state
+    }
+
     #[test]
     fn layer_events_opened_queues_layer_opened() {
-        let mut state = test_state();
+        let mut state = clean_state();
         let output = state.wm.focused_output_id().unwrap();
         queue_layer_event(&mut state, EventKind::LayerOpened, Some(output));
         assert_eq!(
@@ -1780,7 +1787,7 @@ mod tests {
 
     #[test]
     fn layer_events_closed_queues_layer_closed() {
-        let mut state = test_state();
+        let mut state = clean_state();
         let output = state.wm.focused_output_id().unwrap();
         queue_layer_event(&mut state, EventKind::LayerClosed, Some(output));
         assert_eq!(
@@ -1791,7 +1798,7 @@ mod tests {
 
     #[test]
     fn layer_events_without_target_output_is_silent() {
-        let mut state = test_state();
+        let mut state = clean_state();
         queue_layer_event(&mut state, EventKind::LayerOpened, None);
         queue_layer_event(&mut state, EventKind::LayerClosed, None);
         assert!(queued_layer_events(&state).is_empty());
@@ -1799,7 +1806,7 @@ mod tests {
 
     #[test]
     fn layer_events_config_reload_queues_one_global_frame() {
-        let mut state = test_state();
+        let mut state = clean_state();
         queue_config_reloaded(&mut state);
         queue_config_reloaded(&mut state);
         let flushed = state.wm.events.flush();
@@ -1810,7 +1817,7 @@ mod tests {
 
     #[test]
     fn layer_events_ready_queued_once_after_sockets() {
-        let mut state = test_state();
+        let mut state = clean_state();
         queue_ready(&mut state);
         queue_ready(&mut state);
         let flushed = state.wm.events.flush();
