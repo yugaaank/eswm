@@ -423,7 +423,7 @@ bug-2026-11-22t143000-spec-lint-bookkeeping:
   title: spec-lint reports three stale planning-artifact references
   severity: low
   priority: p3
-  status: open
+  status: closed
   reported_by: spec_lint
   date: "2026-11-22T14:30:00+05:30"
   scope: specs

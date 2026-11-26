@@ -1,6 +1,6 @@
 ---
 bug_id: BUG-2026-11-22-DRM-RESTORE-PERMISSION
-status: open
+status: fixed
 severity: low
 priority: p3
 scope: drm
@@ -9,7 +9,7 @@ title: DRM restore errors on graceful shutdown
 
 # BUG-2026-11-22-DRM-RESTORE-PERMISSION — DRM restore errors on graceful shutdown
 
-**Status:** open → investigating (RCA complete, TDD plan below)
+**Status:** fixed — graceful shutdown now restores without EACCES; frontmatter synced with `registry.yaml` on 2026-11-26
 **Discovered:** log analysis of `/tmp/opencode/eswm-latest-clean6.log`
 (UTC 2026-11-22 08:01:26–08:02:00), shutdown lines.
 Confirmed again in the live AB24 run at 2026-11-22T10:50:04Z.

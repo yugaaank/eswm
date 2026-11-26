@@ -1,6 +1,6 @@
 ---
 bug_id: BUG-2026-11-22-AB24-IMPORT-NODE-HINT
-status: investigating
+status: closed
 severity: low
 priority: p3
 scope: rendering
@@ -9,7 +9,7 @@ title: Cross-GPU import retries log BAD_MATCH for NVIDIA AB24 buffers
 
 # BUG-2026-11-22-AB24-IMPORT-NODE-HINT — Cross-GPU import retries log BAD_MATCH for NVIDIA AB24 buffers
 
-**Status:** investigating — RCA phases 1–2 complete
+**Status:** closed — exact node hint landed as d992239; frontmatter synced with `registry.yaml` on 2026-11-26
 **Discovered:** live UAT session 2026-11-22 15:12 IST (09:42 UTC),
 from `~/.local/state/eswm/eswm.log`; finding recorded in
 `specs/verifications/uat-2026-11-22-live-drm.md`.

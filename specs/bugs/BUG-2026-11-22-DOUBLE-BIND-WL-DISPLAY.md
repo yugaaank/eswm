@@ -1,6 +1,6 @@
 ---
 bug_id: BUG-2026-11-22-DOUBLE-BIND-WL-DISPLAY
-status: open
+status: fixed
 severity: low
 priority: p2
 scope: drm
@@ -9,7 +9,7 @@ title: Wayland display bound twice on one physical GPU at startup
 
 # BUG-2026-11-22-DOUBLE-BIND-WL-DISPLAY — Wayland display bound twice at startup
 
-**Status:** open — RCA verified, fix pending
+**Status:** fixed — one-bind helper landed as dcb78b6; frontmatter synced with `registry.yaml` on 2026-11-26
 **Discovered:** log analysis of `/tmp/opencode/eswm-latest-clean6.log`
 (UTC 2026-11-22 08:01:26–08:02:00)
 **Security impact: NONE.** Local GPU initialization only; no untrusted input and

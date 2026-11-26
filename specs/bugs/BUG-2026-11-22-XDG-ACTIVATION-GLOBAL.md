@@ -1,6 +1,6 @@
 ---
 bug_id: BUG-2026-11-22-XDG-ACTIVATION-GLOBAL
-status: open
+status: fixed
 severity: low
 priority: p3
 scope: wayland
@@ -9,7 +9,7 @@ title: Clients cannot mint xdg activation tokens
 
 # BUG-2026-11-22-XDG-ACTIVATION-GLOBAL — Clients cannot mint xdg activation tokens
 
-**Status:** open — RCA verified, fix pending
+**Status:** fixed — `xdg_activation_v1` global landed; frontmatter synced with `registry.yaml` on 2026-11-26
 **Discovered:** log analysis of `~/.local/state/eswm/spawn.log` (local time, 2026-11-22)
 **Security impact: LOW.** Registering `xdg_activation_v1` adds a local protocol surface; activation requests must ignore stale tokens and unknown surfaces so a client cannot steal focus with a replayed token. No network, credentials, or user-data exposure.
 

@@ -77,5 +77,8 @@ GPL-3.0). eswm was MIT, so adapting that code required a compatible license.
 - Damage on a radius change is not signalled by the wrapper (COSMIC has the
   same `FIXME`). Config changes already force a full redraw, so this is not
   observable today.
-- Live DRM UAT remains operator-only: grabbing the VT from an existing
-  Wayland/X11 session is forbidden by ADR-0002.
+- Live DRM UAT was operator-only (grabbing the VT from an existing Wayland/X11
+  session is forbidden by ADR-0002), and the operator passed it on 2026-11-26:
+  `border_size=0` clips all four corners, `border_size=1` shows no square wedge,
+  and titlebar on/off gives bottom-only vs. all-four. Merged into local `main`
+  as `b8d4c2c`; CI still unverified per operator skip precedent, nothing pushed.

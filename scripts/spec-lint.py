@@ -52,6 +52,18 @@ def check_all_yaml() -> None:
         load_yaml(path)
 
 
+def find_capsules(eid: str) -> list[Path]:
+    # Completed epics retire to specs/epics/archive/ instead of vanishing.
+    # release-plan is a historical index, so archived capsules still count —
+    # e08 didn't disappear, it just moved to the retirement home.
+    return [
+        p
+        for base in (SPECS / "epics", SPECS / "epics" / "archive")
+        for p in base.glob(f"{eid}-*")
+        if p.is_dir()
+    ]
+
+
 def check_release_plan() -> list[str]:
     plan = load_yaml(SPECS / "release-plan.yaml") or {}
     epics = plan.get("epics") or []
@@ -59,12 +71,12 @@ def check_release_plan() -> list[str]:
     for epic in epics:
         eid = epic.get("id")
         ids.append(eid)
-        capsule = next(SPECS.glob(f"epics/{eid}-*"), None)
-        if capsule is None:
+        capsules = find_capsules(eid)
+        if not capsules:
             fail(f"release-plan: epic {eid} has no specs/epics/{eid}-* capsule")
             continue
-        if not (capsule / "epic.yaml").exists():
-            fail(f"release-plan: {capsule.name} has no epic.yaml")
+        if not (capsules[0] / "epic.yaml").exists():
+            fail(f"release-plan: {capsules[0].name} has no epic.yaml")
         if epic.get("status") not in STORY_STATUS | {"planned"}:
             fail(f"release-plan: epic {eid} has unknown status {epic.get('status')!r}")
     return ids
@@ -73,7 +85,10 @@ def check_release_plan() -> list[str]:
 def check_execution_status(epic_ids: list[str]) -> None:
     data = load_yaml(SPECS / "execution-status.yaml") or {}
     capsules = {
-        p.name for p in SPECS.glob("epics/e*-*") if p.is_dir()
+        p.name
+        for base in (SPECS / "epics", SPECS / "epics" / "archive")
+        for p in base.glob("e*-*")
+        if p.is_dir()
     }
     missing = capsules - set(data)
     extra = set(data) - capsules

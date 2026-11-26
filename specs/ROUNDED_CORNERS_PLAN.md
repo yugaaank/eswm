@@ -5,9 +5,9 @@
 > but the client's own corners are now clipped by a COSMIC-style GLES shader,
 > so the "no shader / no rounding without a border" constraints no longer hold.
 
-**Status:** implemented on branch `rounded-corners-per-corner`, preflight green, awaiting live DRM UAT
-**Date:** 2026-11-24
-**Scope:** server-side border ring + titlebar, baked-alpha masks, no GLES shader
+**Status:** merged into local `main` as `b8d4c2c` (fast-forward from `3e325c5`) on 2026-11-26 after operator live DRM UAT pass; preflight green; nothing pushed. §13 supersedes the shader-free constraints below.
+**Date:** 2026-11-24 (shader revision 2026-11-26)
+**Scope:** server-side border ring + titlebar, baked-alpha masks, plus a COSMIC-style GLES shader for the real client corners (§13)
 **Config surface:** `es.dsp.set_corner_radius(n)`, `es.dsp.set_titlebar_height(n)`, `es.dsp.set_border_size(n)`
 
 ## 1. Requirement (operator)
@@ -20,7 +20,7 @@
 - Rounding is **per-corner**, not one uniform radius.
 - `corner_radius == 0` disables rounding entirely (existing default).
 - Fullscreen windows and popups are never rounded.
-- Rounding requires a border: `border_size == 0` → no ring to mask the client's square corners → no rounding.
+- ~~Rounding requires a border: `border_size == 0` → no ring to mask the client's square corners → no rounding.~~ Superseded by §13: the shader clips the client's own pixels, so `border_size == 0` rounds correctly (confirmed in live DRM UAT).
 
 ## 2. Does instantWM round corners? — **No**
 
@@ -491,8 +491,9 @@ TDD, three test-only RED commits followed by GREEN commits:
 
 Verified: `cargo clippy --all-targets` clean, `cargo test` 228 passed,
 `cargo build` clean (log `/tmp/opencode/rounded-corners-preflight.log`).
-Live DRM UAT still pending — this session runs inside an existing Wayland/X11
-session, where grabbing the VT is forbidden.
+Live DRM UAT was pending here (this session runs inside an existing Wayland/X11
+session, where grabbing the VT is forbidden) — the operator passed it on
+2026-11-26; see §13.
 
 ### 11.1 UAT defect: square corners still visible (2026-11-25)
 
@@ -581,7 +582,10 @@ need COSMIC's matrix approach.
 
 `cargo clippy --all-targets` clean, `cargo test` **234 passed**, `cargo build`
 clean. `cargo check` clean. Unit coverage: `client_corners` policy (4 tests)
-and `corner_rects` ordering/locality. Live DRM UAT still operator-only.
+and `corner_rects` ordering/locality. Live DRM UAT **passed by the operator on
+2026-11-26**: `border_size=0` clipped all four client corners, `border_size=1`
+showed no square wedge, and titlebar on/off gave bottom-only vs. all-four.
+Merged into local `main` as `b8d4c2c`; CI still unverified, nothing pushed.
 
 ### UAT additions for this revision
 
@@ -590,3 +594,5 @@ and `corner_rects` ordering/locality. Live DRM UAT still operator-only.
 - `set_border_size(1)`: no square colour wedge outside the arc (§11.1 defect).
 - Titlebar on/off: bottom-only vs. all-four client corners respectively.
 - Fractional scale (1.25×/1.5×): shader radii align with the ring and titlebar.
+- **Operator result (2026-11-26):** "i check 3, it's working" — all three cases
+  above passed on real DRM; branch merged into local `main`.
