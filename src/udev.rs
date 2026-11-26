@@ -811,6 +811,7 @@ let lua_config_path = std::env::var("XDG_CONFIG_HOME")
     })
     .join("eswm")
     .join("config.lua");
+state.lua_config_path = Some(lua_config_path.clone());
 
 // A fresh load starts with an empty staging area; stale rules from a
 // failed startup attempt must not survive into this one.

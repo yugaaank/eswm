@@ -5,6 +5,7 @@
 
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
+use std::path::Path;
 use flume::Sender;
 use mlua::{Function, Lua, RegistryKey, Table};
 use serde_json::Value;
@@ -239,6 +240,42 @@ pub(crate) fn drain_window_rules(wm: &mut WindowManager, rules: &WindowRules) {
     for rule in rules.lock().unwrap().drain(..) {
         wm.add_window_rule(rule);
     }
+}
+
+/// Re-execute one config file, replacing binds/hooks/rules only on success.
+/// Rollback is a seatbelt: boring until the config drives into a tree.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn reload_lua_config(
+    lua: &Lua,
+    path: &Path,
+    snapshot: Arc<Mutex<crate::ipc::Snapshot>>,
+    cmd_tx: &Sender<crate::ipc::CompCmd>,
+    keybinds: &Arc<Mutex<Vec<Keybind>>>,
+    hooks: &EventHooks,
+    rules: &WindowRules,
+    decoration: &Arc<Mutex<DecorationConfig>>,
+    input: &Arc<Mutex<InputConfig>>,
+) -> Result<(), String> {
+    let old_keybinds = keybinds.lock().unwrap().clone();
+    let old_hooks = hooks.lock().unwrap().clone();
+    let old_rules = rules.lock().unwrap().clone();
+    let old_decoration = decoration.lock().unwrap().clone();
+    let old_input = input.lock().unwrap().clone();
+    let path = path.to_str().ok_or_else(|| "lua config path is not UTF-8".to_string())?;
+    {
+        keybinds.lock().unwrap().clear();
+        hooks.lock().unwrap().clear();
+        rules.lock().unwrap().clear();
+    }
+    if let Err(err) = _do_file(lua, path, snapshot, cmd_tx) {
+        *keybinds.lock().unwrap() = old_keybinds;
+        *hooks.lock().unwrap() = old_hooks;
+        *rules.lock().unwrap() = old_rules;
+        *decoration.lock().unwrap() = old_decoration;
+        *input.lock().unwrap() = old_input;
+        return Err(err.to_string());
+    }
+    Ok(())
 }
 
 fn parse_client_mode(name: &str) -> Option<ClientMode> {
@@ -579,6 +616,7 @@ pub fn register_api(
 
     let lua_keybinds_cmd = lua_keybinds.clone();
     let staged_rules = window_rules.clone();
+    let reload_tx = cmd_tx.clone();
 
     // es.bind(keybind_string, action_string, [arg]) -> registers a keybind
     // Example: es.bind("Super+Return", "spawn_terminal")
@@ -988,6 +1026,7 @@ pub fn register_api(
     // Create config table outside closures to avoid lifetime issues
     let config = lua.create_table()?;
     config.set("reload", lua.create_function(move |_, _: ()| -> Result<(), mlua::Error> {
+        let _ = reload_tx.send(crate::ipc::CompCmd::Reload);
         Ok(())
     })?)?;
     config.set("notify", lua.create_function(move |_, _: ()| -> Result<(), mlua::Error> {

@@ -560,6 +560,42 @@ pub(crate) fn queue_ready(state: &mut State) {
     state.wm.events.queue(EventKind::Ready, json!({}));
 }
 
+impl State {
+    /// Both `es.config.reload()` and the compat socket reload land here. A
+    /// failed Lua file restores binds, hooks, rules and config values before
+    /// the caller emits the legacy reload signal.
+    pub(crate) fn reload_lua_config(&mut self) -> Result<(), String> {
+        let path = self
+            .lua_config_path
+            .clone()
+            .ok_or_else(|| "no lua config path".to_string())?;
+        let lua = self.lua.clone().ok_or_else(|| "no lua state".to_string())?;
+        let (snapshot, cmd_tx) = self
+            .ipc
+            .as_ref()
+            .map(|ipc| (ipc.snapshot.clone(), ipc.cmd_tx.clone()))
+            .ok_or_else(|| "no IPC channel".to_string())?;
+        let result = lua_state::reload_lua_config(
+            &lua, &path, snapshot, &cmd_tx,
+            &self.lua_keybinds, &self.lua_hooks, &self.window_rules,
+            &self.decoration, &self.input_config,
+        );
+        if result.is_ok() {
+            lua_state::drain_window_rules(&mut self.wm, &self.window_rules);
+            self.apply_configured_scales();
+            self.apply_configured_output_positions();
+            let keymap = self.input_config.lock().unwrap().keymap.clone();
+            if let Some(keymap) = keymap
+                && let Some(keyboard) = self.seat.get_keyboard()
+                && let Err(err) = keyboard.set_keymap_from_string(self, keymap)
+            {
+                tracing::warn!("failed to apply reloaded XKB keymap: {err}");
+            }
+        }
+        result
+    }
+}
+
 /// One tick, one batch. Frames are numbered at flush, then fanned out to every
 /// subscriber. Without a socket the queue still drains; no frame loiters until
 /// the next tick like an unpaid intern waiting for a bus.
@@ -1139,6 +1175,8 @@ pub(crate) struct State {
     // Window rules staged by Lua es.window_rule{} and drained into the WM
     // before the first client commits.
     pub window_rules: lua_state::WindowRules,
+    // Single source for reloads; set once when the DRM startup reads the file.
+    pub lua_config_path: Option<std::path::PathBuf>,
     // Window decoration values mutated by Lua es.dsp.set_* and synced to wm each frame.
     pub decoration: Arc<std::sync::Mutex<wm::DecorationConfig>>,
     // Dock entries (active + minimized windows on the active workspace), rebuilt
@@ -1349,6 +1387,7 @@ fn new_state(
         lua_keybinds: Arc::new(std::sync::Mutex::new(Vec::new())),
         lua_hooks: Arc::new(std::sync::Mutex::new(Vec::new())),
         window_rules: Arc::new(std::sync::Mutex::new(Vec::new())),
+        lua_config_path: None,
         decoration: Arc::new(std::sync::Mutex::new(wm::DecorationConfig::standard())),
         dock_entries: Arc::new(std::sync::Mutex::new(Vec::new())),
         input_config: Arc::new(std::sync::Mutex::new(lua_state::InputConfig::default())),

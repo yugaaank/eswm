@@ -164,6 +164,14 @@ impl SharedSinks {
         // dead sockets get dropped: they'll be re-listed after reconnect
         sinks.retain(|mut c| c.write_all(line.as_bytes()).is_ok());
     }
+
+    /// Test-only view of the legacy stream; production clients connect themselves.
+    #[cfg(test)]
+    pub(crate) fn subscribe_for_test(&self) -> UnixStream {
+        let (client, server) = UnixStream::pair().expect("socket pair");
+        self.0.lock().unwrap().push(server);
+        client
+    }
 }
 
 pub struct Ipc {
@@ -178,8 +186,12 @@ pub struct Ipc {
 pub fn apply_cmd(state: &mut State, ipc: &Ipc, cmd: CompCmd) {
     match cmd {
         CompCmd::Reload => {
-            // e09s02t4: a reload can change where monitors live; re-apply the
-            // configured origins before telling Tacit the config changed.
+            // e09s04t5: both reload paths land here. The legacy line stays
+            // unconditional so Tacit's old listener hears reloads exactly as
+            // before, even when the new Lua file fails to parse.
+            if let Err(err) = state.reload_lua_config() {
+                tracing::warn!("lua config reload failed: {err}");
+            }
             state.apply_configured_output_positions();
             ipc.sinks.emit("configreloaded", "");
             crate::queue_config_reloaded(state);
