@@ -1148,8 +1148,6 @@ impl WindowManager {
 
     /// Work area of one output, falling back to its full geometry when no
     /// panel has reserved an exclusive zone yet.
-    // e09s02t2 migrates layout callers off the single global work_area.
-    #[allow(dead_code)]
     pub fn work_area_for_output(&self, id: OutputId) -> Rect {
         self.outputs
             .get(&id)
@@ -1159,7 +1157,6 @@ impl WindowManager {
 
     /// Returns true only when the value actually changed, so callers can avoid
     /// redundant re-layouts (and avoid waking the compositor for nothing).
-    #[allow(dead_code)]
     pub fn set_output_work_area(&mut self, id: OutputId, work_area: Option<Rect>) -> bool {
         let Some(output) = self.outputs.get_mut(&id) else {
             return false;
@@ -1187,7 +1184,6 @@ impl WindowManager {
         true
     }
 
-    #[allow(dead_code)]
     pub fn dock_height_for_output(&self, id: OutputId) -> u32 {
         self.outputs.get(&id).map(|output| output.dock_height).unwrap_or(0)
     }
@@ -1493,9 +1489,9 @@ impl WindowManager {
         self.dirty = true;
     }
 
-    pub fn dock_height(&self) -> u32 {
-        self.dock_height
-    }
+    // The old global `dock_height()` getter retired in e09s02t5; per-output
+    // reads now go through `dock_height_for_output`. It died doing what it
+    // loved: returning the same number for every monitor.
 
     /// Update a window's client-declared window geometry offset (e08s02t6).
     /// Returns false when the window no longer exists.
@@ -1505,12 +1501,6 @@ impl WindowManager {
         };
         window.xdg_offset = offset;
         true
-    }
-
-    /// Mark the window manager as needing re-arrangement. Call when external
-    /// state (e.g. work_area) changes so arrange_output will run.
-    pub fn mark_dirty(&mut self) {
-        self.dirty = true;
     }
 
     /// Dock entries for the active workspace of the primary output: every

@@ -32,7 +32,7 @@ use smithay::{
         calloop::LoopHandle,
         wayland_server::{protocol::wl_seat, DisplayHandle},
     },
-    utils::{IsAlive, Rectangle, Serial},
+    utils::{IsAlive, Logical, Point, Rectangle, Serial},
     wayland::{
         buffer::BufferHandler,
         compositor::{
@@ -336,11 +336,15 @@ pub(crate) fn placed_windows(state: &mut State) -> Vec<PlacedWindow> {
         .collect();
     // Bar menus are popups parented to a layer surface, not a toplevel. Seed
     // their origin too or the menu lands in the top-left corner of the output.
-    if let Some(output) = state.primary_output.clone() {
-        let map = layer_map_for_output(&output);
+    for output in state.layer_outputs.values() {
+        let map = layer_map_for_output(output);
         for layer in map.layers() {
             if let Some(geom) = map.layer_geometry(layer) {
-                parent_pos.insert(layer.wl_surface().clone(), (geom.loc.x, geom.loc.y));
+                let origin = output.current_location();
+                parent_pos.insert(
+                    layer.wl_surface().clone(),
+                    (origin.x + geom.loc.x, origin.y + geom.loc.y),
+                );
             }
         }
     }
@@ -555,6 +559,32 @@ fn sync_window_meta(state: &mut State, surface: &ToplevelSurface) {
     state.wm.set_window_meta(id, app_id, title);
 }
 
+/// Output id a layer surface was created for. Untagged wrappers fall back to
+/// the focused output at use time (older clients that omit wl_output).
+pub(crate) fn layer_output_id(layer: &smithay::desktop::LayerSurface) -> Option<wm::OutputId> {
+    layer.user_data().get::<wm::OutputId>().copied()
+}
+
+pub(crate) fn tag_layer_output(layer: &smithay::desktop::LayerSurface, id: wm::OutputId) {
+    layer.user_data().insert_if_missing_threadsafe(|| id);
+}
+
+/// Convert a LayerMap's output-local non-exclusive zone into a global work
+/// area. The zone never included the output origin, which is why bars on a
+/// second monitor used to reserve space on the first one.
+pub(crate) fn layer_work_area(
+    origin: Point<i32, Logical>,
+    zone: Rectangle<i32, Logical>,
+    dock_height: u32,
+) -> wm::Rect {
+    wm::Rect {
+        x: origin.x.saturating_add(zone.loc.x),
+        y: origin.y.saturating_add(zone.loc.y),
+        width: zone.size.w.max(0) as u32,
+        height: (zone.size.h.max(0) as u32).saturating_sub(dock_height),
+    }
+}
+
 impl WlrLayerShellHandler for State {
     fn shell_state(&mut self) -> &mut WlrLayerShellState {
         &mut self.layer_shell_state
@@ -563,14 +593,25 @@ impl WlrLayerShellHandler for State {
     fn new_layer_surface(
         &mut self,
         surface: LayerSurface,
-        _output: Option<WlOutput>,
+        output: Option<WlOutput>,
         _layer: Layer,
         namespace: String,
     ) {
+        // Honour the wl_output the client asked for. Without this, a bar for
+        // HDMI lands on the laptop panel — a classic case of right idea, wrong
+        // screen, delivered with complete confidence.
+        let requested = output.as_ref().and_then(Output::from_resource);
+        let target = requested
+            .and_then(|o| self.wm.output_id_by_name(&o.name()))
+            .or_else(|| self.wm.focused_output_id());
         // Create the stable desktop wrapper; on first commit it gets mapped
-        // into the output's LayerMap, which sends the real anchored configure.
-        self.layer_wrappers.push(smithay::desktop::LayerSurface::new(surface, namespace.clone()));
-        tracing::info!("layer mapped: ns={namespace:?} layer={:?}", _layer);
+        // into the target output's LayerMap, which sends anchored configures.
+        let wrapper = smithay::desktop::LayerSurface::new(surface, namespace.clone());
+        if let Some(id) = target {
+            tag_layer_output(&wrapper, id);
+        }
+        self.layer_wrappers.push(wrapper);
+        tracing::info!("layer mapped: ns={namespace:?} output={target:?}");
         // Creation is a layer-surface state change (e06s03): map/configure now
         // so the client can proceed; keyboard focus is decided on commit/unmap.
         self.map_layer_surfaces();
@@ -579,8 +620,11 @@ impl WlrLayerShellHandler for State {
     fn layer_destroyed(&mut self, surface: LayerSurface) {
         let wrapper = self.layer_wrappers.iter().find(|l| l.layer_surface() == &surface).cloned();
         self.layer_wrappers.retain(|l| l.layer_surface() != &surface);
-        if let (Some(output), Some(wrapper)) = (self.primary_output.clone(), wrapper) {
-            layer_map_for_output(&output).unmap_layer(&wrapper);
+        if let Some(wrapper) = wrapper {
+            let id = layer_output_id(&wrapper).or_else(|| self.wm.focused_output_id());
+            if let Some(output) = id.and_then(|id| self.layer_outputs.get(&id).cloned()) {
+                layer_map_for_output(&output).unmap_layer(&wrapper);
+            }
         }
         // e06s03t3/t1: destroying/unmapping a layer may remove the current or
         // an exclusive keyboard focus holder; re-evaluate focus policy (falls
@@ -629,60 +673,77 @@ impl State {
         {
             return (parent.screen_rect.x, parent.screen_rect.y);
         }
-        // Layer-surface parent (bar menu): use its committed layer geometry.
-        if let Some(output) = self.primary_output.clone() {
-            let map = layer_map_for_output(&output);
-            if let Some(layer) = map
-                .layers()
-                .find(|l| l.wl_surface() == parent_surface)
-                && let Some(geom) = map.layer_geometry(layer) {
-                    return (geom.loc.x, geom.loc.y);
-                }
+        // Layer-surface parent (bar menu): use its committed layer geometry
+        // on whichever output owns the layer, translated into global coords.
+        for output in self.layer_outputs.values() {
+            let map = layer_map_for_output(output);
+            if let Some(layer) = map.layers().find(|l| l.wl_surface() == parent_surface)
+                && let Some(geom) = map.layer_geometry(layer)
+            {
+                let origin = output.current_location();
+                return (origin.x + geom.loc.x, origin.y + geom.loc.y);
+            }
         }
         (0, 0)
     }
 
-    /// Map unmapped layer surfaces into the primary output's LayerMap
-    /// (sends proper anchored configures) and re-arrange. Keyboard focus is
-    /// managed separately by `update_keyboard_focus` so an OnDemand layer's
-    /// commit cannot steal focus (e06s03).
+    /// Map layer surfaces into the LayerMap of the output they targeted, then
+    /// derive each output's work area from its own exclusive zone and origin.
+    /// Keyboard focus is decided separately by `update_keyboard_focus` so an
+    /// OnDemand layer's commit cannot steal focus (e06s03).
     fn map_layer_surfaces(&mut self) {
-        let Some(output) = self.primary_output.clone() else { return };
         self.layer_wrappers.retain(|l| l.alive());
-        let mut map = layer_map_for_output(&output);
-        for layer in &self.layer_wrappers {
-            let already =
-                map.layer_for_surface(layer.wl_surface(), WindowSurfaceType::ALL).is_some();
-            if !already {
-                let _ = map.map_layer(layer);
+        let focused = self.wm.focused_output_id();
+        let tagged: Vec<(wm::OutputId, smithay::desktop::LayerSurface)> = self
+            .layer_wrappers
+            .iter()
+            .filter_map(|layer| {
+                layer_output_id(layer)
+                    .or(focused)
+                    .map(|id| (id, layer.clone()))
+            })
+            .collect();
+        let mut ids: Vec<wm::OutputId> = tagged.iter().map(|(id, _)| *id).collect();
+        ids.dedup();
+
+        let mut changed = false;
+        for id in ids {
+            let Some(output) = self.layer_outputs.get(&id).cloned() else {
+                continue;
+            };
+            let mut map = layer_map_for_output(&output);
+            for (_, layer) in tagged.iter().filter(|(layer_id, _)| *layer_id == id) {
+                if map.layer_for_surface(layer.wl_surface(), WindowSurfaceType::ALL).is_none() {
+                    let _ = map.map_layer(layer);
+                }
+            }
+            map.arrange();
+            let zone = map.non_exclusive_zone();
+            // Drop the map guard before touching wm state: layer_map_for_output
+            // deadlocks if the same output's guard is acquired twice.
+            drop(map);
+
+            let dock_h = self.wm.dock_height_for_output(id);
+            let wa = layer_work_area(output.current_location(), zone, dock_h);
+            if self.wm.work_area_for_output(id) != wa {
+                tracing::info!(
+                    "output {id} work area -> ({},{} {}x{}) dock_h={}",
+                    wa.x, wa.y, wa.width, wa.height, dock_h
+                );
+                self.wm.set_output_work_area(id, Some(wa));
+                changed = true;
             }
         }
-        map.arrange();
-        // Insent tiled windows from exclusive layer-surface zones (waybar, panels)
-        // and from the bottom dock bar (if dock_height > 0).
-        let work_area = map.non_exclusive_zone();
-        let dock_h = self.wm.dock_height();
-        let wa = wm::Rect {
-            x: work_area.loc.x,
-            y: work_area.loc.y,
-            width: work_area.size.w.max(0) as u32,
-            height: (work_area.size.h.max(0) as u32).saturating_sub(dock_h),
-        };
-        if self.wm.work_area != Some(wa) {
-            self.wm.work_area = Some(wa);
-            tracing::info!(
-                "work_area updated: non_exclusive_zone=loc({},{}) size({}x{}) layers={} dock_h={} -> wa=({},{} {}x{})",
-                work_area.loc.x, work_area.loc.y, work_area.size.w, work_area.size.h,
-                self.layer_wrappers.len(), dock_h, wa.x, wa.y, wa.width, wa.height
-            );
-            if self.wm.focused_output_id().is_some() {
-                self.wm.mark_dirty();
-                // The dirty flag is global: arrange every output in one pass
-                // or the second monitor keeps wearing last season's geometry.
-                let ids = self.wm.outputs().map(|output| output.id).collect::<Vec<_>>();
-                self.wm.arrange_outputs(ids);
-                apply_layout(self);
-            }
+
+        if changed {
+            // Compatibility mirror for consumers not yet migrated off the
+            // single global work area; it follows the focused output.
+            self.wm.work_area = focused.map(|id| self.wm.work_area_for_output(id));
+            // The dirty flag is global: arrange every output in one pass or
+            // the second monitor keeps last season's geometry.
+            let ids = self.wm.outputs().map(|output| output.id).collect::<Vec<_>>();
+            self.wm.arrange_outputs(ids);
+            apply_layout(self);
         }
         // smithay's arrange never sends the initial configure (the spec reserves
         // it for the compositor, on the surface's first commit) — send any
@@ -1636,13 +1697,15 @@ mod tests {
             wm::Rect { x: 1960, y: 160, width: 1200, height: 652 }
         );
 
-        let empty = Rectangle {
-            loc: (0, 0).into(),
-            size: (-10, -20).into(),
+        // A dock taller than the zone clamps to zero instead of wrapping into
+        // a 4-billion-pixel work area (smithay rejects negative sizes itself).
+        let shallow = Rectangle {
+            loc: (5, 7).into(),
+            size: (100, 10).into(),
         };
         assert_eq!(
-            layer_work_area(Point::from((0, 0)), empty, 0),
-            wm::Rect { x: 0, y: 0, width: 0, height: 0 }
+            layer_work_area(Point::from((0, 0)), shallow, 40),
+            wm::Rect { x: 5, y: 7, width: 100, height: 0 }
         );
     }
 

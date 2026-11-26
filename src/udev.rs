@@ -1557,7 +1557,11 @@ fn layer_surface_under(
     wl_surface::WlSurface,
     Point<f64, Logical>,
 )> {
-    let output = state.primary_output.clone()?;
+    let id = state
+        .wm
+        .output_for_point(pos.x as i32, pos.y as i32)
+        .or_else(|| state.wm.focused_output_id())?;
+    let output = state.layer_outputs.get(&id)?.clone();
     let map = layer_map_for_output(&output);
     let output_origin = output.current_location().to_f64();
     // `layers_on` yields map/insertion order; the newest layer sits on top.
@@ -1580,9 +1584,13 @@ fn layer_root_for_surface(
     state: &State,
     surface: &wl_surface::WlSurface,
 ) -> Option<smithay::desktop::LayerSurface> {
-    let output = state.primary_output.clone()?;
-    let map = layer_map_for_output(&output);
-    map.layer_for_surface(surface, WindowSurfaceType::ALL).cloned()
+    for output in state.layer_outputs.values() {
+        let map = layer_map_for_output(output);
+        if let Some(layer) = map.layer_for_surface(surface, WindowSurfaceType::ALL) {
+            return Some(layer.clone());
+        }
+    }
+    None
 }
 
 /// Recompute pointer (hover/drag) focus from `pos` and return the surface-local
@@ -3272,20 +3280,38 @@ impl State {
         // below (elements list is top-to-bottom, cursor is pushed first).
         let mut layer_elements_above: Vec<EswmRenderElements<UdevRenderer<'_>>> = Vec::new();
         let mut layer_elements_below: Vec<EswmRenderElements<UdevRenderer<'_>>> = Vec::new();
-        if let Some(output) = self.primary_output.clone() {
-            let mut map = layer_map_for_output(&output);
-            for layer in &self.layer_wrappers {
+        let focused = self.wm.focused_output_id();
+        let tagged: Vec<(wm::OutputId, smithay::desktop::LayerSurface)> = self
+            .layer_wrappers
+            .iter()
+            .filter_map(|layer| {
+                crate::layer_output_id(layer)
+                    .or(focused)
+                    .map(|id| (id, layer.clone()))
+            })
+            .collect();
+        for (id, output) in &self.layer_outputs {
+            let mut map = layer_map_for_output(output);
+            for (layer_id, layer) in &tagged {
+                if layer_id != id {
+                    continue;
+                }
                 if map.layer_for_surface(layer.wl_surface(), WindowSurfaceType::ALL).is_none() {
                     let _ = map.map_layer(layer);
                 }
             }
             map.arrange();
+            let origin = output.current_location();
             for layer in map.layers() {
                 let Some(geom) = map.layer_geometry(layer) else { continue };
+                let global_loc = Point::<i32, Logical>::from((
+                    origin.x + geom.loc.x,
+                    origin.y + geom.loc.y,
+                ));
                 let tree = render_elements_from_surface_tree(
                     &mut renderer,
                     layer.wl_surface(),
-                    geom.loc.to_physical_precise_round(1.0),
+                    global_loc.to_physical_precise_round(1.0),
                     1.0,
                     1.0,
                     Kind::Unspecified,
