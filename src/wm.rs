@@ -288,6 +288,26 @@ pub fn clamp_master_ratio(ratio: f64) -> f64 {
     }
 }
 
+/// Keep a global pointer position inside the union of all outputs. The upper
+/// edge is the last pixel, not one past it, so the cursor cannot point at the
+/// empty void behind the rightmost monitor like a confused office ghost.
+pub fn clamp_point_to_bounds(bounds: Rect, point: (f64, f64)) -> (f64, f64) {
+    let right = bounds
+        .x
+        .saturating_add(bounds.width as i32)
+        .saturating_sub(1)
+        .max(bounds.x);
+    let bottom = bounds
+        .y
+        .saturating_add(bounds.height as i32)
+        .saturating_sub(1)
+        .max(bounds.y);
+    (
+        point.0.clamp(bounds.x as f64, right as f64),
+        point.1.clamp(bounds.y as f64, bottom as f64),
+    )
+}
+
 /// Normalize `weights` to exactly n entries summing to 1.0 (e10s02t1).
 /// Missing entries start neutral; non-finite or below-floor entries get the
 /// floor. The floor degrades to 1/n when there are too many entries for it to
@@ -1214,7 +1234,6 @@ impl WindowManager {
     /// uses this instead of summing widths; outputs are neighbours, not a
     /// conga line pretending to be one screen.
     // e09s02t7 replaces udev's width-summing max_screen_size() with this.
-    #[allow(dead_code)]
     pub fn outputs_bounds(&self) -> Option<Rect> {
         let mut outputs = self.outputs.values();
         let first = outputs.next()?;
@@ -2575,7 +2594,7 @@ pub fn equal_split(
 
 #[cfg(test)]
 mod tests {
-    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation, size_action, SizeAction, fill_scale, MAX_SIZE_RESENDS, SIZE_RESEND_INTERVAL, ResizeEdge, resize_edge_at, resize_rect, MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT, TilingSplits, clamp_master_ratio, normalize_weights, MIN_SPLIT_SHARE, weighted_split, SplitAxis, TilingSplitEdge, tiling_split_edge_at};
+    use super::{Rect, TilingLayout, WindowManager, WindowRule, equal_split, titlebar_button_at, TitlebarButton, ClientMode, Placement, Presentation, size_action, SizeAction, fill_scale, MAX_SIZE_RESENDS, SIZE_RESEND_INTERVAL, ResizeEdge, resize_edge_at, resize_rect, MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT, TilingSplits, clamp_master_ratio, clamp_point_to_bounds, normalize_weights, MIN_SPLIT_SHARE, weighted_split, SplitAxis, TilingSplitEdge, tiling_split_edge_at};
     use std::time::Duration;
 
     // e10s02t1: splits live on the output so they survive re-arrangement.

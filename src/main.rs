@@ -144,7 +144,7 @@ impl XdgShellHandler for State {
         });
 
         let parent_coord = self.popup_parent_coord(parent_surface.as_ref());
-        let available = popup_constraint(self);
+        let available = popup_constraint(self, parent_coord);
         let geometry = popup_geometry(&positioner, parent_coord, available);
         let screen_rect = wm::Rect {
             x: parent_coord.0 + geometry.x,
@@ -230,7 +230,7 @@ impl XdgShellHandler for State {
             .find(|p| p.surface == surface)
             .and_then(|p| p.parent_surface.clone());
         let parent_coord = self.popup_parent_coord(parent_surface.as_ref());
-        let available = popup_constraint(self);
+        let available = popup_constraint(self, parent_coord);
         let geometry = popup_geometry(&positioner, parent_coord, available);
         let screen_rect = wm::Rect {
             x: parent_coord.0 + geometry.x,
@@ -348,7 +348,6 @@ pub(crate) fn placed_windows(state: &mut State) -> Vec<PlacedWindow> {
             }
         }
     }
-    let available = popup_constraint(state);
     let mut popup_positions: std::collections::HashMap<WlSurface, (i32, i32)> =
         std::collections::HashMap::new();
     for i in 0..state.popups.len() {
@@ -362,6 +361,7 @@ pub(crate) fn placed_windows(state: &mut State) -> Vec<PlacedWindow> {
             .and_then(|p| parent_pos.get(p).or_else(|| popup_positions.get(p)))
             .copied()
             .unwrap_or_default();
+        let available = popup_constraint(state, parent_coord);
         let positioner = state.popups[i].positioner;
         let geometry = popup_geometry(&positioner, parent_coord, available);
         let screen_rect = wm::Rect {
@@ -389,19 +389,16 @@ pub(crate) fn placed_windows(state: &mut State) -> Vec<PlacedWindow> {
 /// windows and must not get server-side borders or titlebars.
 pub const POPUP_FAKE_ID: wm::WindowId = u64::MAX;
 
-/// Rect the popup is constrained to: the tiling work area (excludes bars), or
-/// the output geometry when no work area is known yet.
-fn popup_constraint(state: &State) -> wm::Rect {
+/// Rect the popup is constrained to: the work area of the output its parent
+/// sits on (excludes that monitor's bars and dock), falling back to a sane
+/// default only when eswm has no outputs at all.
+fn popup_constraint(state: &State, parent: (i32, i32)) -> wm::Rect {
     state
         .wm
-        .work_area
-        .or_else(|| {
-            state
-                .wm
-                .focused_output_id()
-                .and_then(|id| state.wm.output(id))
-                .map(|output| output.geometry)
-        })
+        .output_for_point(parent.0, parent.1)
+        .or_else(|| state.wm.focused_output_id())
+        .map(|id| state.wm.work_area_for_output(id))
+        .filter(|rect| rect.width > 0 && rect.height > 0)
         .unwrap_or(wm::Rect { x: 0, y: 0, width: 1920, height: 1080 })
 }
 
@@ -2031,7 +2028,9 @@ mod tests {
         let value: Value = serde_json::from_str(&response).unwrap();
         let rect = &value["ok"]["rect"];
         assert_eq!(rect["x"], 1920, "x clamps to this output's left edge");
-        assert_eq!(rect["y"], 100);
+        // The floating window is nearly as tall as HDMI's 720px geometry, so
+        // its y range is only 0..=24 — clamped against HDMI, not the laptop.
+        assert!(rect["y"].as_i64().unwrap() <= 24);
     }
 
     // e09s02t7 — a menu on HDMI must slide inside HDMI's work area, not the

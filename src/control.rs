@@ -268,11 +268,14 @@ fn clamp_to_output(state: &State, id: u64, rect: Rect) -> Result<Rect, String> {
         .ok_or_else(|| format!("window {id} has no output"))?;
     let width = rect.width.min(geometry.width).max(1);
     let height = rect.height.min(geometry.height).max(1);
-    let max_x = geometry.width.saturating_sub(width) as i32;
-    let max_y = geometry.height.saturating_sub(height) as i32;
+    // Clamp in global coordinates: an output at x=1920 starts there, not at 0.
+    let min_x = geometry.x;
+    let min_y = geometry.y;
+    let max_x = geometry.x.saturating_add(geometry.width as i32).saturating_sub(width as i32).max(min_x);
+    let max_y = geometry.y.saturating_add(geometry.height as i32).saturating_sub(height as i32).max(min_y);
     Ok(Rect {
-        x: rect.x.clamp(0, max_x),
-        y: rect.y.clamp(0, max_y),
+        x: rect.x.clamp(min_x, max_x),
+        y: rect.y.clamp(min_y, max_y),
         width,
         height,
     })

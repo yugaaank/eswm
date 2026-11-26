@@ -1997,12 +1997,10 @@ impl State {
             }
             InputEvent::PointerMotion { event, .. } => {
                 let serial = SCOUNTER.next_serial();
-                let (max_x, max_y) = self.max_screen_size();
+                let bounds = self.screen_bounds();
                 let moved = self.udev.as_ref().unwrap().pointer_location + event.delta();
-                let pointer_location = Point::<f64, Logical>::from((
-                    moved.x.clamp(0.0, (max_x.max(1) - 1) as f64),
-                    moved.y.clamp(0.0, (max_y.max(1) - 1) as f64),
-                ));
+                let (x, y) = wm::clamp_point_to_bounds(bounds, (moved.x, moved.y));
+                let pointer_location = Point::<f64, Logical>::from((x, y));
                 self.udev.as_mut().unwrap().pointer_location = pointer_location;
                 self.wm.sync_pointer_output((pointer_location.x, pointer_location.y));
                 drag_update(self, pointer_location);
@@ -2032,10 +2030,15 @@ impl State {
                 pointer.frame(self);
             }
             InputEvent::PointerMotionAbsolute { event, .. } => {
-                // shortcut: screen assumed to be one stacked output starting at (0,0)
-                let (max_x, max_y) = self.max_screen_size();
-                let location =
-                    Point::<f64, Logical>::from((event.x_transformed(max_x as i32), event.y_transformed(max_y as i32)));
+                // Absolute coordinates are relative to the union's origin and
+                // extent, not to a single imaginary screen at (0,0).
+                let bounds = self.screen_bounds();
+                let raw = Point::<f64, Logical>::from((
+                    bounds.x as f64 + event.x_transformed(bounds.width as i32),
+                    bounds.y as f64 + event.y_transformed(bounds.height as i32),
+                ));
+                let (x, y) = wm::clamp_point_to_bounds(bounds, (raw.x, raw.y));
+                let location = Point::<f64, Logical>::from((x, y));
                 let serial = SCOUNTER.next_serial();
                 self.udev.as_mut().unwrap().pointer_location = location;
                 self.wm.sync_pointer_output((location.x, location.y));
@@ -2442,19 +2445,12 @@ impl State {
         }
     }
 
-    fn max_screen_size(&self) -> (u32, u32) {
-        let udev = self.udev.as_ref().unwrap();
-        let mut w = 0u32;
-        let mut h = 0u32;
-        for backend in udev.backends.values() {
-            for surface in backend.surfaces.values() {
-                if let Some(mode) = surface.output.current_mode() {
-                    w += mode.size.w as u32;
-                    h = h.max(mode.size.h as u32);
-                }
-            }
-        }
-        (w.max(1), h.max(1))
+    /// Pointer travel area is the union of actual output rects. Summing widths
+    /// treated two side-by-side monitors as one very wide, very short screen.
+    fn screen_bounds(&self) -> wm::Rect {
+        self.wm
+            .outputs_bounds()
+            .unwrap_or(wm::Rect { x: 0, y: 0, width: 1, height: 1 })
     }
 
     fn device_added(&mut self, node: DrmNode, path: &Path) -> Result<(), DeviceAddError> {
