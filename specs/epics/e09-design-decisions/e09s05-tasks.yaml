@@ -47,7 +47,7 @@ tasks:
     verify: cargo test --bin eswm client_request
     risk: P1
     security: low
-    status: failing
+    status: passing
     allure:
       severity: high
       categories:
