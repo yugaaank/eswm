@@ -61,7 +61,7 @@ tasks:
     verify: cargo test --bin eswm control_hardening
     risk: P1
     security: high
-    status: failing
+    status: passing
     allure:
       severity: high
       categories:
