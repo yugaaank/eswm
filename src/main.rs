@@ -1774,8 +1774,14 @@ mod tests {
     // Imported here, not at module scope: only the tests construct a Display,
     // so a crate-level import is dead weight (and clippy --fix deletes it).
     use smithay::reexports::wayland_server::Display;
-    use crate::control::{EventKind, handle_request};
+    use crate::control::{EventKind, EventStream, handle_request};
     use serde_json::{Value, json};
+    use std::{
+        io::{BufRead, BufReader},
+        os::unix::net::UnixStream,
+        path::{Path, PathBuf},
+        sync::atomic::{AtomicUsize, Ordering},
+    };
     use wayland_protocols::xdg::activation::v1::client::{
         xdg_activation_token_v1::{self, XdgActivationTokenV1},
         xdg_activation_v1::{self, XdgActivationV1},
@@ -1848,6 +1854,104 @@ mod tests {
         assert_eq!(flushed.len(), 1);
         assert_eq!(flushed[0].kind, EventKind::Ready);
         assert_eq!(flushed[0].data, json!({}));
+    }
+
+    struct EventSocketPath(PathBuf);
+
+    impl EventSocketPath {
+        fn new(label: &str) -> Self {
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            let dir = std::env::temp_dir().join("opencode");
+            std::fs::create_dir_all(&dir).expect("create temp socket dir");
+            Self(dir.join(format!(
+                "eswm-{}-{}-{}.events.sock",
+                label,
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            )))
+        }
+    }
+
+    impl Drop for EventSocketPath {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    fn connect_subscriber(path: &Path) -> BufReader<UnixStream> {
+        let stream = UnixStream::connect(path).expect("connect to event socket");
+        BufReader::new(stream)
+    }
+
+    fn read_frame(reader: &mut BufReader<UnixStream>) -> Value {
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("read NDJSON frame");
+        assert!(!line.is_empty(), "event socket closed before the frame arrived");
+        serde_json::from_str(line.trim()).expect("valid JSON frame")
+    }
+
+    #[test]
+    fn event_stream_delivers_identical_frames_to_two_subscribers() {
+        let path = EventSocketPath::new("fanout");
+        let stream = EventStream::start_at(path.0.clone()).expect("bind event stream");
+        let mut first = connect_subscriber(&path.0);
+        let mut second = connect_subscriber(&path.0);
+
+        let hello = read_frame(&mut first);
+        assert_eq!(read_frame(&mut second), hello, "both subscribers see the same hello");
+        assert_eq!(hello["seq"], 0);
+        assert_eq!(hello["kind"], "hello");
+        assert_eq!(hello["data"]["version"], 1);
+        assert_eq!(
+            hello["data"]["events"].as_array().unwrap().len(),
+            EventKind::ALL.len()
+        );
+
+        let mut state = test_state();
+        state.events = Some(stream);
+        let output = state.wm.focused_output_id().expect("virtual output");
+        let id = state.wm.add_window(output, "kitty", "old").expect("add window");
+        assert!(state.wm.set_window_meta(id, "kitty".into(), "middle".into()));
+        assert!(state.wm.set_window_meta(id, "kitty".into(), "final".into()));
+
+        flush_events(&mut state);
+
+        // Two title changes are one frame with the last value. Fan-out is a
+        // photocopier, not a choose-your-own-adventure novel.
+        let expected = vec![
+            json!({"seq": 1, "kind": "monitor_added", "data": {"id": output, "name": "winit"}}),
+            json!({"seq": 2, "kind": "window_open", "data": {"id": id}}),
+            json!({"seq": 3, "kind": "window_active", "data": {"id": id}}),
+            json!({"seq": 4, "kind": "window_title", "data": {"id": id, "title": "final"}}),
+        ];
+        for reader in [&mut first, &mut second] {
+            for frame in &expected {
+                assert_eq!(&read_frame(reader), frame);
+            }
+        }
+    }
+
+    #[test]
+    fn event_stream_flush_without_socket_drains_queue() {
+        let mut state = test_state();
+        assert!(!state.wm.events.pending().is_empty(), "fixture queues monitor_added");
+        flush_events(&mut state);
+        assert!(state.wm.events.pending().is_empty());
+
+        // A later subscriber joins at the next seq; the bus has no time
+        // machine, merely a stubbornly good memory.
+        let path = EventSocketPath::new("no-socket");
+        let stream = EventStream::start_at(path.0.clone()).expect("bind event stream");
+        let mut subscriber = connect_subscriber(&path.0);
+        let hello = read_frame(&mut subscriber);
+        assert_eq!(hello["kind"], "hello");
+        state.events = Some(stream);
+        queue_ready(&mut state);
+        flush_events(&mut state);
+        assert_eq!(
+            read_frame(&mut subscriber),
+            json!({"seq": 2, "kind": "ready", "data": {}})
+        );
     }
 
     fn test_state() -> State {
