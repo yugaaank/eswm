@@ -3853,4 +3853,34 @@ mod tests {
         manager.remove_output(second);
         assert_eq!(manager.focused_output_id(), Some(first));
     }
+
+    // e09s02t1 — work area and dock height belong to the output whose panel
+    // reserved them, not to whichever connector happened to arrive last.
+    #[test]
+    fn output_model_work_area_and_dock_are_per_output() {
+        let mut manager = WindowManager::new();
+        let first = manager.add_output(
+            "laptop",
+            Rect { x: 0, y: 0, width: 1920, height: 1080 },
+        );
+        let second = manager.add_output(
+            "hdmi",
+            Rect { x: 1920, y: 0, width: 1280, height: 720 },
+        );
+
+        let first_geometry = manager.output(first).unwrap().geometry;
+        let second_geometry = manager.output(second).unwrap().geometry;
+        assert_eq!(manager.work_area_for_output(first), first_geometry);
+        assert_eq!(manager.work_area_for_output(second), second_geometry);
+
+        let hdmi_area = Rect { x: 1920, y: 40, width: 1280, height: 600 };
+        assert!(manager.set_output_work_area(second, Some(hdmi_area)));
+        assert!(!manager.set_output_work_area(second, Some(hdmi_area)));
+        assert_eq!(manager.work_area_for_output(first), first_geometry);
+        assert_eq!(manager.work_area_for_output(second), hdmi_area);
+
+        assert!(manager.set_output_dock_height(second, 48));
+        assert_eq!(manager.dock_height_for_output(first), 0);
+        assert_eq!(manager.dock_height_for_output(second), 48);
+    }
 }
