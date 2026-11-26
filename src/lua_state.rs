@@ -3,12 +3,14 @@
 // Bridges `Snapshot` and `CompCmd` so Lua scripts can keybind, reload,
 // and query state — matching Hyprland's `hl.bind`, `hl.define_submap`, `hl.dsp.*`, `hl.config{}`.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use flume::Sender;
 use mlua::{Function, Lua, RegistryKey, Table};
+use serde_json::Value;
 use xkbcommon::xkb;
 
+use crate::control::{Event, EventKind};
 use crate::wm::{DecorationConfig, DockEntry, TilingLayout, WmMode};
 
 /// Display/input settings supplied by Lua config. Shared with the compositor
@@ -409,6 +411,74 @@ pub(crate) fn call_keybind_callback(lua: &Lua, kb: &Keybind) -> Result<(), mlua:
     }
 }
 
+/// One `es.on(kind, fn)` subscriber. `Arc` lets the hook vector be cloned out
+/// of its mutex before callbacks run — re-entrant setters would otherwise find
+/// the mutex acting like a bouncer who refuses to let anyone leave the party.
+#[derive(Clone)]
+pub struct EventHook {
+    kind: EventKind,
+    callback: Arc<RegistryKey>,
+}
+
+/// Shared hook registry. State owns one instance; `es.on` pushes into it.
+pub type EventHooks = Arc<Mutex<Vec<EventHook>>>;
+
+/// Convert one JSON value into a Lua value. Event data is JSON at the socket
+/// boundary and a table in Lua; arrays keep 1-based Lua indices.
+fn json_to_lua(lua: &Lua, value: &Value) -> Result<mlua::Value, mlua::Error> {
+    match value {
+        Value::Null => Ok(mlua::Value::Nil),
+        Value::Bool(v) => Ok(mlua::Value::Boolean(*v)),
+        Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Ok(mlua::Value::Integer(i))
+            } else if let Some(f) = n.as_f64() {
+                Ok(mlua::Value::Number(f))
+            } else {
+                Err(mlua::Error::RuntimeError("invalid event number".into()))
+            }
+        }
+        Value::String(s) => Ok(mlua::Value::String(lua.create_string(s)?)),
+        Value::Array(items) => {
+            let table = lua.create_table()?;
+            for (index, item) in items.iter().enumerate() {
+                table.set(index + 1, json_to_lua(lua, item)?)?;
+            }
+            Ok(mlua::Value::Table(table))
+        }
+        Value::Object(map) => {
+            let table = lua.create_table()?;
+            for (key, item) in map {
+                table.set(key.as_str(), json_to_lua(lua, item)?)?;
+            }
+            Ok(mlua::Value::Table(table))
+        }
+    }
+}
+
+/// Fire hooks for one flushed batch. The hook list is copied before any Lua
+/// runs, and each error is returned so the caller can log it without stopping
+/// the remaining subscribers.
+pub(crate) fn fire_event_hooks(lua: &Lua, hooks: &EventHooks, events: &[Event]) -> Vec<String> {
+    let snapshot = hooks.lock().unwrap().clone();
+    let mut errors = Vec::new();
+    for event in events {
+        for hook in &snapshot {
+            if hook.kind != event.kind {
+                continue;
+            }
+            let result = (|| -> Result<(), mlua::Error> {
+                let function: Function = lua.registry_value(&hook.callback)?;
+                let data = json_to_lua(lua, &event.data)?;
+                function.call::<()>(data)
+            })();
+            if let Err(err) = result {
+                errors.push(format!("{}: {err}", event.kind.as_str()));
+            }
+        }
+    }
+    errors
+}
 
 fn parse_keysym_name(name: &str) -> Result<u32, mlua::Error> {
     let sym = xkb::keysym_from_name(name, xkb::KEYSYM_CASE_INSENSITIVE);
@@ -444,11 +514,15 @@ fn parse_keybind_string(keybind: &str) -> (Vec<String>, String) {
 /// are checked during key event processing.
 /// `decoration` is shared with the WM so `es.dsp.set_*` config calls mutate
 /// live border/gap/color values that the renderer reads each frame.
+// Eight upvalues is two hands short of a good time; grouping them is a later
+// refactor, not a reason to fail the gate today.
+#[allow(clippy::too_many_arguments)]
 pub fn register_api(
     lua: &Lua,
     _snapshot: Arc<std::sync::Mutex<crate::ipc::Snapshot>>,
     cmd_tx: &Sender<crate::ipc::CompCmd>,
     lua_keybinds: Arc<std::sync::Mutex<Vec<Keybind>>>,
+    lua_hooks: EventHooks,
     decoration: Arc<std::sync::Mutex<DecorationConfig>>,
     dock_entries: Arc<std::sync::Mutex<Vec<DockEntry>>>,
     input_config: Arc<std::sync::Mutex<InputConfig>>,
@@ -517,6 +591,18 @@ pub fn register_api(
         Ok(())
     })?;
     es.set("bind_cmd", bind_cmd)?;
+
+    // es.on(event_kind, fn) -> registers a hook for one flat e09s03 event.
+    // Unknown names fail here, at config load, instead of at first event.
+    let on = lua.create_function(move |lua, (kind, callback): (String, Function)| -> Result<(), mlua::Error> {
+        let kind = EventKind::from_name(&kind).ok_or_else(|| {
+            mlua::Error::RuntimeError(format!("unknown event kind: {kind}"))
+        })?;
+        let key = Arc::new(lua.create_registry_value(callback)?);
+        lua_hooks.lock().unwrap().push(EventHook { kind, callback: key });
+        Ok(())
+    })?;
+    es.set("on", on)?;
 
     // es.define_submap(map_name, keys) -> "ok"
     let define_submap = lua.create_function(move |_, map_name: String| -> Result<(), mlua::Error> {

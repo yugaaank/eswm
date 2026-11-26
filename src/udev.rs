@@ -791,6 +791,7 @@ if let Err(e) = crate::lua_state::register_api(
     snapshot,
     &cmd_tx,
     state.lua_keybinds.clone(),
+    state.lua_hooks.clone(),
     state.decoration.clone(),
     state.dock_entries.clone(),
     state.input_config.clone(),

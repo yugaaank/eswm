@@ -571,6 +571,13 @@ pub(crate) fn flush_events(state: &mut State) {
     if let Some(stream) = &state.events {
         stream.broadcast(&events);
     }
+    // Lua hooks see the same coalesced batch as socket subscribers. One bad
+    // callback is logged, not promoted to a compositor crash.
+    if let Some(lua) = &state.lua {
+        for err in lua_state::fire_event_hooks(lua, &state.lua_hooks, &events) {
+            tracing::warn!("lua event hook failed: {err}");
+        }
+    }
 }
 
 // Mirror client-provided app_id/title into the wm window record (snapshot/Lua).
@@ -1126,6 +1133,9 @@ pub(crate) struct State {
     lua: Option<mlua::Lua>,
     // Keybinds defined via Lua es.bind(); checked during key event processing
     pub lua_keybinds: Arc<std::sync::Mutex<Vec<lua_state::Keybind>>>,
+    // Event hooks registered via Lua es.on(); copied out of this mutex before
+    // any callback runs so a hook can re-enter config setters safely.
+    pub lua_hooks: lua_state::EventHooks,
     // Window decoration values mutated by Lua es.dsp.set_* and synced to wm each frame.
     pub decoration: Arc<std::sync::Mutex<wm::DecorationConfig>>,
     // Dock entries (active + minimized windows on the active workspace), rebuilt
@@ -1334,6 +1344,7 @@ fn new_state(
         layer_outputs: std::collections::BTreeMap::new(),
         layer_wrappers: Vec::new(),
         lua_keybinds: Arc::new(std::sync::Mutex::new(Vec::new())),
+        lua_hooks: Arc::new(std::sync::Mutex::new(Vec::new())),
         decoration: Arc::new(std::sync::Mutex::new(wm::DecorationConfig::standard())),
         dock_entries: Arc::new(std::sync::Mutex::new(Vec::new())),
         input_config: Arc::new(std::sync::Mutex::new(lua_state::InputConfig::default())),
