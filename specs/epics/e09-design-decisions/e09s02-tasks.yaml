@@ -140,7 +140,7 @@ tasks:
     verify: cargo clippy --all-targets && cargo test --bin eswm && cargo build
     risk: P2
     security: none
-    status: failing
+    status: passing
     allure:
       severity: normal
       categories:
