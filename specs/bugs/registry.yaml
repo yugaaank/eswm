@@ -134,12 +134,16 @@ bug-2026-11-17t141711:
   id: bug-2026-11-17t141711
   title: master-mode single-window border breaks at bottom
   severity: low
-  status: open
+  status: fixed
   reported_by: user_report
+  fixed_in: 6c00844
+  fixed_date: "2026-11-17T21:17:02+05:30"
   risk_level: low
   security_impact: low
   files:
     - src/udev.rs
+    - src/wm.rs
+    - src/main.rs
   description: |
     In master tiling layout with a single tiled window in a workspace, the left
     and right window borders stop short of the bottom border, leaving a visible
@@ -156,6 +160,13 @@ bug-2026-11-17t141711:
     3. Replace inline border edge construction in udev.rs with the shared helper.
   verify: |
     cargo test; cargo clippy
+  resolution: |
+    Fixed before this record was updated: commit 6c00844 added wm::border_frame
+    with side edges spanning the full frame height (rect.height + 2*border_size
+    + titlebar_height) and udev now draws all four edges from that helper.
+    Test: wm::tests::border_frame_hole_spans_titlebar_and_client. Merged into
+    local main via debec65. Full preflight green on 2026-11-26 at 97cd589:
+    cargo clippy --all-targets, 301 tests, cargo build, spec-lint.
 
 bug-2026-11-19t235000:
   id: bug-2026-11-19t235000

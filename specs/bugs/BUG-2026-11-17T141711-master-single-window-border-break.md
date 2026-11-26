@@ -43,12 +43,30 @@ Risk level: Low. One-line render-math change, confined to border element sizing.
 
 ## Acceptance Criteria
 
-- [ ] Left and right border edges span full frame height (connect to top and bottom borders, no gap).
-- [ ] Gap between side-border bottom and bottom-border top is zero for `titlebar_height = 0` and `titlebar_height > 0`.
-- [ ] All new tests pass.
-- [ ] Existing 72 tests still pass.
-- [ ] `cargo clippy` clean (no new warnings).
+- [x] Left and right border edges span full frame height (connect to top and bottom borders, no gap).
+- [x] Gap between side-border bottom and bottom-border top is zero for `titlebar_height = 0` and `titlebar_height > 0`.
+- [x] All new tests pass.
+- [x] Existing tests still pass (301 at the 2026-11-26 preflight).
+- [x] `cargo clippy` clean (no new warnings).
 
 ## Resolution
 
-<!-- filled in by validate-fix -->
+**Fixed:** 2026-11-17 by commit `6c00844` (`fix(wm): master single-window border
+gap and work_area reposition`), merged into local `main` via `debec65`. This
+record was stale and is updated here without reimplementing the fix.
+
+**Fix:** `wm::border_frame(target, border_size, titlebar_height)` is now the
+single source of truth for all four edge rectangles. Side edges use
+`frame_h = target.height + 2*border_size + titlebar_height`, so they reach the
+bottom edge; `udev.rs` builds every border element from the helper. With
+`titlebar_height = 0` the same formula gives `frame_h = height + 2*border_size`,
+so the no-gap invariant holds with and without a titlebar. The same commit also
+re-ran `arrange_output` after `set_work_area` and added `WindowManager::mark_dirty`;
+those parts are not needed for the border math but travelled with the fix.
+
+**Evidence:** `wm::tests::border_frame_hole_spans_titlebar_and_client` asserts
+the full frame height and the titlebar-plus-client hole. Full local gate at
+`97cd589` (2026-11-26): `cargo clippy --all-targets`, `cargo test` (301 passed),
+`cargo build`, `python3 scripts/spec-lint.py` — all green. The borders finally
+hold hands all the way into the bottom corners; no more vanishing act at the
+down area.
