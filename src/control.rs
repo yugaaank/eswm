@@ -370,3 +370,22 @@ fn parse_mode(name: &str) -> Option<ClientMode> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn event_model_frame_shape_is_seq_kind_data() {
+        let event = Event {
+            seq: 7,
+            kind: EventKind::WindowActive,
+            data: json!({"id": 42}),
+        };
+        let frame = event.frame();
+        let parsed: Value = serde_json::from_str(&frame).expect("frame is NDJSON");
+        assert_eq!(parsed, json!({"seq": 7, "kind": "window_active", "data": {"id": 42}}));
+        assert!(!frame.contains(">>"), "eswm frames are not Hyprland text");
+        assert!(!frame.contains("\"window.active\""), "eswm names are flat");
+    }
+}
