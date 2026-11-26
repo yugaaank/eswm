@@ -154,7 +154,8 @@ tasks:
     verify: 'manual: on a TTY with two outputs, run the checklist in specs/epics/e09-design-decisions/e09s02-output-model.md and record in specs/verifications/e09s02-verify.yaml'
     risk: P2
     security: none
-    status: failing
+    status: passing
+    acceptance: 'operator marked correct 2026-11-26T02:13:15Z without hardware (one display available); risk acceptance recorded in specs/verifications/e09s02-verify.yaml, not a hardware verification'
     allure:
       severity: normal
       categories:

@@ -29,12 +29,25 @@ phases:
     exit_code: 0
     note: "Single contiguous run at HEAD 4292bca: clippy warning-free, 254 passed, build green, spec-lint ok."
   manual:
-    passed: false
-    pending: true
-    reason: "t11 live DRM UAT is operator-only and has not been performed. Two-output position/scale/dock behaviour on real hardware cannot be proven by unit tests; this gate stays open until the operator records results."
+    passed: true
+    pending: false
+    accepted_at: "2026-11-26T02:13:15Z"
+    accepted_by: operator
+    verification_mode: operator_acceptance_without_hardware
+    reason: "Operator has only one physical display and cannot run the two-output live DRM checklist. Operator explicitly marked t11 correct on that basis. This is a recorded risk acceptance, NOT a hardware verification: no two-monitor behaviour was observed on a TTY, and the items below remain unconfirmed."
     checklist: specs/verifications/uat-2026-11-26-e09s02-live-drm.md
+    unconfirmed_checks:
+      - "Two monitors present with correct x-offsets in j/monitors and output.list"
+      - "focused flag follows the pointer across the seam"
+      - "independent per-output scale"
+      - "bars / layer surfaces land on their requested output"
+      - "per-output work areas and window placement"
+      - "pointer seam crossing and union-edge clamping"
+      - "popup containment inside the parent output"
+      - "per-output dock heights, entries and click behaviour"
+      - "hotplug disconnect/reconnect and single-output regression"
     automated_proxy: "output_model (7), output_config (2), output_connect (1), layer_output (1), focused_output (2), pointer_bounds (3), dock_per_output (2), ipc_outputs (3) tests. These prove geometry, routing, JSON shapes and cache keys; they cannot prove real per-output scaling, bar placement or cursor feel on hardware."
-    gate: "No merge into local main and no push until the operator records all checklist items PASS here and gives explicit go-ahead."
+    gate: "Operator marked t11 correct without hardware. Local merge requires an explicit operator instruction; nothing is pushed to origin/main."
   security_scan:
     skipped: true
     reason: "All tasks marked security: none — output geometry, layer routing, input clamping, dock and IPC JSON only; no new auth, untrusted-data or persistence surface."
