@@ -137,7 +137,7 @@ tasks:
     verify: cargo test --bin eswm event_stream
     risk: P1
     security: medium
-    status: failing
+    status: passing
     allure:
       severity: high
       categories:
