@@ -1100,7 +1100,7 @@ mod tests {
     use crate::control::{Event, EventKind};
     use crate::wm::{ClientMode, Rect, WindowManager};
     use serde_json::json;
-    use std::sync::{Arc, Mutex};
+    use std::{cell::RefCell, rc::Rc, sync::{Arc, Mutex}};
 
     type TestApi = (Lua, Arc<Mutex<Vec<Keybind>>>, Arc<Mutex<InputConfig>>, Arc<Mutex<DecorationConfig>>, flume::Receiver<crate::ipc::CompCmd>);
     fn test_api() -> TestApi {
@@ -1820,5 +1820,67 @@ mod tests {
         let source = include_str!("../config.example.lua");
         assert!(source.contains("es.dsp.set_wm_mode("), "example must use the registered setter");
         assert!(!source.contains("set_layout_mode"), "stale setter would break startup");
+    }
+
+    // e09s04t7: the compositor and Lua share one single-threaded config cell.
+    // A reader sees a setter's value on the next borrow, with no lock in between.
+    fn test_api_refcell() -> (Lua, Rc<RefCell<DecorationConfig>>) {
+        let lua = init().expect("lua init");
+        let (cmd_tx, _cmd_rx) = flume::unbounded();
+        let decoration = Rc::new(RefCell::new(DecorationConfig::standard()));
+        register_api(
+            &lua,
+            Arc::new(Mutex::new(crate::ipc::Snapshot::default())),
+            &cmd_tx,
+            Arc::new(Mutex::new(Vec::new())),
+            Arc::new(Mutex::new(Vec::new())),
+            Arc::new(Mutex::new(Vec::new())),
+            decoration.clone(),
+            Arc::new(Mutex::new(Vec::new())),
+            Arc::new(Mutex::new(InputConfig::default())),
+        )
+        .expect("register api with refcell decoration");
+        (lua, decoration)
+    }
+
+    #[test]
+    fn decoration_refcell_lua_setter_visible_immediately() {
+        let (lua, decoration) = test_api_refcell();
+        lua.load(
+            r#"
+            es.config { border_size = 9, outer_gap = 6, inner_gap = 3 }
+            es.dsp.set_border_color_focused(1, 2, 3, 4)
+            "#,
+        )
+        .exec()
+        .expect("config values applied");
+        let cfg = decoration.borrow();
+        assert_eq!(cfg.border_size, 9);
+        assert_eq!(cfg.outer, 6);
+        assert_eq!(cfg.inner, 3);
+        assert_eq!(cfg.border_color_focused, [1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn decoration_refcell_setters_do_not_hold_borrows() {
+        let (lua, decoration) = test_api_refcell();
+        {
+            let first = decoration.borrow();
+            let second = decoration.borrow();
+            assert_eq!(first.titlebar_height, second.titlebar_height);
+        }
+        lua.load(
+            r#"
+            es.dsp.set_border_size(11)
+            es.dsp.set_titlebar_height(31)
+            es.dsp.set_outer_gap(7)
+            "#,
+        )
+        .exec()
+        .expect("consecutive setters");
+        let cfg = decoration.borrow();
+        assert_eq!(cfg.border_size, 11);
+        assert_eq!(cfg.titlebar_height, 31);
+        assert_eq!(cfg.outer, 7);
     }
 }
