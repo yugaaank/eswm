@@ -3654,4 +3654,24 @@ mod tests {
         assert_eq!(hole_w, 800);
         assert_eq!(hole_h, 600 + 24);
     }
+
+    // e09s02t1 — outputs stop pretending they all live at (0,0); each new
+    // connector gets an actual seat in the global coordinate space.
+    #[test]
+    fn output_model_auto_position_places_next_output_to_the_right() {
+        let mut manager = WindowManager::new();
+        assert_eq!(manager.auto_output_position(), (0, 0));
+
+        manager.add_output(
+            "laptop",
+            Rect { x: 0, y: 0, width: 1920, height: 1080 },
+        );
+        assert_eq!(manager.auto_output_position(), (1920, 0));
+
+        manager.add_output(
+            "hdmi",
+            Rect { x: 1920, y: 0, width: 1280, height: 720 },
+        );
+        assert_eq!(manager.auto_output_position(), (3200, 0));
+    }
 }
