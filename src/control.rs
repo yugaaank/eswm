@@ -867,4 +867,50 @@ mod tests {
         drop(stale);
         assert!(EventStream::start_at(path.0.clone()).is_ok());
     }
+
+    #[test]
+    fn control_hardening_control_socket_is_0600_with_live_peer_guard() {
+        let path = TempSocket::new("control-mode");
+        let control = Control::start_at(path.0.clone()).expect("bind control socket");
+        let mode = std::fs::metadata(&path.0).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert!(Control::start_at(path.0.clone()).is_err(), "live peer owns the path");
+        drop(control);
+    }
+
+    #[test]
+    fn control_hardening_line_cap_rejects_oversized_line() {
+        let (mut writer, reader) = UnixStream::pair().unwrap();
+        let mut reader = BufReader::new(reader);
+        writer.write_all(&vec![b'x'; MAX_LINE_BYTES + 1024]).unwrap();
+        assert!(matches!(read_capped_line(&mut reader), CappedLine::TooLong));
+
+        let (mut writer, reader) = UnixStream::pair().unwrap();
+        let mut reader = BufReader::new(reader);
+        writer.write_all(b"{\"id\":1,\"cmd\":\"state\"}\n").unwrap();
+        match read_capped_line(&mut reader) {
+            CappedLine::Line(line) => assert_eq!(line.trim(), "{\"id\":1,\"cmd\":\"state\"}"),
+            other => panic!("a short line must be accepted: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn control_hardening_peer_cred_matches_caller() {
+        let (local, peer) = UnixStream::pair().unwrap();
+        let cred = peer_cred(&local).expect("SO_PEERCRED on a connected socket");
+        assert_eq!(cred.uid, unsafe { libc::getuid() });
+        assert_eq!(cred.pid, std::process::id() as i32);
+        drop(peer);
+    }
+
+    #[test]
+    fn control_hardening_denies_exec_config_reload_and_eval() {
+        for cmd in ["exec", "config", "config.write", "reload", "eval"] {
+            let reply = denied_reply(cmd, &json!(7)).expect("denied");
+            let parsed: Value = serde_json::from_str(&reply).unwrap();
+            assert_eq!(parsed, json!({"id": 7, "error": "denied", "code": 7}), "{cmd}");
+        }
+        assert!(denied_reply("state", &json!(7)).is_none());
+        assert!(denied_reply("window.focus", &json!(7)).is_none());
+    }
 }
