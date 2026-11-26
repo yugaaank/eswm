@@ -722,4 +722,52 @@ mod tests {
         );
         assert!(keybinds.lock().unwrap().is_empty(), "failed bind must not register");
     }
+
+    // e09s02t3 — output geometry is config, not a hardcoded (0,0) for every
+    // connector. Bad values must be rejected before they reach the DRM backend.
+    #[test]
+    fn output_config_per_output_position_and_dock_height() {
+        let mut cfg = DecorationConfig::standard();
+        assert_eq!(cfg.output_position("HDMI-A-1"), None);
+        assert!(cfg.set_output_position("HDMI-A-1", 1920, 0));
+        assert_eq!(cfg.output_position("HDMI-A-1"), Some((1920, 0)));
+        assert!(!cfg.set_output_position("HDMI-A-1", 1920, 0), "no-op is not a change");
+        assert!(!cfg.set_output_position("", 0, 0), "nameless output is rejected");
+        assert!(!cfg.set_output_position("HDMI-A-1", 1 << 20, 0), "absurd coord");
+
+        assert_eq!(cfg.dock_height_for("HDMI-A-1"), 0);
+        assert!(cfg.set_output_dock_height("HDMI-A-1", 48));
+        assert_eq!(cfg.dock_height_for("HDMI-A-1"), 48);
+        assert_eq!(cfg.dock_height_for("eDP-1"), 0);
+        cfg.dock_height = 24;
+        assert_eq!(cfg.dock_height_for("eDP-1"), 24, "global setter is the default");
+        assert_eq!(cfg.dock_height_for("HDMI-A-1"), 48, "per-output wins");
+        assert!(!cfg.set_output_dock_height("eDP-1", 257), "dock height capped");
+    }
+
+    #[test]
+    fn output_config_lua_setters_validate_and_store() {
+        let (lua, _keybinds, _input_config, decoration, _cmd_rx) = test_api();
+        lua.load(
+            r#"
+            es.dsp.set_output_position("HDMI-A-1", 1920, 0)
+            es.dsp.set_output_dock_height("HDMI-A-1", 40)
+            es.dsp.set_dock_height(24)
+            "#,
+        )
+        .exec()
+        .expect("per-output setters");
+        {
+            let cfg = decoration.lock().unwrap();
+            assert_eq!(cfg.output_position("HDMI-A-1"), Some((1920, 0)));
+            assert_eq!(cfg.dock_height_for("HDMI-A-1"), 40);
+            assert_eq!(cfg.dock_height_for("eDP-1"), 24);
+        }
+
+        assert!(lua.load(r#"es.dsp.set_output_dock_height("HDMI-A-1", 999)"#).exec().is_err());
+        assert!(lua.load(r#"es.dsp.set_output_position("HDMI-A-1", 1e20, 0)"#).exec().is_err());
+        let cfg = decoration.lock().unwrap();
+        assert_eq!(cfg.output_position("HDMI-A-1"), Some((1920, 0)), "invalid Lua left config untouched");
+        assert_eq!(cfg.dock_height_for("HDMI-A-1"), 40, "invalid Lua left dock untouched");
+    }
 }
