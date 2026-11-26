@@ -98,7 +98,7 @@ tasks:
     verify: cargo test --bin eswm lua_stub
     risk: P2
     security: none
-    status: failing
+    status: passing
     allure:
       severity: normal
       categories:
