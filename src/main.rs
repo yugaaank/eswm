@@ -675,9 +675,12 @@ impl State {
                 work_area.loc.x, work_area.loc.y, work_area.size.w, work_area.size.h,
                 self.layer_wrappers.len(), dock_h, wa.x, wa.y, wa.width, wa.height
             );
-            if let Some(output_id) = self.wm.primary_output_id() {
+            if self.wm.primary_output_id().is_some() {
                 self.wm.mark_dirty();
-                self.wm.arrange_output(output_id);
+                // The dirty flag is global: arrange every output in one pass
+                // or the second monitor keeps wearing last season's geometry.
+                let ids = self.wm.outputs().map(|output| output.id).collect::<Vec<_>>();
+                self.wm.arrange_outputs(ids);
                 apply_layout(self);
             }
         }

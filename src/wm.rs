@@ -1650,11 +1650,12 @@ impl WindowManager {
         });
         let id = self.next_window;
         self.next_window += 1;
-        let geometry = self.outputs.get(&output)?.geometry;
-        // Floating placement respects the work area (waybar/dock excluded),
-        // not the raw output geometry, or windows spawn over panels.
+        // Keep the existence check but drop the binding: floating placement
+        // respects the work area, not the raw geometry (windows used to spawn
+        // over panels like a cat on a warm keyboard).
+        self.outputs.get(&output)?;
         let floating_rect = match mode {
-            m if m.placement == Placement::Floating => Some(self.floating_target(self.work_area.unwrap_or(geometry))),
+            m if m.placement == Placement::Floating => Some(self.floating_target(self.work_area_for_output(output))),
             _ => None,
         };
         self.windows.insert(
@@ -2077,8 +2078,7 @@ impl WindowManager {
 
     /// Inner geometry used by `arrange_output` for tiled cells.
     fn inner_rect_for_output(&self, output: OutputId) -> Option<Rect> {
-        let state = self.outputs.get(&output)?;
-        let base = self.work_area.unwrap_or(state.geometry);
+        let base = self.work_area_for_output(output);
         let bp = self.border_size as i32;
         let tb_h = self.titlebar_height as i32;
         Some(Rect {
@@ -2194,6 +2194,16 @@ impl WindowManager {
         true
     }
 
+    /// Arrange several outputs in one pass. `arrange_output` consumes the
+    /// global dirty flag, so each output gets a fresh mark — otherwise the
+    /// second monitor quietly keeps last season's geometry.
+    pub fn arrange_outputs(&mut self, outputs: impl IntoIterator<Item = OutputId>) {
+        for output in outputs {
+            self.dirty = true;
+            self.arrange_output(output);
+        }
+    }
+
     pub fn arrange_output(&mut self, output: OutputId) {
         if !self.dirty {
             return;
@@ -2221,7 +2231,7 @@ impl WindowManager {
             let rect = if window.mode.presentation == Presentation::Fullscreen {
                 output_state.geometry
             } else {
-                let base = self.work_area.unwrap_or(output_state.geometry);
+                let base = self.work_area_for_output(output);
                 let bp = self.border_size as i32;
                 let tb_h = self.titlebar_height as i32;
                 Rect {
@@ -2252,7 +2262,7 @@ impl WindowManager {
         let outer = self.outer;
         let inner_gap = self.inner;
         // when set, otherwise fall back to the full output geometry.
-        let base = self.work_area.unwrap_or(output_state.geometry);
+        let base = self.work_area_for_output(output);
         // Inner geometry inset by gap on all sides so gaps/borders show.
         // Also account for the titlebar+borders: the window frame is drawn
         // extending titlebar_height+border ABOVE target_rect.y, so without
