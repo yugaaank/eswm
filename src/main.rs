@@ -661,6 +661,21 @@ fn register_toplevel_on_first_commit(state: &mut State, surface: &WlSurface) -> 
     let Some(id) = state.wm.add_window(output_id, app_id, title) else {
         return false;
     };
+    // e09s05t4: shell clients learn a window's class from this event. Emitting
+    // it at creation (rather than waiting for a later metadata sync) means the
+    // open + class frames land in the same tick with the real app_id. Windows
+    // without an app_id stay quiet until the client reports one.
+    if let Some(class) = state
+        .wm
+        .window(id)
+        .map(|w| w.app_id.clone())
+        .filter(|class| !class.is_empty())
+    {
+        state
+            .wm
+            .events
+            .queue(EventKind::WindowClass, json!({"id": id, "class": class}));
+    }
     with_states(surface, |states| {
         states.data_map.insert_if_missing(|| id);
     });
