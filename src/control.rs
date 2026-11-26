@@ -241,6 +241,14 @@ impl EventStream {
     }
 }
 
+#[cfg(test)]
+impl EventBus {
+    /// Inspect pending frames without consuming them; producers use flush().
+    pub fn pending(&self) -> &[Event] {
+        &self.pending
+    }
+}
+
 fn hello_frame() -> String {
     let events: Vec<&str> = EventKind::ALL.iter().map(|kind| kind.as_str()).collect();
     json!({"seq": 0, "kind": "hello", "data": {"version": 1, "events": events}}).to_string()

@@ -1,6 +1,10 @@
 use std::collections::{BTreeMap, HashMap};
 use std::time::{Duration, Instant};
 
+use serde_json::json;
+
+use crate::control::{EventBus, EventKind};
+
 pub type OutputId = u64;
 pub type WindowId = u64;
 pub type WorkspaceId = i32;
@@ -513,6 +517,9 @@ pub struct WindowManager {
     outputs: BTreeMap<OutputId, Output>,
     workspaces: BTreeMap<WorkspaceId, Workspace>,
     windows: BTreeMap<WindowId, Window>,
+    /// e09s03: the WM has a mouth now, but it waits for the compositor tick
+    /// to hand the microphone to the event socket.
+    pub events: EventBus,
     wm_mode: WmMode,
     cascade_count: u32,
     /// Outer gap (px) between tiled windows and the output / work-area edge.
@@ -1413,13 +1420,27 @@ impl WindowManager {
     }
 
     pub fn set_window_meta(&mut self, id: WindowId, app_id: String, title: String) -> bool {
-        if let Some(window) = self.windows.get_mut(&id) {
+        let (class_changed, title_changed) = {
+            let Some(window) = self.windows.get_mut(&id) else {
+                return false;
+            };
+            let class_changed = window.app_id != app_id;
+            let title_changed = window.title != title;
             window.app_id = app_id;
             window.title = title;
             self.dirty = true;
-            return true;
+            (class_changed, title_changed)
+        };
+        // Clients commit metadata on every frame; only changes are events.
+        if title_changed {
+            let title = self.windows.get(&id).map(|w| w.title.clone()).unwrap_or_default();
+            self.events.queue(EventKind::WindowTitle, json!({"id": id, "title": title}));
         }
-        false
+        if class_changed {
+            let class = self.windows.get(&id).map(|w| w.app_id.clone()).unwrap_or_default();
+            self.events.queue(EventKind::WindowClass, json!({"id": id, "class": class}));
+        }
+        true
     }
 
     // Create the workspace if missing (binding Super+N), return true if usable on `output`.
@@ -1803,6 +1824,9 @@ impl WindowManager {
             target.windows.push(id);
         }
         self.workspaces.get_mut(&workspace)?.focused = Some(id);
+        // One open stage only: a later mapped commit has the same id and
+        // coalesces into this frame rather than shouting twice.
+        self.events.queue(EventKind::WindowOpen, json!({"id": id}));
         self.focus_window(id);
         self.arrange_output(output);
         Some(id)
@@ -1810,6 +1834,7 @@ impl WindowManager {
 
     pub fn remove_window(&mut self, id: WindowId) -> Option<Window> {
         let window = self.windows.remove(&id)?;
+        self.events.queue(EventKind::WindowClose, json!({"id": id}));
         self.dirty = true;
         if let Some(workspace) = self.workspaces.get_mut(&window.workspace) {
             workspace.windows.retain(|window_id| *window_id != id);
@@ -1857,6 +1882,7 @@ impl WindowManager {
         self.focused = Some(id);
         self.focus_history.retain(|w| *w != id);
         self.focus_history.insert(0, id);
+        self.events.queue(EventKind::WindowActive, json!({"id": id}));
         true
     }
 
@@ -1887,6 +1913,8 @@ impl WindowManager {
             // Reset target rect; arrange_output sets it if the new workspace is active.
             window_state.target_rect = Rect::default();
         }
+        self.events
+            .queue(EventKind::WindowWorkspace, json!({"id": id, "workspace": workspace}));
         let moved_output = window.output;
         self.clear_focus_on_output(moved_output);
         // Keep keyboard focus alive via MRU (the moved window left the active
@@ -1972,9 +2000,15 @@ impl WindowManager {
             )
         };
 
-        if let Some(window) = self.windows.get_mut(&id) {
+        let minimized = if let Some(window) = self.windows.get_mut(&id) {
             window.minimized = !window.minimized;
-        }
+            window.minimized
+        } else {
+            return false;
+        };
+        let mode_name = if minimized { "minimized" } else { "normal" };
+        self.events
+            .queue(EventKind::WindowMode, json!({"id": id, "mode": mode_name}));
 
         if was_focused && !was_minimized {
             // Minimizing the focused window: keep focus on it (invisible now).
@@ -2106,10 +2140,15 @@ impl WindowManager {
         let Some(window) = self.windows.get_mut(&id) else {
             return false;
         };
+        let changed = window.mode != mode;
         window.mode = mode;
         self.dirty = true;
         let output = window.output;
         self.arrange_output(output);
+        if changed {
+            self.events
+                .queue(EventKind::WindowMode, json!({"id": id, "mode": mode.mode_name()}));
+        }
         true
     }
 
