@@ -29,7 +29,7 @@ tasks:
     verify: cargo test --bin eswm event_bus
     risk: P2
     security: none
-    status: failing
+    status: passing
     allure:
       severity: normal
       categories:
