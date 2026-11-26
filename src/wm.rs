@@ -3049,6 +3049,30 @@ mod tests {
     }
 
     #[test]
+    fn output_events_window_focus_changes_active_monitor() {
+        let mut manager = WindowManager::new();
+        let first = manager.add_output(
+            "eDP-1",
+            Rect { x: 0, y: 0, width: 1920, height: 1080 },
+        );
+        let second = manager.add_output(
+            "HDMI-A-1",
+            Rect { x: 1920, y: 0, width: 1280, height: 720 },
+        );
+        let first_window = manager.add_window(first, "a", "one").unwrap();
+        let second_window = manager.add_window(second, "b", "two").unwrap();
+        assert!(manager.focus_window(first_window));
+        let _ = manager.events.flush();
+
+        // Pointer is outside every output, so window focus is the only voter.
+        assert!(manager.focus_window(second_window));
+        assert_eq!(
+            output_events(&manager),
+            vec![(EventKind::MonitorActive, json!({"id": second}))]
+        );
+    }
+
+    #[test]
     fn output_events_geometry_change_queues_monitor_layout() {
         let (mut manager, output) = manager();
         let _ = manager.events.flush();
