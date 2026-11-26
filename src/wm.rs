@@ -1027,11 +1027,16 @@ impl WindowManager {
         let id = self.next_output;
         self.next_output += 1;
         let workspace = self.first_workspace_for_new_output(id);
+        let name = name.into();
+        self.events.queue(
+            EventKind::MonitorAdded,
+            json!({"id": id, "name": name}),
+        );
         self.outputs.insert(
             id,
             Output {
                 id,
-                name: name.into(),
+                name,
                 geometry,
                 work_area: None,
                 dock_height: 0,
@@ -1066,6 +1071,11 @@ impl WindowManager {
         }
         output.geometry = geometry;
         self.dirty = true;
+        self.events.queue(
+            EventKind::MonitorLayout,
+            json!({"id": id, "x": geometry.x, "y": geometry.y,
+                   "width": geometry.width, "height": geometry.height}),
+        );
         true
     }
 
@@ -1083,6 +1093,7 @@ impl WindowManager {
         if self.outputs.remove(&id).is_none() {
             return false;
         }
+        self.events.queue(EventKind::MonitorRemoved, json!({"id": id}));
         let survivor = self.outputs.keys().next().copied();
         let orphaned: Vec<WorkspaceId> = self
             .workspaces
@@ -1151,7 +1162,14 @@ impl WindowManager {
     /// Record which output the pointer is over. None means "outside every
     /// output", which lets window focus decide the focused output instead.
     pub fn set_pointer_output(&mut self, output: Option<OutputId>) {
+        let before = self.focused_output_id();
         self.pointer_output = output.filter(|id| self.outputs.contains_key(id));
+        let after = self.focused_output_id();
+        if before != after
+            && let Some(id) = after
+        {
+            self.events.queue(EventKind::MonitorActive, json!({"id": id}));
+        }
     }
 
     /// Hit-test a global pointer position and update the pointer's output.
@@ -1460,11 +1478,16 @@ impl WindowManager {
         if !self.outputs.contains_key(&output) || self.workspaces.contains_key(&id) {
             return false;
         }
+        let name = name.into();
+        self.events.queue(
+            EventKind::WorkspaceCreated,
+            json!({"id": id, "name": name}),
+        );
         self.workspaces.insert(
             id,
             Workspace {
                 id,
-                name: name.into(),
+                name,
                 output,
                 windows: Vec::new(),
                 focused: None,
@@ -1485,6 +1508,7 @@ impl WindowManager {
         };
         output_state.active_workspace = workspace;
         self.dirty = true;
+        self.events.queue(EventKind::WorkspaceActive, json!({"id": workspace}));
         self.clear_focus_on_output(output);
         if self.focused.is_none() {
             self.focus_from_mru(None);
