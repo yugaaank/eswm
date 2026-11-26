@@ -1750,12 +1750,74 @@ mod tests {
     // Imported here, not at module scope: only the tests construct a Display,
     // so a crate-level import is dead weight (and clippy --fix deletes it).
     use smithay::reexports::wayland_server::Display;
-    use crate::control::handle_request;
-    use serde_json::Value;
+    use crate::control::{EventKind, handle_request};
+    use serde_json::{Value, json};
     use wayland_protocols::xdg::activation::v1::client::{
         xdg_activation_token_v1::{self, XdgActivationTokenV1},
         xdg_activation_v1::{self, XdgActivationV1},
     };
+
+    fn queued_layer_events(state: &State) -> Vec<(EventKind, Value)> {
+        state
+            .wm
+            .events
+            .pending()
+            .iter()
+            .map(|event| (event.kind, event.data.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn layer_events_opened_queues_layer_opened() {
+        let mut state = test_state();
+        let output = state.wm.focused_output_id().unwrap();
+        queue_layer_event(&mut state, EventKind::LayerOpened, Some(output));
+        assert_eq!(
+            queued_layer_events(&state),
+            vec![(EventKind::LayerOpened, json!({"id": output}))]
+        );
+    }
+
+    #[test]
+    fn layer_events_closed_queues_layer_closed() {
+        let mut state = test_state();
+        let output = state.wm.focused_output_id().unwrap();
+        queue_layer_event(&mut state, EventKind::LayerClosed, Some(output));
+        assert_eq!(
+            queued_layer_events(&state),
+            vec![(EventKind::LayerClosed, json!({"id": output}))]
+        );
+    }
+
+    #[test]
+    fn layer_events_without_target_output_is_silent() {
+        let mut state = test_state();
+        queue_layer_event(&mut state, EventKind::LayerOpened, None);
+        queue_layer_event(&mut state, EventKind::LayerClosed, None);
+        assert!(queued_layer_events(&state).is_empty());
+    }
+
+    #[test]
+    fn layer_events_config_reload_queues_one_global_frame() {
+        let mut state = test_state();
+        queue_config_reloaded(&mut state);
+        queue_config_reloaded(&mut state);
+        let flushed = state.wm.events.flush();
+        assert_eq!(flushed.len(), 1, "global kinds coalesce within a tick");
+        assert_eq!(flushed[0].kind, EventKind::ConfigReloaded);
+        assert_eq!(flushed[0].data, json!({}));
+    }
+
+    #[test]
+    fn layer_events_ready_queued_once_after_sockets() {
+        let mut state = test_state();
+        queue_ready(&mut state);
+        queue_ready(&mut state);
+        let flushed = state.wm.events.flush();
+        assert_eq!(flushed.len(), 1);
+        assert_eq!(flushed[0].kind, EventKind::Ready);
+        assert_eq!(flushed[0].data, json!({}));
+    }
 
     fn test_state() -> State {
         let display: Display<State> = Display::new().expect("create test display");
