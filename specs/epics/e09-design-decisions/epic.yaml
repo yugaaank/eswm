@@ -18,7 +18,7 @@ stories:
     title: "Output model: position, scale, work area, LayerMap per output; focused output"
     bcps: 2
     delta: MODIFIED
-    status: pending
+    status: completed
   - id: e09s03
     title: "IPC protocol: events stream, subscribe semantics, security"
     bcps: 2

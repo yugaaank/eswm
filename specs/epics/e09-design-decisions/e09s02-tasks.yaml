@@ -1,7 +1,7 @@
 spec: specs/epics/e09-design-decisions/e09s02-output-model.md
 story_id: e09s02
 title: 'Output model: position, scale, work area, LayerMap per output; focused output'
-status: pending
+status: completed
 bcps: 2
 tasks:
   - id: e09s02t1

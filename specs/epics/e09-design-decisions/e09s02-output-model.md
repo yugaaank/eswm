@@ -4,7 +4,7 @@
 **type:** refactor
 **risk:** P1 (revised from P3 after `specs/IMPACT_LATEST.md`: High blast radius across shared WM/IPC/Lua interfaces)
 **context:** output model
-**status:** pending
+**status:** completed
 **bcps:** 2
 **delta:** MODIFIED
 
