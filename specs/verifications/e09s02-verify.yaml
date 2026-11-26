@@ -1,0 +1,51 @@
+story_id: e09s02
+verified_at: "2026-11-26T01:29:11Z"
+verifier: develop-tdd
+risk: P1
+branch: e09s02-output-model
+head: 4292bca0107c6f56fbff87302eeafc8187cb5f70
+phases:
+  branch_check:
+    passed: true
+    branch: e09s02-output-model
+    note: "Worked from local main after the rounded-corner shader/relicense commit (b8d4c2c) landed; e09s02 lock held by agent develop-tdd in specs/agent-locks.yaml."
+  preflight:
+    passed: true
+    command: "cargo clippy --all-targets && cargo test --bin eswm && cargo build"
+    note: "Final contiguous run at HEAD 4292bca: clippy warning-free, 254 passed, build green."
+  task_verification:
+    t1: {command: "cargo test --bin eswm output_model", passed: true, result: "7 passed — auto position, union bounds, hit-test, focus fallback, per-output work area/dock"}
+    t2: {command: "cargo test --bin eswm output_model", passed: true, result: "covered above — primary_output_id retired; arrange_outputs and per-output work areas"}
+    t3: {command: "cargo test --bin eswm output_config", passed: true, result: "2 passed — Lua per-output position/dock setters, validation and storage"}
+    t4: {command: "cargo test --bin eswm output_connect", passed: true, result: "1 passed — configured/auto position and scale on connect, layer_outputs setup"}
+    t5: {command: "cargo test --bin eswm layer_output", passed: true, result: "1 passed — layer routing by requested output and local work area"}
+    t6: {command: "cargo test --bin eswm focused_output", passed: true, result: "2 passed — pointer output tracking and focused/primary JSON"}
+    t7: {command: "cargo test --bin eswm pointer_bounds", passed: true, result: "3 passed — union clamping, window.move_to origin, popup constraint"}
+    t8: {command: "cargo test --bin eswm dock_per_output", passed: true, result: "2 passed — per-output strips/entries and cache signature"}
+    t9: {command: "cargo test --bin eswm ipc_outputs", passed: true, result: "3 passed — per-output monitors JSON, legacy shape, focused-derived tuple"}
+    t10: {command: "cargo clippy --all-targets && cargo test --bin eswm && cargo build && python3 scripts/spec-lint.py", passed: true, result: "254 passed, 0 warnings, spec-lint ok, exit 0"}
+  terminal_verdict:
+    command: "cargo clippy --all-targets && cargo test --bin eswm && cargo build && python3 scripts/spec-lint.py"
+    exit_code: 0
+    note: "Single contiguous run at HEAD 4292bca: clippy warning-free, 254 passed, build green, spec-lint ok."
+  manual:
+    passed: false
+    pending: true
+    reason: "t11 live DRM UAT is operator-only and has not been performed. Two-output position/scale/dock behaviour on real hardware cannot be proven by unit tests; this gate stays open until the operator records results."
+    checklist: specs/verifications/uat-2026-11-26-e09s02-live-drm.md
+    automated_proxy: "output_model (7), output_config (2), output_connect (1), layer_output (1), focused_output (2), pointer_bounds (3), dock_per_output (2), ipc_outputs (3) tests. These prove geometry, routing, JSON shapes and cache keys; they cannot prove real per-output scaling, bar placement or cursor feel on hardware."
+    gate: "No merge into local main and no push until the operator records all checklist items PASS here and gives explicit go-ahead."
+  security_scan:
+    skipped: true
+    reason: "All tasks marked security: none — output geometry, layer routing, input clamping, dock and IPC JSON only; no new auth, untrusted-data or persistence surface."
+  blind_spot_check:
+    skipped: true
+    reason: "scripts/check-blind-spots.sh not present (same precedent as e09s01/e10s02)."
+  gaps:
+    closed: false
+    notes:
+      - "t11 live DRM UAT pending operator; recorded as unconfirmed, never as waived."
+      - "During t10 verification the documented pointer_bounds and dock_per_output gates were found to match zero tests and pass vacuously. Fixed in 4292bca by renaming the t7/t8 tests so the filters select 3 and 2 real tests."
+      - "ipc::refresh_snapshot was previously dead code with zero callers; t9 wires it into the DRM loop so j/monitors reflects the live output model each frame."
+      - "Wire format stays additive: output.list emits focused plus a deprecated primary alias of the same output; j/monitors keeps the legacy single-winit entry when no output exists."
+      - "CI remains unverified; nothing pushed to origin/main."
