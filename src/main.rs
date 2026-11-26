@@ -104,6 +104,25 @@ impl XdgShellHandler for State {
         sync_window_meta(self, &surface);
     }
 
+    // e09s05t3: these are set/unset requests, not toggles. A client saying
+    // "unfullscreen" to an already-normal window is treated as a shrug —
+    // otherwise every video player quitting would flip it fullscreen again.
+    fn maximize_request(&mut self, surface: ToplevelSurface) {
+        set_client_presentation(self, &surface, wm::Presentation::Maximized, true);
+    }
+
+    fn unmaximize_request(&mut self, surface: ToplevelSurface) {
+        set_client_presentation(self, &surface, wm::Presentation::Maximized, false);
+    }
+
+    fn fullscreen_request(&mut self, surface: ToplevelSurface, _output: Option<WlOutput>) {
+        set_client_presentation(self, &surface, wm::Presentation::Fullscreen, true);
+    }
+
+    fn unfullscreen_request(&mut self, surface: ToplevelSurface) {
+        set_client_presentation(self, &surface, wm::Presentation::Fullscreen, false);
+    }
+
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
         // e09s05t2: prefer the direct index; the data-map tag is the fallback
         // for a surface that committed but was never indexed.
@@ -649,6 +668,34 @@ fn register_toplevel_on_first_commit(state: &mut State, surface: &WlSurface) -> 
     tracing::info!("toplevel first commit registered id={id:?}");
     crate::apply_layout(state);
     true
+}
+
+/// e09s05t3: apply a client's presentation request through the same WM toggles
+/// the keybinds use, so saved rects and placement semantics stay identical.
+fn set_client_presentation(
+    state: &mut State,
+    surface: &ToplevelSurface,
+    presentation: wm::Presentation,
+    set: bool,
+) -> bool {
+    let Some(id) = window_id_of(surface.wl_surface()) else {
+        return false;
+    };
+    let Some(window) = state.wm.window(id) else {
+        return false;
+    };
+    if set == (window.mode.presentation == presentation) {
+        return false;
+    }
+    let changed = match presentation {
+        wm::Presentation::Maximized => state.wm.toggle_maximized(id),
+        wm::Presentation::Fullscreen => state.wm.toggle_fullscreen(id),
+        wm::Presentation::Normal => false,
+    };
+    if changed {
+        crate::apply_layout(state);
+    }
+    changed
 }
 
 // Mirror client-provided app_id/title into the wm window record (snapshot/Lua).
