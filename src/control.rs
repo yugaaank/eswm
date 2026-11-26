@@ -5,6 +5,7 @@
 // state; each request carries a reply channel so socket threads never touch
 // `State`. Local, single-user socket: one thread per connection is enough.
 use std::{
+    collections::HashMap,
     io::{BufRead, BufReader, Write},
     os::unix::{
         fs::FileTypeExt,
@@ -28,7 +29,7 @@ const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 // e09s03 lands this model in stages: t1 defines the shape, t2+ wire the bus
 // and sockets. Suppress only until the first emission site constructs it.
 #[allow(dead_code)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum EventKind {
     WindowOpen,
     WindowClose,
@@ -138,6 +139,55 @@ impl Event {
             EventKind::ConfigReloaded | EventKind::Ready => None,
         };
         (self.kind, entity)
+    }
+}
+
+/// e09s03t2: transitions wait here until the tick ends. A flush yields one
+/// gap-free seq run; t3 broadcasts that run to every subscriber.
+#[allow(dead_code)]
+pub struct EventBus {
+    pending: Vec<Event>,
+    next_seq: u64,
+}
+
+#[allow(dead_code)]
+impl Default for EventBus {
+    fn default() -> Self {
+        Self {
+            pending: Vec::new(),
+            next_seq: 1,
+        }
+    }
+}
+
+#[allow(dead_code)]
+impl EventBus {
+    pub fn queue(&mut self, kind: EventKind, data: Value) {
+        self.pending.push(Event {
+            seq: 0,
+            kind,
+            data,
+        });
+    }
+
+    pub fn flush(&mut self) -> Vec<Event> {
+        let mut latest: HashMap<(EventKind, Option<u64>), usize> = HashMap::new();
+        let mut ready = Vec::new();
+        for event in self.pending.drain(..) {
+            let key = event.dedupe_key();
+            match latest.get(&key) {
+                Some(&index) => ready[index] = event,
+                None => {
+                    latest.insert(key, ready.len());
+                    ready.push(event);
+                }
+            }
+        }
+        for (offset, event) in ready.iter_mut().enumerate() {
+            event.seq = self.next_seq + offset as u64;
+        }
+        self.next_seq += ready.len() as u64;
+        ready
     }
 }
 
