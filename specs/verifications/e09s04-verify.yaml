@@ -1,0 +1,68 @@
+story_id: e09s04
+verified_at: null
+verifier: develop-tdd
+risk: P1
+branch: e09-lua-toplevel-rules
+head: 604e7592c2a6f9ac0cf28646e45d4e46c1ec4f8e
+phases:
+  branch_check:
+    passed: true
+    branch: e09-lua-toplevel-rules
+    note: "Local branch from main 14ae411; story locks for e09s04/e09s05 in specs/agent-locks.yaml. No merge and no push."
+  preflight:
+    passed: true
+    command: "cargo clippy --all-targets && cargo test && cargo build && python3 scripts/spec-lint.py"
+    note: "Final contiguous run at HEAD 604e759: clippy warning-free, 337 passed, build green, spec-lint ok (27 task files, 9 epics)."
+  task_verification:
+    t1: {command: "cargo test --bin eswm config_table", passed: true, result: "valid block applies; unknown key and wrong type error by name; no partial application"}
+    t2: {command: "cargo test --bin eswm lua_function_bind", passed: true, result: "Lua function binds register, execute with the optional arg, bad keys still error"}
+    t3: {command: "cargo test --bin eswm lua_event_hook", passed: true, result: "es.on registers, fires with event data after flush, unknown kind rejected; no key content"}
+    t4: {command: "cargo test --bin eswm lua_window_rule", passed: true, result: "rules stage, validate, replace on second load and apply at add_window"}
+    t5: {command: "cargo test --bin eswm config_reload", passed: true, result: "one reload path clears then re-executes; second load replaces; legacy configreloaded>> survives"}
+    t6: {command: "cargo test --bin eswm lua_stub", passed: true, result: "six stubs raise not implemented: <name>; is_file_exists checks the real filesystem; example uses set_wm_mode"}
+    t7: {command: "cargo test --bin eswm decoration_refcell", passed: true, result: "Rc<RefCell> setter visible immediately; no overlapping borrows"}
+  terminal_verdict:
+    command: "cargo clippy --all-targets && cargo test && cargo build && python3 scripts/spec-lint.py"
+    exit_code: 0
+    note: "Final contiguous run at HEAD 604e759 before evidence close: clippy clean, 337 tests, build green, spec-lint ok."
+  manual:
+    passed: false
+    pending: true
+    status: pending_operator_uat
+    prepared_at: "2026-11-26T17:40:08Z"
+    completed_at: null
+    owner: operator
+    checklist: specs/verifications/uat-2026-11-26-e09s04-lua-config.md
+    reason: "Agent cannot run DRM/libseat inside the existing Wayland session (VT grab would kill the operator session). Operator must run the 12-row checklist on a real TTY and return an explicit PASS / FAIL / N-A decision per row."
+    evidence: []
+    observed_pass: []
+    na_checks: []
+    failed_checks: []
+    pending_checks:
+      - "1 clean startup with the registered set_wm_mode setter"
+      - "2 declarative es.config{} values apply on reload"
+      - "3 unknown key errors by name with no partial apply"
+      - "4 wrong type errors by key with no partial apply"
+      - "5 function bind fires once per press"
+      - "6 event hook receives event data"
+      - "7 window_rule from config applies to a spawned client"
+      - "8 two reloads emit one legacy + one bus frame each, binds not duplicated"
+      - "9 failed reload keeps the previous config"
+      - "10 all six stubs raise not implemented: <name>"
+      - "11 is_file_exists returns true for a real file and false for a missing one"
+      - "12 decoration setter is visible without restart"
+    automated_proxy: "config_table, lua_function_bind, lua_event_hook, lua_window_rule, config_reload, lua_stub, decoration_refcell plus full preflight. These prove in-process validation, callback dispatch, replacement-on-reload and stub strings; they cannot prove a live TTY reload preserves the working session."
+    gate: "Not closed. Record stays pending until the operator returns explicit per-row decisions. No merge into local main and no push until explicitly authorised."
+  security_scan:
+    passed: true
+    automated_only: true
+    note: "config_reload and lua_stub cover the operator-controlled path; control socket still denies exec/config/reload/eval (e09s03 control_hardening). No key-content Lua or IPC surface added."
+  blind_spot_check:
+    skipped: true
+    reason: "scripts/check-blind-spots.sh not present (e09s01/e09s02/e09s03/e10s02 precedent)."
+  gaps:
+    closed: false
+    notes:
+      - "Manual UAT pending operator decisions; no row has been waived."
+      - "README.md §Configuration still documents es.dsp.set_layout_mode, removed before this branch; config.example.lua was fixed by e09s04t6. Logged as a doc nit, not changed here because the story scope only named the example config."
+      - "CI remains unverified per operator skip precedent; nothing pushed to origin/main."
