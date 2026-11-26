@@ -459,6 +459,10 @@ pub struct Output {
     pub id: OutputId,
     pub name: String,
     pub geometry: Rect,
+    /// Exclusive-zone-aware work area in global coordinates. None = geometry.
+    pub work_area: Option<Rect>,
+    /// Dock bar height reserved from this output's own work area.
+    pub dock_height: u32,
     pub active_workspace: WorkspaceId,
     pub tiling_layout: TilingLayout,
     /// Per-output split ratios (e10s02). Survives re-arrangement, workspace
@@ -951,6 +955,8 @@ impl WindowManager {
                 id,
                 name: name.into(),
                 geometry,
+                work_area: None,
+                dock_height: 0,
                 active_workspace: workspace,
                 tiling_layout: TilingLayout::default(),
                 splits: TilingSplits::standard(),
@@ -1070,6 +1076,52 @@ impl WindowManager {
                     .map(|window| window.output)
             })
             .or_else(|| self.outputs.keys().next().copied())
+    }
+
+    /// Work area of one output, falling back to its full geometry when no
+    /// panel has reserved an exclusive zone yet.
+    // e09s02t2 migrates layout callers off the single global work_area.
+    #[allow(dead_code)]
+    pub fn work_area_for_output(&self, id: OutputId) -> Rect {
+        self.outputs
+            .get(&id)
+            .map(|output| output.work_area.unwrap_or(output.geometry))
+            .unwrap_or_default()
+    }
+
+    /// Returns true only when the value actually changed, so callers can avoid
+    /// redundant re-layouts (and avoid waking the compositor for nothing).
+    #[allow(dead_code)]
+    pub fn set_output_work_area(&mut self, id: OutputId, work_area: Option<Rect>) -> bool {
+        let Some(output) = self.outputs.get_mut(&id) else {
+            return false;
+        };
+        if output.work_area == work_area {
+            return false;
+        }
+        output.work_area = work_area;
+        self.dirty = true;
+        true
+    }
+
+    /// Dock height used to be global, which is like giving every house the
+    /// same doormat size regardless of how wide the door is.
+    #[allow(dead_code)]
+    pub fn set_output_dock_height(&mut self, id: OutputId, height: u32) -> bool {
+        let Some(output) = self.outputs.get_mut(&id) else {
+            return false;
+        };
+        if output.dock_height == height {
+            return false;
+        }
+        output.dock_height = height;
+        self.dirty = true;
+        true
+    }
+
+    #[allow(dead_code)]
+    pub fn dock_height_for_output(&self, id: OutputId) -> u32 {
+        self.outputs.get(&id).map(|output| output.dock_height).unwrap_or(0)
     }
 
     /// Where an output with no configured position goes: just right of the
