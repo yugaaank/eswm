@@ -3981,8 +3981,10 @@ mod tests {
 
     // e09s02t7 — clamping uses the union's real edges: the cursor can reach a
     // negative-origin output and stops at the last pixel of the rightmost one.
+    // The `pointer_bounds` verify filter must find a real test, not an empty
+    // suite that passes like a hall monitor who never actually checks halls.
     #[test]
-    fn output_model_bounds_clamp_pointer() {
+    fn pointer_bounds_clamp_to_union_edges() {
         let mut manager = WindowManager::new();
         manager.add_output("laptop", Rect { x: 0, y: 0, width: 1920, height: 1080 });
         manager.add_output("portrait", Rect { x: -400, y: 100, width: 300, height: 700 });
@@ -4073,8 +4075,10 @@ mod tests {
 
     // e09s02t8 — each output has its own dock strip and its own entries; the
     // Lua-facing `dock_entries()` follows whichever output is focused.
+    // Named for the `dock_per_output` gate: a filter matching zero tests is
+    // verification theater, and the theatre has terrible seating.
     #[test]
-    fn output_model_dock_is_per_output() {
+    fn dock_per_output_strips_and_entries() {
         let mut manager = WindowManager::new();
         let laptop = manager.add_output(
             "laptop",

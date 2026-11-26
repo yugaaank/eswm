@@ -2049,9 +2049,10 @@ mod tests {
     }
 
     // e09s02t8 — identical-looking docks on two outputs must not share a
-    // cached buffer; the output id is part of the signature.
+    // cached buffer; the output id is part of the signature. Renamed so the
+    // documented `dock_per_output` gate stops passing on an empty audience.
     #[test]
-    fn dock_buffer_signature_includes_output_id() {
+    fn dock_per_output_buffer_signature_includes_id() {
         let entries = vec![wm::DockEntry {
             id: 7,
             app_id: "kitty".into(),
@@ -2069,8 +2070,9 @@ mod tests {
 
     // e09s02t7 — a floating window on the HDMI output lives at x>=1920;
     // clamping against a viewport that starts at 0 teleports it to the laptop.
+    // Gate name matters: "0 tests passed" is not a green light, it is a nap.
     #[test]
-    fn control_window_move_to_respects_output_origin() {
+    fn pointer_bounds_window_move_to_clamps_to_output_origin() {
         let mut state = test_state();
         let hdmi = state.wm.add_output(
             "hdmi",
@@ -2094,8 +2096,9 @@ mod tests {
 
     // e09s02t7 — a menu on HDMI must slide inside HDMI's work area, not the
     // focused output's or a hypothetical 1920x1080 screen at the origin.
+    // Under the `pointer_bounds` gate now — no more vacuous green checkmark.
     #[test]
-    fn popup_constraint_uses_parent_output_work_area() {
+    fn pointer_bounds_popup_constraint_uses_parent_output() {
         let mut state = test_state();
         let hdmi = state.wm.add_output(
             "hdmi",
