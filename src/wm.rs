@@ -1063,6 +1063,34 @@ impl WindowManager {
         (right, first.geometry.y)
     }
 
+    /// Bounding box of every output in global coordinates. Pointer clamping
+    /// uses this instead of summing widths; outputs are neighbours, not a
+    /// conga line pretending to be one screen.
+    // e09s02t7 replaces udev's width-summing max_screen_size() with this.
+    #[allow(dead_code)]
+    pub fn outputs_bounds(&self) -> Option<Rect> {
+        let mut outputs = self.outputs.values();
+        let first = outputs.next()?;
+        let (mut min_x, mut min_y) = (first.geometry.x, first.geometry.y);
+        let (mut max_right, mut max_bottom) = (
+            first.geometry.x.saturating_add(first.geometry.width as i32),
+            first.geometry.y.saturating_add(first.geometry.height as i32),
+        );
+        for output in outputs {
+            let geometry = output.geometry;
+            min_x = min_x.min(geometry.x);
+            min_y = min_y.min(geometry.y);
+            max_right = max_right.max(geometry.x.saturating_add(geometry.width as i32));
+            max_bottom = max_bottom.max(geometry.y.saturating_add(geometry.height as i32));
+        }
+        Some(Rect {
+            x: min_x,
+            y: min_y,
+            width: max_right.saturating_sub(min_x) as u32,
+            height: max_bottom.saturating_sub(min_y) as u32,
+        })
+    }
+
     pub fn outputs(&self) -> impl Iterator<Item = &Output> {
         self.outputs.values()
     }
