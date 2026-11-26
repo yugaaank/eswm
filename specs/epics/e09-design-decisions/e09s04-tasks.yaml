@@ -114,7 +114,7 @@ tasks:
     verify: cargo test --bin eswm decoration_refcell
     risk: P1
     security: none
-    status: failing
+    status: passing
     allure:
       severity: high
       categories:
