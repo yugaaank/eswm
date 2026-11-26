@@ -273,6 +273,64 @@ fn bind_socket(path: &Path) -> Result<UnixListener, Box<dyn std::error::Error>> 
     Ok(listener)
 }
 
+const MAX_LINE_BYTES: usize = 64 * 1024;
+
+#[derive(Debug, PartialEq, Eq)]
+enum CappedLine {
+    Line(String),
+    TooLong,
+    Closed,
+}
+
+/// Read one NDJSON request without letting a client allocate unbounded memory.
+fn read_capped_line<R: BufRead>(reader: &mut R) -> CappedLine {
+    let mut buf = Vec::new();
+    let mut limited = std::io::Read::take(reader, (MAX_LINE_BYTES + 2) as u64);
+    let read = limited.read_until(b'\n', &mut buf);
+    match read {
+        Ok(0) => CappedLine::Closed,
+        Ok(_) if !buf.ends_with(b"\n") || buf.len() - 1 > MAX_LINE_BYTES => CappedLine::TooLong,
+        Ok(_) => CappedLine::Line(String::from_utf8_lossy(&buf).into_owned()),
+        Err(_) => CappedLine::Closed,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PeerCred {
+    pub uid: u32,
+    pub gid: u32,
+    pub pid: i32,
+}
+
+fn peer_cred(stream: &UnixStream) -> Option<PeerCred> {
+    use std::{mem::MaybeUninit, os::fd::AsRawFd};
+    let mut cred = MaybeUninit::<libc::ucred>::uninit();
+    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    let rc = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            cred.as_mut_ptr().cast(),
+            &mut len,
+        )
+    };
+    (rc == 0).then(|| {
+        let cred = unsafe { cred.assume_init() };
+        PeerCred {
+            uid: cred.uid,
+            gid: cred.gid,
+            pid: cred.pid,
+        }
+    })
+}
+
+/// Config writes never travel over a socket, even if a dispatcher shows up.
+fn denied_reply(cmd: &str, id: &Value) -> Option<String> {
+    matches!(cmd, "exec" | "config" | "config.write" | "reload" | "eval")
+        .then(|| json!({"id": id, "error": "denied", "code": 7}).to_string())
+}
+
 struct Request {
     line: String,
     reply: flume::Sender<String>,
@@ -284,12 +342,11 @@ pub struct Control {
 
 impl Control {
     pub fn start(socket: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let path = socket_path(socket);
-        if let Ok(meta) = std::fs::symlink_metadata(&path)
-            && meta.file_type().is_socket() {
-                std::fs::remove_file(&path)?;
-            }
-        let listener = UnixListener::bind(&path)?;
+        Self::start_at(socket_path(socket))
+    }
+
+    fn start_at(path: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
+        let listener = bind_socket(&path)?;
         let (tx, rx) = flume::unbounded::<Request>();
         std::thread::Builder::new()
             .name("eswm-control".into())
@@ -327,18 +384,27 @@ fn socket_path(socket: &str) -> PathBuf {
 }
 
 fn serve(stream: UnixStream, tx: flume::Sender<Request>) {
+    match peer_cred(&stream) {
+        Some(cred) => tracing::info!(
+            uid = cred.uid,
+            pid = cred.pid,
+            gid = cred.gid,
+            "control client connected"
+        ),
+        None => tracing::warn!("control client credentials unavailable"),
+    }
     let Ok(mut writer) = stream.try_clone() else { return };
     let mut reader = BufReader::new(stream);
-    let mut buf = Vec::new();
     loop {
-        buf.clear();
-        match reader.read_until(b'\n', &mut buf) {
-            Ok(0) | Err(_) => return,
-            Ok(_) => {}
-        }
-        // shortcut: trusted local client, no line-length cap; add one if the
-        // socket ever becomes reachable by other users
-        let line = String::from_utf8_lossy(&buf).into_owned();
+        let line = match read_capped_line(&mut reader) {
+            CappedLine::Line(line) => line,
+            CappedLine::TooLong => {
+                let too_long = json!({"id": null, "error": "line too long", "code": 5});
+                let _ = writeln!(writer, "{too_long}");
+                return;
+            }
+            CappedLine::Closed => return,
+        };
         let (reply_tx, reply_rx) = flume::bounded::<String>(1);
         if tx.send(Request { line, reply: reply_tx }).is_err() {
             return;
@@ -368,6 +434,9 @@ pub fn handle_request(state: &mut State, line: &str) -> String {
     let empty = json!({});
     let args = request.get("args").unwrap_or(&empty);
     let cmd = request.get("cmd").and_then(Value::as_str).unwrap_or_default();
+    if let Some(reply) = denied_reply(cmd, &id) {
+        return reply;
+    }
     match dispatch(state, cmd, args) {
         Ok(value) => json!({"id": id, "ok": value}).to_string(),
         Err(message) => json!({"id": id, "error": message}).to_string(),
