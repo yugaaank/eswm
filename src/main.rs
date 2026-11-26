@@ -2496,6 +2496,115 @@ mod tests {
         assert!(state.wm.window_ids().is_empty());
     }
 
+    // e09s05t2: the index is keyed by WindowId, so a second client must not
+    // overwrite or confuse the first one's surface.
+    fn toplevel_app_id(toplevel: &ToplevelSurface) -> String {
+        with_states(toplevel.wl_surface(), |states| {
+            states
+                .data_map
+                .get::<XdgToplevelSurfaceData>()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .app_id
+                .clone()
+                .unwrap_or_default()
+        })
+    }
+
+    fn wm_id_for_app_id(state: &State, app_id: &str) -> wm::WindowId {
+        state
+            .wm
+            .window_ids()
+            .into_iter()
+            .find(|id| state.wm.window(*id).is_some_and(|w| w.app_id == app_id))
+            .unwrap_or_else(|| panic!("no WM window for app_id {app_id}"))
+    }
+
+    fn fixture_commit_toplevel(
+        display: &mut Display<State>,
+        state: &mut State,
+        conn: &wayland_client::Connection,
+        queue: &mut wayland_client::EventQueue<ToplevelFixture>,
+        fixture: &mut ToplevelFixture,
+        app_id: &str,
+        title: &str,
+    ) {
+        fixture.toplevel.as_ref().unwrap().set_app_id(app_id.to_string());
+        fixture.toplevel.as_ref().unwrap().set_title(title.to_string());
+        fixture.surface.as_ref().unwrap().commit();
+        fixture_pump_toplevel(display, state, conn, queue, fixture);
+    }
+
+    #[test]
+    fn toplevel_index_lookup_and_second_client_are_independent() {
+        let mut display: Display<State> = Display::new().expect("create test display");
+        let dh = display.handle();
+        let mut state = new_state("test", &dh, true);
+        state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
+
+        let (conn_a, mut queue_a, mut fixture_a) = fixture_toplevel_client(&mut display, &mut state);
+        fixture_commit_toplevel(&mut display, &mut state, &conn_a, &mut queue_a, &mut fixture_a, "alpha", "Alpha");
+        let id_a = wm_id_for_app_id(&state, "alpha");
+
+        let (conn_b, mut queue_b, mut fixture_b) = fixture_toplevel_client(&mut display, &mut state);
+        fixture_commit_toplevel(&mut display, &mut state, &conn_b, &mut queue_b, &mut fixture_b, "beta", "Beta");
+        let id_b = wm_id_for_app_id(&state, "beta");
+
+        assert_ne!(id_a, id_b, "distinct clients must own distinct windows");
+        assert_eq!(state.toplevels.len(), 2, "index holds exactly the two live toplevels");
+        assert_eq!(toplevel_app_id(state.toplevels.get(&id_a).expect("indexed a")), "alpha");
+        assert_eq!(toplevel_app_id(state.toplevels.get(&id_b).expect("indexed b")), "beta");
+        assert_ne!(
+            state.toplevels[&id_a].wl_surface(),
+            state.toplevels[&id_b].wl_surface(),
+            "one surface must not shadow the other"
+        );
+        assert_eq!(toplevel_app_id(&toplevel_for_window(&state, id_a).expect("lookup a")), "alpha");
+        assert_eq!(toplevel_app_id(&toplevel_for_window(&state, id_b).expect("lookup b")), "beta");
+    }
+
+    #[test]
+    fn toplevel_index_removes_entry_on_destroy() {
+        let mut display: Display<State> = Display::new().expect("create test display");
+        let dh = display.handle();
+        let mut state = new_state("test", &dh, true);
+        state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
+
+        let (conn, mut queue, mut fixture) = fixture_toplevel_client(&mut display, &mut state);
+        fixture_commit_toplevel(&mut display, &mut state, &conn, &mut queue, &mut fixture, "doomed", "Doomed");
+        let id = wm_id_for_app_id(&state, "doomed");
+        assert!(state.toplevels.contains_key(&id), "precondition: indexed");
+
+        fixture.toplevel.take();
+        fixture.xdg_surface.take();
+        fixture.surface.take();
+        fixture_pump_toplevel(&mut display, &mut state, &conn, &mut queue, &mut fixture);
+
+        assert!(!state.toplevels.contains_key(&id), "destroy must drop the index entry");
+        assert!(toplevel_for_window(&state, id).is_none());
+        assert!(state.wm.window(id).is_none());
+    }
+
+    #[test]
+    fn toplevel_index_prune_drops_stale_entry() {
+        let mut display: Display<State> = Display::new().expect("create test display");
+        let dh = display.handle();
+        let mut state = new_state("test", &dh, true);
+        state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
+
+        let (conn, mut queue, mut fixture) = fixture_toplevel_client(&mut display, &mut state);
+        fixture_commit_toplevel(&mut display, &mut state, &conn, &mut queue, &mut fixture, "stale", "Stale");
+        let id = wm_id_for_app_id(&state, "stale");
+        assert!(state.toplevels.contains_key(&id), "precondition: indexed");
+
+        // Simulate the WM losing the window without a shell callback (socket
+        // death, hotplug). Prune must not leave an orphaned index entry.
+        state.wm.remove_window(id);
+        prune_dead_windows(&mut state);
+        assert!(!state.toplevels.contains_key(&id), "prune must drop orphaned index entries");
+    }
+
     #[test]
     fn control_state_returns_outputs_workspaces_windows() {
         let mut state = test_state();
