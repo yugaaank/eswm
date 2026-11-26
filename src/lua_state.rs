@@ -698,17 +698,21 @@ pub fn register_api(
     })?;
     es.set("window_rule", window_rule)?;
 
-    // es.define_submap(map_name, keys) -> "ok"
-    let define_submap = lua.create_function(move |_, map_name: String| -> Result<(), mlua::Error> {
-        let _ = map_name; // TODO: define submap
-        Ok(())
+    // Silence was a magician's trick: the config looked loaded while nothing
+    // happened. Now every unsupported name says so in the operator's log.
+    fn not_implemented(name: &str) -> mlua::Error {
+        mlua::Error::RuntimeError(format!("not implemented: {name}"))
+    }
+
+    // es.define_submap(map_name, keys) -> explicit error
+    let define_submap = lua.create_function(move |_, (_name, _keys): (String, mlua::Value)| -> Result<(), mlua::Error> {
+        Err(not_implemented("define_submap"))
     })?;
     es.set("define_submap", define_submap)?;
 
-    // es.dsp.global("quickshell:...") -> "ok"
-    let dsp_global = lua.create_function(move |_, name: String| -> Result<(), mlua::Error> {
-        let _ = name; // TODO: dispatch quickshell command
-        Ok(())
+    // es.dsp.global("quickshell:...") -> explicit error
+    let dsp_global = lua.create_function(move |_, _name: String| -> Result<(), mlua::Error> {
+        Err(not_implemented("dsp.global"))
     })?;
     let dsp_table = lua.create_table()?;
     dsp_table.set("global", dsp_global)?;
@@ -1029,11 +1033,11 @@ pub fn register_api(
         let _ = reload_tx.send(crate::ipc::CompCmd::Reload);
         Ok(())
     })?)?;
-    config.set("notify", lua.create_function(move |_, _: ()| -> Result<(), mlua::Error> {
-        Ok(())
+    config.set("notify", lua.create_function(move |_, _msg: String| -> Result<(), mlua::Error> {
+        Err(not_implemented("config.notify"))
     })?)?;
-    config.set("setcursor", lua.create_function(move |_, _: ()| -> Result<(), mlua::Error> {
-        Ok(())
+    config.set("setcursor", lua.create_function(move |_, _name: String| -> Result<(), mlua::Error> {
+        Err(not_implemented("config.setcursor"))
     })?)?;
     // `es.config { ... }` calls the table through __call. Validation happens
     // on a temporary copy so a rejected key leaves live state untouched.
@@ -1052,23 +1056,24 @@ pub fn register_api(
     config.set_metatable(Some(config_call_meta))?;
     es.set("config", config)?;
 
-    // is_file_exists(path) -> bool
-    // Simple stub; path check is done via upvalue/snapshot later
+    // is_file_exists(path) -> bool. Real filesystem check: a config that
+    // branches on a file must not live in a world where nothing exists.
     let is_file_exists = lua.create_function(move |_, path: String| -> Result<bool, mlua::Error> {
-        let _ = path; // TODO: check via upvalue/snapshot
-        Ok(false)
+        Ok(Path::new(&path).exists())
     })?;
     es.set("is_file_exists", is_file_exists)?;
 
-    // safe_require(path, ...) -> module (stub)
-    // Use lua.load + eval to avoid create_function Fn trait issues
-    let safe_req_code = r#"
-        local M = {}
-        M.loaded = true
-        return M
-    "#;
-    let safe_require: Table = lua.load(safe_req_code).eval()?;
+    // safe_require(path, ...) -> explicit error; no fake module object.
+    let safe_require = lua.create_function(move |_, _path: String| -> Result<mlua::Value, mlua::Error> {
+        Err(not_implemented("safe_require"))
+    })?;
     es.set("safe_require", safe_require)?;
+
+    // es.layer_rule { ... } -> explicit error; layer rules are not in scope.
+    let layer_rule = lua.create_function(move |_, _rule: mlua::Value| -> Result<(), mlua::Error> {
+        Err(not_implemented("layer_rule"))
+    })?;
+    es.set("layer_rule", layer_rule)?;
 
     lua.globals().set("es", es)?;
 

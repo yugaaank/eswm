@@ -48,7 +48,7 @@ es.dsp.set_titlebar_color_unfocused(30, 30, 30, 255) -- dark gray when unfocused
 es.dsp.set_corner_radius(0)                        -- stored; renderer clipping TBD
 es.dsp.set_titlebar_height(0)                      -- 0 = no titlebar; eswm-drawn titlebar when > 0
 es.dsp.set_dock_height(0)                          -- 0 = no dock; bottom dock bar when > 0
-es.dsp.set_layout_mode("tiling")                   -- "tiling" or "floating"; default mode for new windows
+es.dsp.set_wm_mode("tiling")                       -- "tiling" or "floating"; default mode for new windows
 
 -- Tiling splits: drag within 6px of an internal boundary to resize adjacent
 -- tiled windows. Ratios are per output and survive re-arrangements.
