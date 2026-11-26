@@ -67,6 +67,7 @@ phases:
       - "ready frame observed from a subscriber connected before the first tick"
     automated_proxy: "event_model (5), event_bus (3), event_socket (5), control_hardening (4), control_errors (7), window_events (8), output_events (8), layer_events (5), event_stream (2). These prove shape, coalescing, permissions, fan-out and error codes; they cannot prove real client callbacks."
     gate: "e09s03t10 remains failing. No merge into local main and no push until hotplug, workspace events and ready are recorded PASS/N/A by the operator and the operator explicitly authorises the merge."
+    operator_decision: "2026-11-26T04:11:00Z — operator chose PAUSE HERE. t10 stays open, branch stays local, no restart, no merge and no push. Nothing waived."
   security_scan:
     passed: true
     automated_only: true
