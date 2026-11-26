@@ -26,7 +26,12 @@ jobs:
             libinput \
             libxcursor \
             libxkbcommon \
-            pkgconf
+            pkgconf \
+            lua54
+
+      # mlua-sys asks pkg-config for lua54.pc. Lua once hitched a ride as a
+      # transitive dependency; when that package list shrank, CI came down
+      # with a case of the missing-lua. Pin it so the build stops guessing.
 
       - name: Install libseat from Arch repos (seatd provides libseat.pc)
         run: pacman -S --noconfirm seatd
