@@ -3068,7 +3068,10 @@ mod tests {
         assert!(manager.focus_window(second_window));
         assert_eq!(
             output_events(&manager),
-            vec![(EventKind::MonitorActive, json!({"id": second}))]
+            vec![
+                (EventKind::WindowActive, json!({"id": second_window})),
+                (EventKind::MonitorActive, json!({"id": second})),
+            ]
         );
     }
 
