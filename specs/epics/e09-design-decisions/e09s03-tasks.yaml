@@ -45,7 +45,7 @@ tasks:
     verify: cargo test --bin eswm event_socket
     risk: P1
     security: high
-    status: failing
+    status: passing
     allure:
       severity: high
       categories:
