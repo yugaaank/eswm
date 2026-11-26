@@ -13,7 +13,7 @@ tasks:
     verify: cargo test --bin eswm event_model
     risk: P2
     security: none
-    status: failing
+    status: passing
     allure:
       severity: normal
       categories:
