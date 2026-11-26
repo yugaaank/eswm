@@ -3925,6 +3925,22 @@ mod tests {
         );
     }
 
+    // e09s02t7 — clamping uses the union's real edges: the cursor can reach a
+    // negative-origin output and stops at the last pixel of the rightmost one.
+    #[test]
+    fn output_model_bounds_clamp_pointer() {
+        let mut manager = WindowManager::new();
+        manager.add_output("laptop", Rect { x: 0, y: 0, width: 1920, height: 1080 });
+        manager.add_output("portrait", Rect { x: -400, y: 100, width: 300, height: 700 });
+        let bounds = manager.outputs_bounds().unwrap();
+        assert_eq!(clamp_point_to_bounds(bounds, (-900.0, -50.0)), (-400.0, 0.0));
+        assert_eq!(clamp_point_to_bounds(bounds, (5000.0, 5000.0)), (1919.0, 1079.0));
+        assert_eq!(clamp_point_to_bounds(bounds, (1000.0, 500.0)), (1000.0, 500.0));
+        manager.remove_output(manager.output_id_by_name("portrait").unwrap());
+        let single = manager.outputs_bounds().unwrap();
+        assert_eq!(clamp_point_to_bounds(single, (-10.0, 2000.0)), (0.0, 1079.0));
+    }
+
     // e09s02t1 — hit-testing the output under the pointer must respect each
     // geometry's origin; the old model thought the whole world started at 0.
     #[test]

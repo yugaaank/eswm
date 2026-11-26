@@ -2011,6 +2011,45 @@ mod tests {
         assert_eq!(first_json["primary"], false);
     }
 
+    // e09s02t7 — a floating window on the HDMI output lives at x>=1920;
+    // clamping against a viewport that starts at 0 teleports it to the laptop.
+    #[test]
+    fn control_window_move_to_respects_output_origin() {
+        let mut state = test_state();
+        let hdmi = state.wm.add_output(
+            "hdmi",
+            wm::Rect { x: 1920, y: 0, width: 1280, height: 720 },
+        );
+        let id = state.wm.add_window(hdmi, "kitty", "on hdmi").unwrap();
+        state.wm.set_mode(id, wm::ClientMode::floating());
+        let response = handle_request(
+            &mut state,
+            &format!(
+                r#"{{"id": 8, "cmd": "window.move_to", "args": {{"id": {id}, "x": 100, "y": 100}}}}"#
+            ),
+        );
+        let value: Value = serde_json::from_str(&response).unwrap();
+        let rect = &value["ok"]["rect"];
+        assert_eq!(rect["x"], 1920, "x clamps to this output's left edge");
+        assert_eq!(rect["y"], 100);
+    }
+
+    // e09s02t7 — a menu on HDMI must slide inside HDMI's work area, not the
+    // focused output's or a hypothetical 1920x1080 screen at the origin.
+    #[test]
+    fn popup_constraint_uses_parent_output_work_area() {
+        let mut state = test_state();
+        let hdmi = state.wm.add_output(
+            "hdmi",
+            wm::Rect { x: 1920, y: 0, width: 1280, height: 720 },
+        );
+        let hdmi_area = wm::Rect { x: 1960, y: 40, width: 1200, height: 632 };
+        state.wm.set_output_work_area(hdmi, Some(hdmi_area));
+        assert_eq!(popup_constraint(&state, (2000, 100)), hdmi_area);
+        let laptop = state.wm.focused_output_id().unwrap();
+        assert_eq!(popup_constraint(&state, (100, 100)), state.wm.work_area_for_output(laptop));
+    }
+
     #[test]
     fn control_window_move_to_workspace() {
         let mut state = test_state();
