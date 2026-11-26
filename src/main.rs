@@ -2038,7 +2038,7 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(value["code"], 3);
-        assert!(value["error"].as_str().unwrap().contains("no window 99"));
+        assert!(value["error"].as_str().unwrap().contains("no live window 99"));
     }
 
     #[test]
