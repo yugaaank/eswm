@@ -6,12 +6,13 @@
 // `State`. Local, single-user socket: one thread per connection is enough.
 use std::{
     collections::HashMap,
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, ErrorKind, Write},
     os::unix::{
-        fs::FileTypeExt,
+        fs::{FileTypeExt, PermissionsExt},
         net::{UnixListener, UnixStream},
     },
-    path::PathBuf,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -189,6 +190,87 @@ impl EventBus {
         self.next_seq += ready.len() as u64;
         ready
     }
+}
+
+/// e09s03t3: subscribe-on-connect socket. The accept thread only touches
+/// sockets; the compositor thread pushes frames through `broadcast`.
+#[allow(dead_code)]
+#[derive(Clone)]
+pub struct EventStream {
+    subscribers: Arc<Mutex<Vec<UnixStream>>>,
+}
+
+#[allow(dead_code)]
+impl EventStream {
+    pub fn start(socket: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::start_at(event_socket_path(socket))
+    }
+
+    fn start_at(path: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
+        let listener = bind_socket(&path)?;
+        let subscribers = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&subscribers);
+        std::thread::Builder::new()
+            .name("eswm-events".into())
+            .spawn(move || {
+                let hello = hello_frame();
+                for accepted in listener.incoming() {
+                    let Ok(stream) = accepted else { continue };
+                    let Ok(mut writer) = stream.try_clone() else { continue };
+                    // Registered before hello, so reading hello proves the
+                    // accept loop has this subscriber in its list.
+                    sink.lock().unwrap().push(stream);
+                    let _ = writeln!(writer, "{hello}");
+                }
+            })?;
+        Ok(Self { subscribers })
+    }
+
+    pub fn broadcast(&self, events: &[Event]) {
+        let mut subscribers = self.subscribers.lock().unwrap();
+        subscribers.retain_mut(|stream| {
+            events
+                .iter()
+                .all(|event| writeln!(stream, "{}", event.frame()).is_ok())
+        });
+    }
+
+    #[cfg(test)]
+    fn subscriber_count(&self) -> usize {
+        self.subscribers.lock().unwrap().len()
+    }
+}
+
+fn hello_frame() -> String {
+    let events: Vec<&str> = EventKind::ALL.iter().map(|kind| kind.as_str()).collect();
+    json!({"seq": 0, "kind": "hello", "data": {"version": 1, "events": events}}).to_string()
+}
+
+fn event_socket_path(socket: &str) -> PathBuf {
+    let runtime = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| {
+        let uid = unsafe { libc::getuid() };
+        format!("/run/user/{uid}")
+    });
+    PathBuf::from(runtime).join(format!("eswm-{socket}.events.sock"))
+}
+
+/// Shared bind rule for both sockets: never unlink a live peer, chmod 0600.
+fn bind_socket(path: &Path) -> Result<UnixListener, Box<dyn std::error::Error>> {
+    if let Ok(meta) = std::fs::symlink_metadata(path)
+        && meta.file_type().is_socket()
+    {
+        if UnixStream::connect(path).is_ok() {
+            return Err(std::io::Error::new(
+                ErrorKind::AddrInUse,
+                format!("{} is already served", path.display()),
+            )
+            .into());
+        }
+        std::fs::remove_file(path)?;
+    }
+    let listener = UnixListener::bind(path)?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    Ok(listener)
 }
 
 struct Request {
