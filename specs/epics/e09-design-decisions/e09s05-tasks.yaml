@@ -30,7 +30,7 @@ tasks:
     verify: cargo test --bin eswm toplevel_index
     risk: P2
     security: none
-    status: failing
+    status: passing
     allure:
       severity: normal
       categories:
