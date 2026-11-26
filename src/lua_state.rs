@@ -911,10 +911,16 @@ pub fn _do_chunk(lua: &Lua, source: &str, _snapshot: Arc<std::sync::Mutex<crate:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::control::{Event, EventKind};
+    use serde_json::json;
     use std::sync::{Arc, Mutex};
 
     type TestApi = (Lua, Arc<Mutex<Vec<Keybind>>>, Arc<Mutex<InputConfig>>, Arc<Mutex<DecorationConfig>>, flume::Receiver<crate::ipc::CompCmd>);
     fn test_api() -> TestApi {
+        test_api_with_hooks().0
+    }
+
+    fn test_api_with_hooks() -> (TestApi, EventHooks) {
         let lua = init().expect("lua init");
         let snapshot = Arc::new(Mutex::new(crate::ipc::Snapshot::default()));
         let (cmd_tx, cmd_rx) = flume::unbounded();
@@ -922,17 +928,19 @@ mod tests {
         let decoration = Arc::new(Mutex::new(DecorationConfig::default()));
         let dock_entries = Arc::new(Mutex::new(Vec::new()));
         let input_config = Arc::new(Mutex::new(InputConfig::default()));
+        let hooks = Arc::new(Mutex::new(Vec::new()));
         register_api(
             &lua,
             snapshot,
             &cmd_tx,
             keybinds.clone(),
+            hooks.clone(),
             decoration.clone(),
             dock_entries,
             input_config.clone(),
         )
         .expect("register api");
-        (lua, keybinds, input_config, decoration, cmd_rx)
+        ((lua, keybinds, input_config, decoration, cmd_rx), hooks)
     }
 
     #[test]
@@ -1293,5 +1301,110 @@ mod tests {
             .expect_err("a number is not an action");
         assert!(err.to_string().contains("string or function"), "unexpected error: {err}");
         assert!(keybinds.lock().unwrap().is_empty(), "failed bind must not register");
+    }
+
+    // e09s04t3: hooks receive the event's JSON data as a Lua table after flush.
+    #[test]
+    fn lua_event_hook_registers_and_fires_with_data() {
+        let ((lua, _keybinds, _input_config, _decoration, _cmd_rx), hooks) = test_api_with_hooks();
+        lua.load(
+            r#"
+            events_seen = {}
+            es.on("window_open", function(data)
+                events_seen[#events_seen + 1] = data.app_id
+            end)
+            "#,
+        )
+        .exec()
+        .expect("es.on registration");
+        assert_eq!(hooks.lock().unwrap().len(), 1, "one registered hook");
+        let events = vec![Event {
+            seq: 1,
+            kind: EventKind::WindowOpen,
+            data: json!({"app_id": "alacritty"}),
+        }];
+        let errors = fire_event_hooks(&lua, &hooks, &events);
+        assert!(errors.is_empty(), "hook errors: {errors:?}");
+        let seen: Vec<String> = lua.globals().get("events_seen").expect("seen table");
+        assert_eq!(seen, vec!["alacritty".to_string()]);
+    }
+
+    #[test]
+    fn lua_event_hook_rejects_unknown_kind() {
+        let ((lua, _keybinds, _input_config, _decoration, _cmd_rx), hooks) = test_api_with_hooks();
+        let err = lua
+            .load(r#"es.on("key_press", function() end)"#)
+            .exec()
+            .expect_err("key content is not an event kind");
+        assert!(err.to_string().contains("key_press"), "unexpected error: {err}");
+        assert!(hooks.lock().unwrap().is_empty(), "bad kind must not register");
+        lua.load(r#"es.on("config_reloaded", function() end)"#)
+            .exec()
+            .expect("known kind still registers");
+        assert_eq!(hooks.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn lua_event_hook_filters_kinds_and_converts_nested_data() {
+        let ((lua, _keybinds, _input_config, _decoration, _cmd_rx), hooks) = test_api_with_hooks();
+        lua.load(
+            r#"
+            opened = {}
+            closed = {}
+            es.on("window_open", function(data)
+                opened[#opened + 1] = { data.app_id, data.tags[1], data.rect.x }
+            end)
+            es.on("window_close", function(data) closed[#closed + 1] = data.id end)
+            "#,
+        )
+        .exec()
+        .expect("two hooks");
+        let events = vec![
+            Event {
+                seq: 1,
+                kind: EventKind::WindowOpen,
+                data: json!({"app_id": "foot", "tags": ["alpha", "beta"], "rect": {"x": 12, "y": 8}}),
+            },
+            Event {
+                seq: 2,
+                kind: EventKind::WindowActive,
+                data: json!({"id": 99}),
+            },
+        ];
+        let errors = fire_event_hooks(&lua, &hooks, &events);
+        assert!(errors.is_empty(), "hook errors: {errors:?}");
+        let opened: Table = lua.globals().get("opened").expect("opened table");
+        let first: Table = opened.get(1).expect("first opened event");
+        assert_eq!(first.get::<String>(1).expect("app_id"), "foot");
+        assert_eq!(first.get::<String>(2).expect("array item"), "alpha");
+        assert_eq!(first.get::<i64>(3).expect("nested x"), 12);
+        assert!(opened.get::<Table>(2).is_err(), "only one hook fired");
+        let closed: Vec<i64> = lua.globals().get("closed").expect("closed table");
+        assert!(closed.is_empty(), "unsubscribed kind must not fire");
+    }
+
+    #[test]
+    fn lua_event_hook_continues_after_callback_error() {
+        let ((lua, _keybinds, _input_config, _decoration, _cmd_rx), hooks) = test_api_with_hooks();
+        lua.load(
+            r#"
+            survivor = 0
+            es.on("window_open", function() error("hook exploded") end)
+            es.on("window_open", function() survivor = survivor + 1 end)
+            "#,
+        )
+        .exec()
+        .expect("two hooks on one kind");
+        let events = vec![Event {
+            seq: 1,
+            kind: EventKind::WindowOpen,
+            data: json!({}),
+        }];
+        let errors = fire_event_hooks(&lua, &hooks, &events);
+        assert_eq!(errors.len(), 1, "only the bad hook errors");
+        assert!(errors[0].contains("window_open"), "error names the event");
+        assert!(errors[0].contains("hook exploded"), "error keeps Lua message");
+        let survivor: i32 = lua.globals().get("survivor").expect("survivor");
+        assert_eq!(survivor, 1, "a bad hook must not silence the next one");
     }
 }
