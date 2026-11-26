@@ -1,9 +1,9 @@
 story_id: e09s03
-verified_at: "2026-11-26T03:41:48Z"
+verified_at: "2026-11-26T05:10:11Z"
 verifier: develop-tdd
 risk: P1
 branch: e09s03-ipc-event-stream
-head: 64956562979d82e7a93c31500d9bbe115f9ead1d
+head: 38ef40f7706e003726194da03e8a95ac2385c3e0
 phases:
   branch_check:
     passed: true
@@ -27,11 +27,12 @@ phases:
   terminal_verdict:
     command: "cargo clippy --all-targets && cargo test && cargo build && python3 scripts/spec-lint.py"
     exit_code: 0
-    note: "Contiguous run at HEAD 6495656: clippy warning-free, 301 tests, build green, spec-lint ok."
+    note: "Final contiguous run at HEAD 38ef40f (before the evidence-close commit): clippy warning-free, 301 tests, build green, spec-lint ok."
   manual:
-    passed: false
-    pending: true
-    status: partial_operator_evidence
+    passed: true
+    pending: false
+    status: complete_with_explicit_na
+    completed_at: "2026-11-26T05:10:11Z"
     prepared_at: "2026-11-26T03:41:48Z"
     observed_at: "2026-11-26T03:58:39Z"
     confirmed_at: "2026-11-26T04:07:48Z"
@@ -61,16 +62,20 @@ phases:
       - check: "Real monitor hotplug produces monitor_added/removed/layout"
         decision: "N/A by operator at 2026-11-26T04:49:03Z"
         reason: "One display available; no second monitor to plug or unplug. Explicit risk acceptance, not a waiver. Unit tests output_events_add_output_queues_monitor_added, output_events_remove_output_queues_monitor_removed and output_events_geometry_change_queues_monitor_layout cover the emission paths."
+      - check: "Rapid double rename coalesces to one window_title frame"
+        decision: "N/A by operator at 2026-11-26T05:10:11Z"
+        reason: "Not driven live in kitty. Unit test event_bus_flush_coalesces_keeping_last_value_at_first_position proves per-tick coalescing; the live stream showed real title changes. Explicit risk acceptance, not a waiver."
+      - check: "Socket-failure fallback keeps the command socket alive"
+        decision: "N/A by operator at 2026-11-26T05:10:11Z"
+        reason: "Optional checklist row 15, skipped by decision. Explicit risk acceptance, not a waiver."
     pending_checks: []
     observations:
       - "seq 1-22 were emitted before the subscriber connected. The counter is compositor-global, so seq 23 after hello is expected; spec and checklist now say so explicitly."
       - "The long run of window_active id=1 frames came from repeated focus requests in separate ticks. Coalescing is per tick; those are not duplicates within a tick."
       - "^[^[^[ seen on screen was terminal key echo from socat reading stdin, not a frame. The JSONL log is clean; start.sh watch now uses socat -u."
-    unconfirmed_checks:
-      - "rapid double rename producing one coalesced window_title frame (checklist row 4)"
-      - "socket-failure fallback (checklist row 15, optional)"
+    unconfirmed_checks: []
     automated_proxy: "event_model (5), event_bus (3), event_socket (5), control_hardening (4), control_errors (7), window_events (8), output_events (8), layer_events (5), event_stream (2). These prove shape, coalescing, permissions, fan-out and error codes; they cannot prove real client callbacks."
-    gate: "e09s03t10 remains failing. No merge into local main and no push until checklist rows 4 and 15 are recorded PASS/N-A and the operator explicitly authorises the merge."
+    gate: "e09s03t10 is PASS with three explicit N/A checks. No merge into local main and no push until the operator explicitly authorises the merge."
     operator_decision: "2026-11-26T04:11:00Z — operator chose PAUSE HERE. t10 stayed open, branch stayed local, no merge and no push. Nothing waived."
     resumed_at: "2026-11-26T04:49:03Z — operator restarted eswm on the TTY and asked to continue; workspace events confirmed, hotplug and ready still open."
   security_scan:
@@ -81,9 +86,9 @@ phases:
     skipped: true
     reason: "scripts/check-blind-spots.sh not present (same precedent as e09s01/e09s02/e10s02)."
   gaps:
-    closed: false
+    closed: true
     notes:
-      - "e09s03t10 is nearly closed: live stream, fan-out, reload, workspace events and startup ready are confirmed. Hotplug is an explicit N/A (one display); rapid double-rename and optional socket-failure rows still need a decision. Recorded as partial, never as waived."
+      - "e09s03t10 is closed by operator decision: live stream, fan-out, reload, workspace events and startup ready are confirmed; hotplug, rapid double-rename and optional socket-failure are explicit N/A with named test proxies. Nothing waived."
       - "Spec §12 originally said State owns EventBus; implementation keeps it on WindowManager because transitions originate there. State::flush_events is the single per-tick seam. Spec and t9 ledger now describe the shipped shape; no behavioural delta."
       - "EventBus increments seq globally, including socketless ticks, so a later subscriber joins at the current number rather than seeing a reset. Spec §10, §11 and the checklist now state this; the live run showed seq 23 after hello with frames 1-22 already emitted."
       - "CI remains unverified per operator skip precedent; nothing pushed to origin/main."

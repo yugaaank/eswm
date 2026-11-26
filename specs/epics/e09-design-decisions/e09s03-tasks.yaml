@@ -154,7 +154,7 @@ tasks:
     verify: 'manual: on a TTY, run specs/verifications/uat-2026-11-26-e09s03-events.md and record PASS/FAIL in specs/verifications/e09s03-verify.yaml'
     risk: P2
     security: none
-    status: failing
+    status: passing
     allure:
       severity: normal
       categories:
