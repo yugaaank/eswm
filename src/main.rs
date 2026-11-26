@@ -90,24 +90,10 @@ impl XdgShellHandler for State {
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
-        // M5: every toplevel becomes a tiling-managed window on the primary output.
-        let Some(output_id) = self.wm.focused_output_id() else {
-            tracing::warn!("toplevel before any output exists; not registering");
-            return;
-        };
-        if let Some(id) = self.wm.add_window(output_id, "", "") {
-            let ws = surface.wl_surface().clone();
-            with_states(&ws, |states| {
-                states.data_map.insert_if_missing(|| id);
-            });
-            tracing::info!("toplevel registered id={id:?}");
-            crate::apply_layout(self);
-        } else {
-            surface.with_pending_state(|state| {
-                state.states.set(xdg_toplevel::State::Activated);
-            });
-            surface.send_configure();
-        }
+        // e09s05t1: the client can still set app_id/title after creating the
+        // xdg_toplevel. Configure now so it knows our size policy; register the
+        // WM window on first commit, when rules can see real metadata.
+        surface.send_configure();
     }
 
     fn app_id_changed(&mut self, surface: ToplevelSurface) {
@@ -618,6 +604,47 @@ pub(crate) fn flush_events(state: &mut State) {
     }
 }
 
+/// e09s05t1: first commit is the registration point for a toplevel. Before it,
+/// app_id/title may still arrive, so creating a window earlier fed rules empty
+/// strings and left a phantom window behind for clients that never map.
+fn register_toplevel_on_first_commit(state: &mut State, surface: &WlSurface) -> bool {
+    if window_id_of(surface).is_some() {
+        return false;
+    }
+    let is_toplevel = state
+        .xdg_shell_state
+        .toplevel_surfaces()
+        .iter()
+        .any(|t| t.alive() && t.wl_surface() == surface);
+    if !is_toplevel {
+        return false;
+    }
+    let Some(output_id) = state.wm.focused_output_id() else {
+        tracing::warn!("toplevel committed before any output exists; not registering");
+        return false;
+    };
+    let (app_id, title) = with_states(surface, |states| {
+        let data = states
+            .data_map
+            .get::<XdgToplevelSurfaceData>()
+            .expect("xdg toplevel data on committed toplevel");
+        let data = data.lock().unwrap();
+        (
+            data.app_id.clone().unwrap_or_default(),
+            data.title.clone().unwrap_or_default(),
+        )
+    });
+    let Some(id) = state.wm.add_window(output_id, app_id, title) else {
+        return false;
+    };
+    with_states(surface, |states| {
+        states.data_map.insert_if_missing(|| id);
+    });
+    tracing::info!("toplevel first commit registered id={id:?}");
+    crate::apply_layout(state);
+    true
+}
+
 // Mirror client-provided app_id/title into the wm window record (snapshot/Lua).
 fn sync_window_meta(state: &mut State, surface: &ToplevelSurface) {
     let Some(id) = window_id_of(surface.wl_surface()) else {
@@ -960,6 +987,9 @@ impl CompositorHandler for State {
 
     fn commit(&mut self, surface: &WlSurface) {
         on_commit_buffer_handler::<Self>(surface);
+        // e09s05t1: registration waits for the first commit. A toplevel that
+        // dies before that point must not leave a WindowOpen event behind.
+        register_toplevel_on_first_commit(self, surface);
         let is_layer_surface = self
             .layer_wrappers
             .iter()
