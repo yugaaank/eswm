@@ -46,7 +46,7 @@ tasks:
     verify: cargo test --bin eswm lua_event_hook
     risk: P1
     security: low
-    status: failing
+    status: passing
     allure:
       severity: high
       categories:
