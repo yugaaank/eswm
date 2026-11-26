@@ -3756,4 +3756,26 @@ mod tests {
             Some(Rect { x: -400, y: 0, width: 3600, height: 1080 })
         );
     }
+
+    // e09s02t1 — hit-testing the output under the pointer must respect each
+    // geometry's origin; the old model thought the whole world started at 0.
+    #[test]
+    fn output_model_output_for_point_respects_origins_and_edges() {
+        let mut manager = WindowManager::new();
+        let laptop = manager.add_output(
+            "laptop",
+            Rect { x: 0, y: 0, width: 1920, height: 1080 },
+        );
+        let hdmi = manager.add_output(
+            "hdmi",
+            Rect { x: 2000, y: 0, width: 1280, height: 720 },
+        );
+
+        assert_eq!(manager.output_for_point(100, 100), Some(laptop));
+        assert_eq!(manager.output_for_point(1919, 1079), Some(laptop));
+        assert_eq!(manager.output_for_point(1920, 100), None);
+        assert_eq!(manager.output_for_point(2000, 0), Some(hdmi));
+        assert_eq!(manager.output_for_point(3279, 719), Some(hdmi));
+        assert_eq!(manager.output_for_point(3280, 100), None);
+    }
 }
