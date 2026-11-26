@@ -1025,7 +1025,36 @@ impl SeatHandler for State {
 
 /// Dock strip render signature: output geometry + per-entry visual state.
 /// Rebuild the cached buffers only when this changes.
-type DockBufferSignature = (u32, i32, i32, Vec<(u64, bool, bool, char)>);
+/// Output id is part of the cache key: two identical-looking docks on two
+/// monitors still have different geometry and must not share rendered pixels.
+type DockBufferSignature = (wm::OutputId, u32, i32, i32, Vec<(u64, bool, bool, char)>);
+
+pub(crate) fn dock_buffer_signature(
+    output: wm::OutputId,
+    entries: &[wm::DockEntry],
+    total_w: i32,
+    dock_h: i32,
+) -> DockBufferSignature {
+    (
+        output,
+        entries.len() as u32,
+        total_w,
+        dock_h,
+        entries
+            .iter()
+            .map(|e| {
+                let label = e
+                    .app_id
+                    .chars()
+                    .next()
+                    .or_else(|| e.title.chars().next())
+                    .unwrap_or('?')
+                    .to_ascii_uppercase();
+                (e.id, e.focused, e.minimized, label)
+            })
+            .collect(),
+    )
+}
 
 pub(crate) struct State {
     compositor_state: CompositorState,
@@ -1312,6 +1341,14 @@ fn apply_decoration_to_wm(state: &mut State) {
     let titlebar_color_unfocused = d.titlebar_color_unfocused;
     let titlebar_height = d.titlebar_height;
     let dock_height = d.dock_height;
+    let per_output_docks: Vec<(wm::OutputId, u32)> = state
+        .wm
+        .outputs()
+        .map(|output| {
+            let height = d.dock_height_for(&output.name);
+            (output.id, height)
+        })
+        .collect();
     let wm_mode = d.wm_mode;
     let tiling_layout = d.tiling_layout;
     drop(d);
@@ -1322,6 +1359,9 @@ fn apply_decoration_to_wm(state: &mut State) {
     state.wm.set_titlebar_colors(titlebar_color_focused, titlebar_color_unfocused);
     state.wm.set_titlebar_height(titlebar_height);
     state.wm.set_dock_height(dock_height);
+    for (id, height) in per_output_docks {
+        state.wm.set_output_dock_height(id, height);
+    }
     state.wm.set_wm_mode(wm_mode);
     state.wm.set_tiling_layout(tiling_layout);
 }

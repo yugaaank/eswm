@@ -2272,40 +2272,23 @@ impl State {
                                 }
                             }
                         }
-                        // Dock bar click-to-focus / toggle-minimize (bottom strip of primary output).
-                        let dec = self.decoration.lock().unwrap();
-                        let dock_height = dec.dock_height;
-                        let dock = self.primary_output.as_ref().and_then(|o| {
-                            let loc = o.current_location();
-                            let size = o.current_mode().map(|m| m.size)?;
-                            Some((
-                                loc.x as f64,
-                                loc.y as f64,
-                                size.w as f64,
-                                size.h as f64,
-                            ))
-                        });
-                        drop(dec);
-                        if dock_height > 0
-                            && let Some((gx, _gy, gw, gh)) = dock {
-                                // Dock strip sits inside the non-exclusive zone (above
-                                // any bottom-anchored layer like waybar), matching the
-                                // render side; work_area already has dock_h subtracted.
-                                let wa_bottom = self
-                                    .wm
-                                    .work_area
-                                    .map(|wa| wa.y as f64 + wa.height as f64)
-                                    .unwrap_or(gh - dock_height as f64);
-                                if location.y >= wa_bottom
-                                    && location.y < wa_bottom + dock_height as f64
-                                    && location.x >= gx
-                                    && location.x < gx + gw
-                                {
-                                    let entries = self.wm.dock_entries();
+                        // Dock bar click-to-focus / toggle-minimize. Hit-test
+                        // the strip of the output the pointer is actually on,
+                        // not the primary output's, so a second monitor's dock
+                        // does not steal clicks meant for its windows.
+                        let dock_output = self
+                            .wm
+                            .output_for_point(location.x as i32, location.y as i32)
+                            .or_else(|| self.wm.focused_output_id());
+                        let dock = dock_output.and_then(|id| self.wm.dock_strip(id));
+                        if let (Some(id), Some(strip)) = (dock_output, dock)
+                            && crate::rect_contains(strip, location.x, location.y)
+                        {
+                                    let entries = self.wm.dock_entries_for(id);
                                     let n = entries.len();
                                     if n > 0 {
-                                        let seg_w = gw / n as f64;
-                                        let idx = ((location.x - gx) / seg_w).floor() as usize;
+                                        let seg_w = strip.width as f64 / n as f64;
+                                        let idx = ((location.x - strip.x as f64) / seg_w).floor() as usize;
                                         let idx = idx.min(n.saturating_sub(1));
                                         if let Some(entry) = entries.get(idx) {
                                             if button == BTN_LEFT {
@@ -2333,8 +2316,7 @@ impl State {
                                             return;
                                         }
                                     }
-                                }
-                            }
+                        }
                         // click to focus + wl_keyboard enter (empty clicks keep focus)
                         let id = self.wm.window_at((location.x, location.y), self.wm.border_size());
                         if let Some(id) = id {
@@ -3765,22 +3747,22 @@ impl State {
             ('?', [0b01110, 0b10001, 0b00001, 0b00110, 0b00100, 0b00000, 0b00100]),
         ];
 
-        let dec = self.decoration.lock().unwrap();
-        let dock_height = dec.dock_height;
-        drop(dec);
-        tracing::debug!("dock debug: dock_height={} mode_size={:?} entries={}", dock_height, mode_size.map(|s| (s.w, s.h)), self.wm.dock_entries().len());
-        if dock_height > 0
-            && let Some(size) = mode_size {
-                let loc = output.current_location();
-                let entries = self.wm.dock_entries();
+        // Dock geometry belongs to *this* output: its height, work area and
+        // entries. The old code drew the primary dock on every monitor.
+        let dock_output = self.wm.output_id_by_name(&output.name());
+        let dock_height = dock_output
+            .map(|id| self.wm.dock_height_for_output(id))
+            .unwrap_or(0);
+        let strip = dock_output.and_then(|id| self.wm.dock_strip(id));
+        tracing::debug!("dock debug: dock_height={} mode_size={:?} entries={}", dock_height, mode_size.map(|s| (s.w, s.h)), dock_output.map(|id| self.wm.dock_entries_for(id).len()).unwrap_or(0));
+        if let (Some(id), Some(strip)) = (dock_output, strip) {
+                let entries = self.wm.dock_entries_for(id);
                 let n = entries.len() as u32;
-                tracing::debug!("dock debug: drawing dock at y={} h={} n={} size={}x{} loc={:?}", loc.y + size.h - dock_height as i32, dock_height, n, size.w, size.h, loc);
+                tracing::debug!("dock debug: drawing dock at y={} h={} n={} strip={:?}", strip.y, strip.height, n, strip);
                 if n > 0 {
-                    let dock_y = self.wm.work_area
-                        .map(|wa| (wa.y + wa.height as i32) as f64)
-                        .unwrap_or((loc.y + size.h - dock_height as i32) as f64);
-                    let dock_h = dock_height as i32;
-                    let total_w = size.w;
+                    let dock_y = strip.y as f64;
+                    let dock_h = strip.height as i32;
+                    let total_w = strip.width as i32;
                     let seg_w = total_w / n as i32;
 
                     // Z-order (smithay: earlier index = on top): segments are
@@ -3791,18 +3773,7 @@ impl State {
                     // Buffer cache: rebuild only when geometry or entry states
                     // change. Same MemoryRenderBuffer across frames = smithay
                     // texture cache hit = no per-frame upload (the lag cause).
-                    let sig = (
-                        n,
-                        total_w,
-                        dock_h,
-                        entries.iter().map(|e| {
-                            let label = e.app_id.chars().next()
-                                .or_else(|| e.title.chars().next())
-                                .unwrap_or('?')
-                                .to_ascii_uppercase();
-                            (e.id, e.focused, e.minimized, label)
-                        }).collect::<Vec<_>>(),
-                    );
+                    let sig = crate::dock_buffer_signature(id, &entries, total_w, dock_h);
                     let rebuild = {
                         let cached = self.dock_buffers.lock().unwrap();
                         match &*cached {
@@ -3888,10 +3859,10 @@ impl State {
                     if let Some((_, bufs)) = dock_buffers.as_ref() {
                         for (i, buf) in bufs.iter().enumerate() {
                             let pos = if i < entries.len() {
-                                let seg_x = loc.x as f64 + i as f64 * seg_w as f64 + 1.0;
+                                let seg_x = strip.x as f64 + i as f64 * seg_w as f64 + 1.0;
                                 Point::from((seg_x, dock_y))
                             } else {
-                                Point::from((loc.x as f64, dock_y))
+                                Point::from((strip.x as f64, dock_y))
                             };
                             if let Ok(elem) = MemoryRenderBufferRenderElement::from_buffer(
                                 &mut renderer,

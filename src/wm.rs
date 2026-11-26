@@ -1195,9 +1195,13 @@ impl WindowManager {
         true
     }
 
-    /// Dock height used to be global, which is like giving every house the
-    /// same doormat size regardless of how wide the door is.
-    #[allow(dead_code)]
+    pub fn dock_height_for_output(&self, id: OutputId) -> u32 {
+        self.outputs.get(&id).map(|output| output.dock_height).unwrap_or(0)
+    }
+
+    /// Set one output's dock height. The work area follows by the height delta
+    /// (or becomes an explicit work area when none existed), so windows do not
+    /// keep sitting under a newly raised dock until a panel commits.
     pub fn set_output_dock_height(&mut self, id: OutputId, height: u32) -> bool {
         let Some(output) = self.outputs.get_mut(&id) else {
             return false;
@@ -1205,13 +1209,38 @@ impl WindowManager {
         if output.dock_height == height {
             return false;
         }
+        let old = output.dock_height;
+        match output.work_area.as_mut() {
+            Some(area) => {
+                let adjusted = (area.height as i32 + old as i32 - height as i32).max(0);
+                area.height = (adjusted as u32).min(output.geometry.height);
+            }
+            None => {
+                let mut area = output.geometry;
+                area.height = area.height.saturating_sub(height);
+                output.work_area = Some(area);
+            }
+        }
         output.dock_height = height;
         self.dirty = true;
         true
     }
 
-    pub fn dock_height_for_output(&self, id: OutputId) -> u32 {
-        self.outputs.get(&id).map(|output| output.dock_height).unwrap_or(0)
+    /// Global strip where the compositor draws and hit-tests this output's
+    /// dock: directly below its own work area, inside its own geometry.
+    pub fn dock_strip(&self, id: OutputId) -> Option<Rect> {
+        let output = self.outputs.get(&id)?;
+        let height = output.dock_height;
+        if height == 0 {
+            return None;
+        }
+        let area = self.work_area_for_output(id);
+        Some(Rect {
+            x: area.x,
+            y: area.y.saturating_add(area.height as i32),
+            width: area.width.min(output.geometry.width),
+            height,
+        })
     }
 
     /// Where an output with no configured position goes: just right of the
@@ -1532,10 +1561,16 @@ impl WindowManager {
     /// window on that workspace, active (mapped) first then minimized
     /// (unmapped), focused window first. This is the data model frontends
     /// consume via `es.dock.entries()`.
+    /// Dock entries of the focused output. The Lua `es.dock.*` bridge reads
+    /// this cache, so a dock frontend follows the pointer across monitors.
     pub fn dock_entries(&self) -> Vec<DockEntry> {
-        let Some(primary) = self.focused_output_id() else {
-            return Vec::new();
-        };
+        self.focused_output_id()
+            .map(|id| self.dock_entries_for(id))
+            .unwrap_or_default()
+    }
+
+    pub fn dock_entries_for(&self, id: OutputId) -> Vec<DockEntry> {
+        let primary = id;
         let Some(output_state) = self.outputs.get(&primary) else {
             return Vec::new();
         };
