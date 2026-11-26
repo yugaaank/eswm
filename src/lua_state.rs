@@ -798,4 +798,104 @@ mod tests {
         assert_eq!(cfg.output_position("HDMI-A-1"), Some((1920, 0)), "invalid Lua left config untouched");
         assert_eq!(cfg.dock_height_for("HDMI-A-1"), 40, "invalid Lua left dock untouched");
     }
+
+    // e09s04t1: `es.config{}` is a declarative call, not a bag of values.
+    #[test]
+    fn config_table_callable_applies_validated_values() {
+        let (lua, _keybinds, _input_config, decoration, _cmd_rx) = test_api();
+        lua.load(
+            r#"
+            es.config {
+                wm_mode = "floating",
+                tiling_layout = "equal",
+                border_size = 3,
+                outer_gap = 10,
+                inner_gap = 4,
+                titlebar_height = 28,
+                dock_height = 32,
+                corner_radius = 6,
+                min_window_size = { width = 200, height = 150 },
+            }
+            "#,
+        )
+        .exec()
+        .expect("es.config table call");
+        let cfg = decoration.lock().unwrap();
+        assert_eq!(cfg.wm_mode, WmMode::Floating);
+        assert_eq!(cfg.tiling_layout, TilingLayout::Equal);
+        assert_eq!(cfg.border_size, 3);
+        assert_eq!(cfg.outer, 10);
+        assert_eq!(cfg.inner, 4);
+        assert_eq!(cfg.titlebar_height, 28);
+        assert_eq!(cfg.dock_height, 32);
+        assert_eq!(cfg.corner_radius, 6);
+        assert_eq!((cfg.min_window_width, cfg.min_window_height), (200, 150));
+    }
+
+    #[test]
+    fn config_table_unknown_key_errors_and_applies_nothing() {
+        let (lua, _keybinds, _input_config, decoration, _cmd_rx) = test_api();
+        let err = lua
+            .load(r#"es.config { border_size = 9, totally_bogus_key = 1 }"#)
+            .exec()
+            .expect_err("unknown key must error");
+        assert!(err.to_string().contains("totally_bogus_key"), "unexpected error: {err}");
+        assert_eq!(
+            decoration.lock().unwrap().border_size,
+            DecorationConfig::standard().border_size,
+            "no partial application"
+        );
+    }
+
+    #[test]
+    fn config_table_wrong_type_errors_by_key_and_applies_nothing() {
+        let (lua, _keybinds, _input_config, decoration, _cmd_rx) = test_api();
+        let err = lua
+            .load(r#"es.config { outer_gap = 7, border_size = "wide" }"#)
+            .exec()
+            .expect_err("wrong type must error");
+        assert!(err.to_string().contains("border_size"), "unexpected error: {err}");
+        let nested = lua
+            .load(r#"es.config { general = { mode = "sideways" } }"#)
+            .exec()
+            .expect_err("bad nested value must error");
+        assert!(nested.to_string().contains("mode"), "unexpected error: {nested}");
+        let cfg = decoration.lock().unwrap();
+        assert_eq!(cfg.outer, DecorationConfig::standard().outer, "no partial application");
+        assert_eq!(cfg.wm_mode, WmMode::Tiling, "no partial nested application");
+    }
+
+    #[test]
+    fn config_table_nested_settings_apply_atomically() {
+        let (lua, _keybinds, input_config, decoration, _cmd_rx) = test_api();
+        lua.load(
+            r#"
+            es.config {
+                general = { layout = "equal", mode = "floating" },
+                border_color_focused = { 10, 20, 30, 40 },
+                titlebar_color_unfocused = { 1, 2, 3, 4 },
+                output_scale = { ["HDMI-A-1"] = 2.0 },
+                output_position = { ["HDMI-A-1"] = { x = 1920, y = 0 } },
+                touchpad = { tap = false, natural_scroll = true, speed = 1.25 },
+                keymap = "xkb_keymap { };",
+            }
+            "#,
+        )
+        .exec()
+        .expect("nested es.config call");
+        {
+            let cfg = decoration.lock().unwrap();
+            assert_eq!(cfg.tiling_layout, TilingLayout::Equal);
+            assert_eq!(cfg.wm_mode, WmMode::Floating);
+            assert_eq!(cfg.border_color_focused, [10, 20, 30, 40]);
+            assert_eq!(cfg.titlebar_color_unfocused, [1, 2, 3, 4]);
+            assert_eq!(cfg.output_position("HDMI-A-1"), Some((1920, 0)));
+        }
+        let input = input_config.lock().unwrap();
+        assert_eq!(input.output_scale("HDMI-A-1").map(|s| s.fractional_scale()), Some(2.0));
+        assert_eq!(input.touchpad_tap, Some(false));
+        assert_eq!(input.touchpad_natural_scroll, Some(true));
+        assert_eq!(input.touchpad_speed, Some(1.25));
+        assert_eq!(input.keymap.as_deref(), Some("xkb_keymap { };"));
+    }
 }
