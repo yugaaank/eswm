@@ -18,7 +18,9 @@ mod rounded_surface;
 mod rounding;
 mod udev;
 mod wm;
+use control::EventKind;
 use ipc::Ipc;
+use serde_json::json;
 
 use smithay::{
     backend::renderer::utils::{on_commit_buffer_handler, with_renderer_surface_state},
@@ -541,6 +543,23 @@ fn toplevel_for_window(state: &State, id: wm::WindowId) -> Option<ToplevelSurfac
         .cloned()
 }
 
+/// Layer surfaces are tenants the WM does not own; the bus still takes their
+/// mail. A wrapper with no output has no monitor id to report, so it stays
+/// silent rather than inventing one.
+fn queue_layer_event(state: &mut State, kind: EventKind, output: Option<wm::OutputId>) {
+    if let Some(id) = output {
+        state.wm.events.queue(kind, json!({"id": id}));
+    }
+}
+
+pub(crate) fn queue_config_reloaded(state: &mut State) {
+    state.wm.events.queue(EventKind::ConfigReloaded, json!({}));
+}
+
+pub(crate) fn queue_ready(state: &mut State) {
+    state.wm.events.queue(EventKind::Ready, json!({}));
+}
+
 // Mirror client-provided app_id/title into the wm window record (snapshot/Lua).
 fn sync_window_meta(state: &mut State, surface: &ToplevelSurface) {
     let Some(id) = window_id_of(surface.wl_surface()) else {
@@ -601,6 +620,7 @@ impl WlrLayerShellHandler for State {
         let target = requested
             .and_then(|o| self.wm.output_id_by_name(&o.name()))
             .or_else(|| self.wm.focused_output_id());
+        queue_layer_event(self, EventKind::LayerOpened, target);
         // Create the stable desktop wrapper; on first commit it gets mapped
         // into the target output's LayerMap, which sends anchored configures.
         let wrapper = smithay::desktop::LayerSurface::new(surface, namespace.clone());
@@ -619,6 +639,7 @@ impl WlrLayerShellHandler for State {
         self.layer_wrappers.retain(|l| l.layer_surface() != &surface);
         if let Some(wrapper) = wrapper {
             let id = layer_output_id(&wrapper).or_else(|| self.wm.focused_output_id());
+            queue_layer_event(self, EventKind::LayerClosed, id);
             if let Some(output) = id.and_then(|id| self.layer_outputs.get(&id).cloned()) {
                 layer_map_for_output(&output).unmap_layer(&wrapper);
             }
@@ -1111,6 +1132,8 @@ pub(crate) struct State {
     handle: Option<LoopHandle<'static, State>>,
     // Native control channel (notes/tacit-integration.md); None if bind failed
     control: Option<control::Control>,
+    // Dedicated NDJSON event stream; None if bind failed or in test fixtures.
+    pub(crate) events: Option<control::EventStream>,
     /// The smithay Output the backend renders on (DRM connector, or the test
     /// virtual output); layer surfaces are arranged against it via LayerMap.
     primary_output: Option<Output>,
@@ -1293,6 +1316,7 @@ fn new_state(
         udev: None,
         handle: None,
         control: None,
+        events: None,
         primary_output: None,
         layer_outputs: std::collections::BTreeMap::new(),
         layer_wrappers: Vec::new(),

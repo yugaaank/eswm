@@ -182,6 +182,7 @@ pub fn apply_cmd(state: &mut State, ipc: &Ipc, cmd: CompCmd) {
             // configured origins before telling Tacit the config changed.
             state.apply_configured_output_positions();
             ipc.sinks.emit("configreloaded", "");
+            crate::queue_config_reloaded(state);
         }
         CompCmd::GotoWorkspace(ws) => {
             if let Some(output) = state.wm.focused_output_id() {

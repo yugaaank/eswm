@@ -767,6 +767,16 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
         Err(err) => tracing::warn!("control socket disabled: {err}"),
     }
 
+    // e09s03t8: subscribers can connect as soon as this listener exists; the
+    // ready frame tells them the compositor is done dressing for the party.
+    match crate::control::EventStream::start(&crate::socket_name()) {
+        Ok(stream) => {
+            state.events = Some(stream);
+            crate::queue_ready(&mut state);
+        }
+        Err(err) => tracing::warn!("event socket disabled: {err}"),
+    }
+
 // IPC command channel (hyprctl compat). No Lua here: the DRM path does not
 // initialize the historical Hyprland/Tacit compatibility path.
 let sig = std::env::var("TACIT_COMP_SIG").unwrap_or_else(|_| "eswm".into());
