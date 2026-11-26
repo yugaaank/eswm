@@ -57,12 +57,73 @@ pub struct ClientData {
     pub visible: bool,
 }
 
+/// One output as Hyprland's `j/monitors` describes it. Kept separate from the
+/// legacy single-monitor tuple so Tacit can keep reading `monitor` while the
+/// compositor reports every connected screen.
+#[derive(Clone, Debug, Default)]
+pub struct MonitorData {
+    pub name: String,
+    pub description: String,
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    pub scale: f64,
+    pub refresh: f64,
+    pub focused: bool,
+    pub active_workspace: i32,
+}
+
+/// Build one monitor entry per output from the real output model. Empty list
+/// means "no outputs yet", which callers treat as the virtual fallback.
+pub(crate) fn monitors_from_wm(
+    wm: &crate::wm::WindowManager,
+    scales: &std::collections::HashMap<String, f64>,
+) -> Vec<MonitorData> {
+    let focused = wm.focused_output_id();
+    wm.outputs()
+        .map(|output| {
+            let geo = output.geometry;
+            MonitorData {
+                name: output.name.clone(),
+                description: output.name.clone(),
+                x: geo.x,
+                y: geo.y,
+                width: geo.width as i32,
+                height: geo.height as i32,
+                scale: scales.get(&output.name).copied().unwrap_or(1.0),
+                // The wm does not track DRM refresh yet; 60 Hz is the same
+                // honest placeholder the old virtual monitor reported.
+                refresh: 60.0,
+                focused: Some(output.id) == focused,
+                active_workspace: output.active_workspace,
+            }
+        })
+        .collect()
+}
+
+/// Legacy `Snapshot.monitor` tuple derived from the focused output: the screen
+/// under the pointer is the one Tacit should treat as "the" monitor.
+fn focused_monitor_data(
+    monitors: &[MonitorData],
+    fallback: (i32, i32, f64, f64),
+) -> (i32, i32, f64, f64) {
+    monitors
+        .iter()
+        .find(|m| m.focused)
+        .or_else(|| monitors.first())
+        .map(|m| (m.width, m.height, m.scale, m.refresh))
+        .unwrap_or(fallback)
+}
+
 /// Read-only view of compositor state; the main loop refreshes it on changes.
 #[derive(Clone, Default)]
 pub struct Snapshot {
     pub clients: Vec<ClientData>,
-    /// (w, h, scale, refresh) of the single (winit) monitor
+    /// (w, h, scale, refresh) of the focused monitor (legacy single-screen view)
     pub monitor: (i32, i32, f64, f64),
+    /// One entry per connected output; empty only before the first output exists.
+    pub monitors: Vec<MonitorData>,
     pub focused_address: Option<String>,
     pub active_workspace_id: i32,
     pub workspaces: Vec<(i32, String)>,
@@ -152,9 +213,19 @@ pub fn apply_cmd(state: &mut State, ipc: &Ipc, cmd: CompCmd) {
 }
 
 /// Rebuild the IPC snapshot from live compositor state. Cheap; called once
-/// per frame by the main loop. `size` is the (single) output size.
-pub fn refresh_snapshot(state: &crate::State, size: (i32, i32)) {
+/// per frame by the main loop. Each connected output gets its own entry, and
+/// the legacy single-monitor tuple follows whichever output is focused.
+pub fn refresh_snapshot(state: &crate::State) {
     let Some(ipc) = &state.ipc else { return };
+    let monitors = {
+        let config = state.input_config.lock().unwrap();
+        monitors_from_wm(&state.wm, &config.output_scales)
+    };
+    let focused_output = monitors.iter().find(|m| m.focused);
+    let fallback_size = focused_output
+        .map(|m| (m.width, m.height))
+        .or_else(|| state.wm.outputs_bounds().map(|b| (b.width as i32, b.height as i32)))
+        .unwrap_or((1, 1));
     let mut clients = Vec::new();
     for (i, surface) in state.xdg_shell_state.toplevel_surfaces().iter().enumerate() {
         let (class, title) = toplevel_class_title(surface.wl_surface());
@@ -171,7 +242,7 @@ pub fn refresh_snapshot(state: &crate::State, size: (i32, i32)) {
             fullscreen: 0,
             focus_history_id: i as u32,
             at: (0, 0),
-            size: (size.0, size.1),
+            size: fallback_size,
             layer: false,
             layer_namespace: String::new(),
             layer_level: 0,
@@ -182,7 +253,8 @@ pub fn refresh_snapshot(state: &crate::State, size: (i32, i32)) {
     let dock_entries = state.wm.dock_entries();
     let snap = Snapshot {
         clients,
-        monitor: (size.0, size.1, 1.0, 60.0),
+        monitor: focused_monitor_data(&monitors, (fallback_size.0, fallback_size.1, 1.0, 60.0)),
+        monitors,
         focused_address: focused,
         active_workspace_id: 1,
         workspaces: vec![(1, "1".into())],
@@ -428,28 +500,27 @@ fn version_json() -> Value {
     })
 }
 
-fn monitors_json(snap: &Snapshot) -> Value {
-    let (w, h, scale, refresh) = snap.monitor;
-    json!([{
+fn monitor_obj(m: &MonitorData) -> Value {
+    json!({
         "id": 0,
-        "name": "winit",
-        "description": "winit (virtual)",
+        "name": m.name,
+        "description": m.description,
         "make": "",
         "model": "",
         "serial": "",
-        "width": w,
-        "height": h,
+        "width": m.width,
+        "height": m.height,
         "physicalWidth": 0,
         "physicalHeight": 0,
-        "refreshRate": refresh,
-        "x": 0,
-        "y": 0,
-        "activeWorkspace": { "id": snap.active_workspace_id, "name": snap.active_workspace_id.to_string() },
+        "refreshRate": m.refresh,
+        "x": m.x,
+        "y": m.y,
+        "activeWorkspace": { "id": m.active_workspace, "name": m.active_workspace.to_string() },
         "specialWorkspace": { "id": 0, "name": "" },
         "reserved": [0, 0, 0, 0],
-        "scale": scale,
+        "scale": m.scale,
         "transform": 0,
-        "focused": true,
+        "focused": m.focused,
         "dpmsStatus": true,
         "vrr": false,
         "solitary": "0",
@@ -469,7 +540,28 @@ fn monitors_json(snap: &Snapshot) -> Value {
         "sdrMaxLuminance": 80.0,
         "hardwareCursorsInUse": 0,
         "hardwareDetails": {},
-    }])
+    })
+}
+
+fn monitors_json(snap: &Snapshot) -> Value {
+    // No outputs yet (test fixture / pre-hotplug): keep the exact virtual
+    // monitor shape Tacit already consumes, derived from the legacy tuple.
+    if snap.monitors.is_empty() {
+        let (w, h, scale, refresh) = snap.monitor;
+        return Value::Array(vec![monitor_obj(&MonitorData {
+            name: "winit".into(),
+            description: "winit (virtual)".into(),
+            x: 0,
+            y: 0,
+            width: w,
+            height: h,
+            scale,
+            refresh,
+            focused: true,
+            active_workspace: snap.active_workspace_id,
+        })]);
+    }
+    Value::Array(snap.monitors.iter().map(monitor_obj).collect())
 }
 
 fn ws_ref(id: Option<i32>) -> Value {
@@ -712,8 +804,8 @@ mod tests {
     #[test]
     fn ipc_outputs_snapshot_monitor_uses_focused_output() {
         let monitors = vec![
-            MonitorData { name: "eDP-1".into(), width: 1920, height: 1080, scale: 1.0, focused: false, ..Default::default() },
-            MonitorData { name: "HDMI-A-1".into(), width: 1280, height: 720, scale: 2.0, focused: true, ..Default::default() },
+            MonitorData { name: "eDP-1".into(), width: 1920, height: 1080, scale: 1.0, refresh: 60.0, focused: false, ..Default::default() },
+            MonitorData { name: "HDMI-A-1".into(), width: 1280, height: 720, scale: 2.0, refresh: 60.0, focused: true, ..Default::default() },
         ];
         assert_eq!(
             focused_monitor_data(&monitors, (0, 0, 1.0, 60.0)),

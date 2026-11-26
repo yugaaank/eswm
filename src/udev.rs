@@ -844,6 +844,10 @@ if let Some(ref ipc) = ipc_opt {
     }
 }
 state.ipc = ipc_opt;
+// Keep the hyprctl-compat snapshot in step with the live output model.
+// Without this the j/monitors reply described a single fictional "winit"
+// screen forever, no matter what was plugged in.
+ipc::refresh_snapshot(&state);
 
         // A hitch with fast frames means the loop sat on a pending redraw. Time
         // the blocking dispatch: nothing pending = idle wait, work pending =
