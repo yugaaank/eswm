@@ -14,7 +14,7 @@ tasks:
     verify: cargo test --bin eswm config_table
     risk: P1
     security: low
-    status: failing
+    status: passing
     allure:
       severity: high
       categories:
