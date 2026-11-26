@@ -2768,6 +2768,73 @@ mod tests {
         assert!(state.toplevels.is_empty());
     }
 
+    // e09s05t4: rules and events must see the committed app_id, not the empty
+    // string new_toplevel used to hand to add_window.
+    #[test]
+    fn toplevel_rules_match_real_app_id_at_first_commit() {
+        let mut display: Display<State> = Display::new().expect("create test display");
+        let dh = display.handle();
+        let mut state = new_state("test", &dh, true);
+        state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
+        let output_id = state.wm.focused_output_id().unwrap();
+        state.wm.add_workspace(output_id, 3, "3");
+        state.window_rules.lock().unwrap().push(wm::WindowRule {
+            app_id: "ruled-app".to_string(),
+            workspace: Some(3),
+            mode: Some(wm::ClientMode::floating()),
+        });
+        lua_state::drain_window_rules(&mut state.wm, &state.window_rules);
+
+        let (conn, mut queue, mut fixture) = fixture_toplevel_client(&mut display, &mut state);
+        fixture_commit_toplevel(&mut display, &mut state, &conn, &mut queue, &mut fixture, "ruled-app", "Ruled");
+        let id = wm_id_for_app_id(&state, "ruled-app");
+        let window = state.wm.window(id).expect("window exists");
+        assert_eq!(window.workspace, 3, "rule workspace applies at creation");
+        assert_eq!(window.mode, wm::ClientMode::floating(), "rule mode applies at creation");
+    }
+
+    #[test]
+    fn toplevel_rules_non_match_uses_defaults() {
+        let mut display: Display<State> = Display::new().expect("create test display");
+        let dh = display.handle();
+        let mut state = new_state("test", &dh, true);
+        state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
+        let output_id = state.wm.focused_output_id().unwrap();
+        state.wm.add_workspace(output_id, 3, "3");
+        state.window_rules.lock().unwrap().push(wm::WindowRule {
+            app_id: "other-app".to_string(),
+            workspace: Some(3),
+            mode: Some(wm::ClientMode::floating()),
+        });
+        lua_state::drain_window_rules(&mut state.wm, &state.window_rules);
+
+        let (conn, mut queue, mut fixture) = fixture_toplevel_client(&mut display, &mut state);
+        fixture_commit_toplevel(&mut display, &mut state, &conn, &mut queue, &mut fixture, "plain-app", "Plain");
+        let id = wm_id_for_app_id(&state, "plain-app");
+        let window = state.wm.window(id).expect("window exists");
+        assert_ne!(window.workspace, 3, "another app must not inherit the rule");
+        assert_eq!(window.mode, wm::ClientMode::tiled(), "default mode stays tiled");
+    }
+
+    #[test]
+    fn toplevel_rules_events_carry_real_metadata_in_same_tick() {
+        let mut display: Display<State> = Display::new().expect("create test display");
+        let dh = display.handle();
+        let mut state = new_state("test", &dh, true);
+        state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
+
+        let (conn, mut queue, mut fixture) = fixture_toplevel_client(&mut display, &mut state);
+        fixture_commit_toplevel(&mut display, &mut state, &conn, &mut queue, &mut fixture, "event-app", "Event App");
+        let id = wm_id_for_app_id(&state, "event-app");
+        let events = queued_layer_events(&state);
+
+        let open = events.iter().find(|(kind, _)| *kind == EventKind::WindowOpen).expect("window_open");
+        assert_eq!(open.1["id"], id);
+        assert_eq!(state.wm.window(id).unwrap().app_id, "event-app", "opened window has real metadata");
+        let class = events.iter().find(|(kind, _)| *kind == EventKind::WindowClass).expect("window_class");
+        assert_eq!(class.1["class"], "event-app", "class event must carry committed app_id");
+    }
+
     #[test]
     fn control_state_returns_outputs_workspaces_windows() {
         let mut state = test_state();
