@@ -2305,6 +2305,7 @@ mod tests {
         xdg_surface: Option<XdgSurface>,
         toplevel: Option<XdgToplevel>,
         configures: usize,
+        toplevel_configures: usize,
         last_serial: u32,
     }
 
@@ -2397,13 +2398,16 @@ mod tests {
 
     impl wayland_client::Dispatch<XdgToplevel, ()> for ToplevelFixture {
         fn event(
-            _: &mut Self,
+            state: &mut Self,
             _: &XdgToplevel,
-            _: xdg_toplevel::Event,
+            event: xdg_toplevel::Event,
             _: &(),
             _: &wayland_client::Connection,
             _: &wayland_client::QueueHandle<Self>,
         ) {
+            if matches!(event, xdg_toplevel::Event::Configure { .. }) {
+                state.toplevel_configures += 1;
+            }
         }
     }
 
@@ -2635,6 +2639,86 @@ mod tests {
         state.wm.remove_window(id);
         prune_dead_windows(&mut state);
         assert!(!state.toplevels.contains_key(&id), "prune must drop orphaned index entries");
+    }
+
+    // e09s05t3: client-initiated presentation requests, driven over the wire
+    // rather than by poking WM state directly.
+    #[test]
+    fn client_request_fullscreen_set_unset_and_noop() {
+        let mut display: Display<State> = Display::new().expect("create test display");
+        let dh = display.handle();
+        let mut state = new_state("test", &dh, true);
+        state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
+
+        let (conn, mut queue, mut fixture) = fixture_toplevel_client(&mut display, &mut state);
+        fixture_commit_toplevel(&mut display, &mut state, &conn, &mut queue, &mut fixture, "cinema", "Cinema");
+        let id = wm_id_for_app_id(&state, "cinema");
+        let placement = state.wm.window(id).unwrap().mode.placement;
+        let before = fixture.toplevel_configures;
+
+        fixture.toplevel.as_ref().unwrap().unset_fullscreen();
+        fixture_pump_toplevel(&mut display, &mut state, &conn, &mut queue, &mut fixture);
+        assert_eq!(state.wm.window(id).unwrap().mode.presentation, wm::Presentation::Normal);
+        assert_eq!(fixture.toplevel_configures, before, "no-op unset must not configure");
+
+        fixture.toplevel.as_ref().unwrap().set_fullscreen(None);
+        fixture_pump_toplevel(&mut display, &mut state, &conn, &mut queue, &mut fixture);
+        let mode = state.wm.window(id).unwrap().mode;
+        assert_eq!(mode.presentation, wm::Presentation::Fullscreen);
+        assert_eq!(mode.placement, placement, "presentation must not clobber placement");
+        assert_eq!(state.wm.window(id).unwrap().mode_sent, Some(mode), "apply_layout must configure");
+        let after_set = fixture.toplevel_configures;
+        assert!(after_set > before, "client must see a configure after fullscreen");
+
+        fixture.toplevel.as_ref().unwrap().unset_fullscreen();
+        fixture_pump_toplevel(&mut display, &mut state, &conn, &mut queue, &mut fixture);
+        assert_eq!(state.wm.window(id).unwrap().mode.presentation, wm::Presentation::Normal);
+        assert!(fixture.toplevel_configures > after_set, "unset must reconfigure");
+    }
+
+    #[test]
+    fn client_request_maximize_saves_and_restores_rect() {
+        let mut display: Display<State> = Display::new().expect("create test display");
+        let dh = display.handle();
+        let mut state = new_state("test", &dh, true);
+        state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
+
+        let (conn, mut queue, mut fixture) = fixture_toplevel_client(&mut display, &mut state);
+        fixture_commit_toplevel(&mut display, &mut state, &conn, &mut queue, &mut fixture, "sheet", "Sheet");
+        let id = wm_id_for_app_id(&state, "sheet");
+        let saved = state.wm.window(id).unwrap().target_rect;
+        let placement = state.wm.window(id).unwrap().mode.placement;
+        let before = fixture.toplevel_configures;
+
+        fixture.toplevel.as_ref().unwrap().set_maximized();
+        fixture_pump_toplevel(&mut display, &mut state, &conn, &mut queue, &mut fixture);
+        assert_eq!(state.wm.window(id).unwrap().mode.presentation, wm::Presentation::Maximized);
+        assert_eq!(state.wm.window(id).unwrap().mode.placement, placement);
+        assert_eq!(state.wm.window(id).unwrap().saved_rect, Some(saved));
+        assert!(fixture.toplevel_configures > before, "maximize must send a configure");
+
+        let after_set = fixture.toplevel_configures;
+        fixture.toplevel.as_ref().unwrap().unset_maximized();
+        fixture_pump_toplevel(&mut display, &mut state, &conn, &mut queue, &mut fixture);
+        assert_eq!(state.wm.window(id).unwrap().mode.presentation, wm::Presentation::Normal);
+        assert_eq!(state.wm.window(id).unwrap().target_rect, saved, "unmaximize restores saved geometry");
+        assert!(fixture.toplevel_configures > after_set, "restore must send a configure");
+    }
+
+    #[test]
+    fn client_request_on_unregistered_toplevel_is_noop() {
+        let mut display: Display<State> = Display::new().expect("create test display");
+        let dh = display.handle();
+        let mut state = new_state("test", &dh, true);
+        state.seat.add_keyboard(Default::default(), 200, 200).unwrap();
+
+        let (conn, mut queue, mut fixture) = fixture_toplevel_client(&mut display, &mut state);
+        fixture.toplevel.as_ref().unwrap().set_fullscreen(None);
+        fixture.toplevel.as_ref().unwrap().set_maximized();
+        fixture_pump_toplevel(&mut display, &mut state, &conn, &mut queue, &mut fixture);
+
+        assert!(state.wm.window_ids().is_empty(), "requests before commit must not create windows");
+        assert!(state.toplevels.is_empty());
     }
 
     #[test]
