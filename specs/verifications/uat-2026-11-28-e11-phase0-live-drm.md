@@ -63,18 +63,46 @@ change to `systemctl --user show-environment`.
 
 | # | Check | Expected | Result |
 |---|-------|----------|--------|
-| 1 | eswm starts on a TTY | No VT grab conflict; compositor reaches its normal ready state | PENDING |
-| 2 | systemd user env | All four vars listed with `eswm-test` (or `$TACIT_COMP_SOCKET`) / `eswm` / `wayland` / `eswm` | PENDING |
-| 3 | D-Bus activation env | `GetEnvironment` lists the same four vars, or tool absence produced only a warning | PENDING |
-| 4 | Child identity | For a keybind-spawned app: `tr '\0' '\n' < /proc/$(pgrep -n APP)/environ \| grep -E 'WAYLAND_DISPLAY\|XDG_SESSION_TYPE'` shows eswm values | PENDING |
-| 5 | File picker stays home | Open a GTK and a Qt app, trigger Ctrl+O; picker windows appear on eswm, not another compositor | PENDING |
-| 6 | Portal backend | `eswm-portals.conf` is at the documented path; picker uses GTK backend | PENDING |
+| 1 | eswm starts on a TTY | No VT grab conflict; compositor reaches its normal ready state | PASS (agent: pid 413364, layers and toplevels in log) |
+| 2 | systemd user env | All four vars listed with `eswm-test` / `eswm` / `wayland` / `eswm` | PASS (agent: `show-environment`) |
+| 3 | D-Bus activation env | Same four vars in the activation environment | PARTIAL (agent: `dbus-update-activation-environment` returned success with no warning; `org.freedesktop.DBus.GetEnvironment` is unsupported by this dbus-daemon, so direct read was impossible) |
+| 4 | Child identity | Keybind-spawned app inherits eswm values | PASS (agent: kitty pid 414464 has all four vars plus `TERMINAL=kitty`; pre-existing kitty 62834 keeps its Hyprland values as expected) |
+| 5 | File picker stays home | GTK/Qt pickers appear on eswm | PENDING — see Finding 1 |
+| 6 | Portal backend | Picker uses the GTK backend from `eswm-portals.conf` | FAIL (agent: portal daemons still carry `XDG_CURRENT_DESKTOP=Tacit:Hyprland` and `WAYLAND_DISPLAY=wayland-1`) |
 | 7 | Capture claim | A screen-share request gets no backend from eswm | PENDING |
-| 8 | Clean shutdown | Quit with Super+Alt+Backspace; only eswm-owned vars disappear from the user env | PENDING |
-| 9 | Opt-out startup | `ESWM_NO_SD_VARS=1` starts, logs the skip warning, leaves the user env untouched | PENDING |
-| 10 | Missing tool degradation | If a tool is unavailable, eswm still runs and logs a warning | PENDING |
+| 8 | Clean shutdown | Quit with Super+Alt+Backspace; only eswm-owned vars disappear | PENDING — operator action |
+| 9 | Opt-out startup | `ESWM_NO_SD_VARS=1` starts, logs the skip warning, leaves env untouched | PENDING — operator action |
+| 10 | Missing tool degradation | If a tool is unavailable, eswm still runs and logs a warning | N_A (both tools installed; no export warnings in log) |
 
-Row 10 can be marked N_A if both tools are installed. The "user edit wins"
+## Finding 1 — stale portal daemons bypass eswm-portals.conf
+
+`xdg-desktop-portal` (pid 1383), `xdg-desktop-portal-gtk` (pid 1431) and
+`xdg-desktop-portal-hyprland` (pid 1555) all started at 18:13, over two hours
+before eswm (20:46). Their environments still say
+`XDG_CURRENT_DESKTOP=Tacit:Hyprland` and `WAYLAND_DISPLAY=wayland-1`.
+There is no `tacit-portals.conf`, so the portal falls back to
+`hyprland-portals.conf` (`default=hyprland;gtk`) and the Hyprland backend is
+already connected to `wayland-1`.
+
+Exporting the session identity updates the user bus, but it cannot retroactively
+change a daemon that is already running. `eswm-portals.conf` is installed
+correctly; it only takes effect once the portal daemons are restarted with the
+new environment. This reproduces the original "file picker opens in Hyprland"
+symptom in a transition session where both compositors are alive.
+
+Suggested experiment (operator, disruptive — restarts portal services):
+
+```sh
+systemctl --user restart xdg-desktop-portal.service xdg-desktop-portal-gtk.service xdg-desktop-portal-hyprland.service
+tr '\0' '\n' < /proc/$(pgrep -n xdg-desktop-portal)/environ | grep -E '^(WAYLAND_DISPLAY|XDG_CURRENT_DESKTOP)='
+```
+
+After that, a GTK/Qt file picker should route through GTK on `eswm-test`.
+If confirmed, Phase 0 needs a startup step that restarts the portal daemons
+after the export, or docs must state that a fresh login (no other compositor)
+is required.
+
+Row 10 is N_A because both tools are installed. The "user edit wins"
 rule is proven by unit test `session_env::tests::restore_only_owned_vars`, not
 by this live run — do not try to fake it by editing the user manager mid-run.
 
