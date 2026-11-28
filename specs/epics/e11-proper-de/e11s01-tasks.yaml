@@ -9,7 +9,7 @@ tasks:
   verify: cargo test --bin eswm session_env::tests::sets_eswm_identity_vars
   risk: P1
   security: low
-  status: failing
+  status: passing
   allure:
     severity: high
     categories: [e11-proper-de, session, unit]
