@@ -307,4 +307,18 @@ mod tests {
         assert_eq!(envs.get("XDG_SESSION_TYPE"), Some(&"wayland"));
         assert_eq!(envs.get("XDG_SESSION_DESKTOP"), Some(&"eswm"));
     }
+
+    #[test]
+    fn caller_env_values_are_preserved() {
+        let identity = super::SessionIdentity::new("eswm-test");
+        let mut command = std::process::Command::new("true");
+        command.env("WAYLAND_DISPLAY", "caller-owned-wayland");
+        super::apply_to_command(&identity, &mut command);
+        let envs: std::collections::BTreeMap<&str, &str> = command
+            .get_envs()
+            .filter_map(|(key, value)| Some((key.to_str()?, value?.to_str()?)))
+            .collect();
+        assert_eq!(envs.get("WAYLAND_DISPLAY"), Some(&"caller-owned-wayland"));
+        assert_eq!(envs.get("XDG_CURRENT_DESKTOP"), Some(&"eswm"));
+    }
 }
