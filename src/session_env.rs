@@ -107,4 +107,54 @@ mod tests {
         // Key material does not get a free ride to the activation environment.
         assert!(args.iter().all(|arg| !arg.contains("KEY") && !arg.contains("SECRET")));
     }
+
+    static SESSION_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn restore_only_owned_vars() {
+        let _guard = SESSION_ENV_LOCK.lock().unwrap();
+        let keys = [
+            "WAYLAND_DISPLAY",
+            "XDG_CURRENT_DESKTOP",
+            "XDG_SESSION_TYPE",
+            "XDG_SESSION_DESKTOP",
+        ];
+        let originals: Vec<(&str, Option<String>)> = keys
+            .iter()
+            .map(|key| (*key, std::env::var(key).ok()))
+            .collect();
+
+        // Plant known pre-eswm values so restoration is exact.
+        for key in keys {
+            // SAFETY: SESSION_ENV_LOCK serialises env mutation across tests.
+            unsafe { std::env::set_var(key, "pre-existing") };
+        }
+
+        let identity = super::SessionIdentity::new("eswm-restore-test");
+        let mut scope = super::SessionScope::install(identity);
+        assert_eq!(std::env::var("XDG_SESSION_TYPE").unwrap(), "wayland");
+
+        // A user edit while eswm runs must win over shutdown cleanup.
+        // SAFETY: SESSION_ENV_LOCK serialises env mutation across tests.
+        unsafe { std::env::set_var("XDG_SESSION_TYPE", "user-tweaked") };
+        scope.restore();
+
+        assert_eq!(std::env::var("XDG_SESSION_TYPE").unwrap(), "user-tweaked");
+        assert_eq!(std::env::var("WAYLAND_DISPLAY").unwrap(), "pre-existing");
+        assert_eq!(std::env::var("XDG_CURRENT_DESKTOP").unwrap(), "pre-existing");
+        assert_eq!(std::env::var("XDG_SESSION_DESKTOP").unwrap(), "pre-existing");
+
+        // Idempotent: a second restore changes nothing.
+        scope.restore();
+        assert_eq!(std::env::var("XDG_SESSION_TYPE").unwrap(), "user-tweaked");
+
+        // Put the test process back the way it was.
+        for (key, original) in originals {
+            // SAFETY: SESSION_ENV_LOCK serialises env mutation across tests.
+            match original {
+                Some(value) => unsafe { std::env::set_var(key, value) },
+                None => unsafe { std::env::remove_var(key) },
+            }
+        }
+    }
 }
