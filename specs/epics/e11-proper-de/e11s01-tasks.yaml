@@ -18,7 +18,7 @@ tasks:
   verify: cargo test --bin eswm session_env::tests::systemd_import_command_uses_user_scope
   risk: P1
   security: low
-  status: failing
+  status: passing
   allure:
     severity: high
     categories: [e11-proper-de, systemd, unit]

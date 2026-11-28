@@ -22,6 +22,22 @@ impl SessionIdentity {
     pub fn get(&self, key: &str) -> Option<&str> {
         self.values.get(key).map(String::as_str)
     }
+
+    #[allow(dead_code)] // wired into startup by e11s01t5
+    pub fn keys(&self) -> impl Iterator<Item = &str> {
+        self.values.keys().map(String::as_str)
+    }
+}
+
+/// Build the optional user-scope import as data so tests need no live bus.
+#[allow(dead_code)] // wired into startup by e11s01t5
+pub fn systemd_import_command(identity: &SessionIdentity) -> std::process::Command {
+    let mut command = std::process::Command::new("systemctl");
+    command.arg("--user").arg("import-environment");
+    for key in identity.keys() {
+        command.arg(key);
+    }
+    command
 }
 
 #[cfg(test)]
