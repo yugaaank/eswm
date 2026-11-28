@@ -18,6 +18,7 @@ mod ipc;
 mod lua_state;
 mod rounded_surface;
 mod rounding;
+mod session_env;
 mod udev;
 mod wm;
 use control::EventKind;
@@ -1772,13 +1773,13 @@ fn spawn_program(prog: &str, args: &[&str]) -> std::io::Result<u32> {
     let log = open_spawn_log_file(&log_path).ok();
     let terminal = spawn_terminal_name();
 
+    let identity = session_env::SessionIdentity::new(&socket_name());
     let mut command = Command::new(prog);
     command
         .args(args)
-        .env("WAYLAND_DISPLAY", socket_name())
-        .env("XDG_CURRENT_DESKTOP", "eswm")
         .env("TERMINAL", terminal)
         .stdin(Stdio::null());
+    session_env::apply_to_command(&identity, &mut command);
 
     match log {
         Some(file) => {
@@ -3900,5 +3901,42 @@ mod tests {
         // configure, because the tiled state bits are placement-dependent.
         state.wm.set_mode_sent(id, wm::ClientMode::floating());
         assert_eq!(state.wm.window(id).unwrap().mode_sent, Some(wm::ClientMode::floating()));
+    }
+
+    #[test]
+    fn portals_conf_defaults_to_gtk() {
+        let conf = include_str!("../resources/eswm-portals.conf");
+        assert!(conf.contains("[preferred]"), "missing preferred section: {conf}");
+        assert!(conf.contains("default=gtk"), "default backend is not gtk: {conf}");
+        for portal in [
+            "org.freedesktop.portal.FileChooser",
+            "org.freedesktop.portal.OpenURI",
+            "org.freedesktop.portal.Settings",
+        ] {
+            assert!(
+                conf.lines().any(|line| line == format!("{portal}=gtk")),
+                "{portal} is not routed to gtk: {conf}"
+            );
+        }
+        // Capture is a later phase; claiming it here would lie to clients.
+        assert!(!conf.contains("ScreenCast"), "ScreenCast must stay unclaimed: {conf}");
+        assert!(!conf.contains("Screenshot"), "Screenshot must stay unclaimed: {conf}");
+    }
+
+    #[test]
+    fn session_docs_cover_tty_launch() {
+        let docs = include_str!("../docs/session.md");
+        for needle in [
+            "TTY",
+            "WAYLAND_DISPLAY",
+            "XDG_CURRENT_DESKTOP",
+            "XDG_SESSION_TYPE",
+            "XDG_SESSION_DESKTOP",
+            "ESWM_NO_SD_VARS",
+            "eswm-portals.conf",
+            "systemctl --user",
+        ] {
+            assert!(docs.contains(needle), "session docs missing {needle}");
+        }
     }
 }

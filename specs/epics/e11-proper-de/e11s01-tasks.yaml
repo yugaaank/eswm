@@ -1,0 +1,78 @@
+spec: specs/epics/e11-proper-de/e11s01-session-identity.md
+story_id: e11s01
+title: 'Session identity export with graceful degradation'
+status: completed
+bcps: 5
+tasks:
+- id: e11s01t1
+  description: 'Add src/session_env.rs with a pure identity snapshot (WAYLAND_DISPLAY, XDG_CURRENT_DESKTOP, XDG_SESSION_TYPE, XDG_SESSION_DESKTOP), set it in-process at startup, and honour an explicit opt-out env var; RED then GREEN'
+  verify: cargo test --bin eswm session_env::tests::sets_eswm_identity_vars
+  risk: P1
+  security: low
+  status: passing
+  allure:
+    severity: high
+    categories: [e11-proper-de, session, unit]
+- id: e11s01t2
+  description: 'Export the identity to systemd user scope with `systemctl --user import-environment`; build the command as data, skip with a warning when systemctl is absent or the user bus is unavailable'
+  verify: cargo test --bin eswm session_env::tests::systemd_import_command_uses_user_scope
+  risk: P1
+  security: low
+  status: passing
+  allure:
+    severity: high
+    categories: [e11-proper-de, systemd, unit]
+- id: e11s01t3
+  description: 'Export the same identity to the D-Bus activation environment with `dbus-update-activation-environment --systemd`; skip with a warning when the tool is absent; never export secrets or key content'
+  verify: cargo test --bin eswm session_env::tests::dbus_activation_command_includes_vars
+  risk: P1
+  security: low
+  status: passing
+  allure:
+    severity: high
+    categories: [e11-proper-de, dbus, unit]
+- id: e11s01t4
+  description: 'Restore only values eswm actually set on clean shutdown; leave user-changed values intact and make the guard idempotent'
+  verify: cargo test --bin eswm session_env::tests::restore_only_owned_vars
+  risk: P1
+  security: low
+  status: passing
+  allure:
+    severity: high
+    categories: [e11-proper-de, session, unit]
+- id: e11s01t5
+  description: 'Create the session scope at udev startup, drop it on shutdown, and make spawned children inherit the exported identity; complete the live-DRM UAT checklist in the story file'
+  verify: cargo test --bin eswm session_env::tests::session_scope_drops_once
+  risk: P1
+  security: low
+  status: passing
+  allure:
+    severity: high
+    categories: [e11-proper-de, integration, udev]
+- id: e11s01t6
+  description: 'Keep caller-set child environment values when applying the eswm identity; RED then GREEN'
+  verify: cargo test --bin eswm session_env::tests::caller_env_values_are_preserved
+  risk: P2
+  security: low
+  status: passing
+  allure:
+    severity: normal
+    categories: [e11-proper-de, session, unit]
+- id: e11s01t7
+  description: 'Snapshot the systemd user environment before export and restore it on shutdown, clearing D-Bus activation entries eswm added; RED then GREEN'
+  verify: cargo test --bin eswm session_env::tests::external_restore_args_are_ownership_safe
+  risk: P1
+  security: low
+  status: passing
+  allure:
+    severity: high
+    categories: [e11-proper-de, session, unit]
+- id: e11s01t8
+  description: 'Cover the opt-out guard and optional-command success, failure and missing-tool branches without a live bus'
+  verify: cargo test --bin eswm session_env::tests::optional_export_paths_do_not_panic
+  risk: P3
+  security: none
+  status: passing
+  allure:
+    severity: minor
+    categories: [e11-proper-de, session, unit]

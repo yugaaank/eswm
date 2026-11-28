@@ -7,14 +7,13 @@
 ## Context
 
 eswm rounded corners by baking alpha into a border ring and titlebar texture and
-painting border-coloured wedges over the client's square corners (see
-`ROUNDED_CORNERS_PLAN.md` §§3–12). That works only while the border is thick
-enough to hide the square client pixels underneath. With a 1px border — the
-operator's actual setting — the wedge pokes outside the arc and a square block
-of border colour remains (§11.1). With `border_size == 0` no rounding is
-possible at all.
+painting border-coloured wedges over the client's square corners. That works only
+while the border is thick enough to hide the square client pixels underneath.
+With a 1px border — the operator's actual setting — the wedge pokes outside the
+arc and a square block of border colour remains. With `border_size == 0` no
+rounding is possible at all.
 
-The plan claimed smithay 0.7's `render_elements!` macro could not express a
+An earlier implementation note claimed smithay 0.7's `render_elements!` macro could not express a
 GLES-only per-element shader override without forking smithay. That claim was
 false. `cosmic-comp` proves the required APIs exist in stock smithay 0.7:
 

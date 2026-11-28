@@ -1,7 +1,7 @@
 # instantWM — performance & memory efficiency analysis, and what eswm should adopt
 
 **Date:** 2026-11-22
-**Source:** deep static analysis of `/home/yugaaank/Projects/eswm/instantWM` (v0.8.1). Reference-only. Companion docs: `INSTANTWM-COMPARISON.md`, `INSTANTWM-BAR-WM-FEATURES.md`, `BAR-WM-FEATURE-ROADMAP.md`.
+**Source:** deep static analysis of `/home/yugaaank/Projects/eswm/instantWM` (v0.8.1). Reference-only. Companion docs: `INSTANTWM-COMPARISON.md`, `INSTANTWM-BAR-WM-FEATURES.md`.
 **eswm baseline:** ~10.2k LOC, single-threaded `State`, `dirty`/`redraw_needed`/`frame_in_flight` gates (e05/e08), no caches beyond dock/titlebar buffers, no profiling harness.
 
 ---

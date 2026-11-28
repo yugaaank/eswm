@@ -1,0 +1,33 @@
+spec: specs/epics/e11-proper-de/e11s02-portal-and-docs.md
+story_id: e11s02
+title: 'Portal selection config and TTY launch documentation'
+status: completed
+bcps: 3
+tasks:
+- id: e11s02t1
+  description: 'Add resources/eswm-portals.conf with default=gtk for FileChooser/OpenURI/Settings and no ScreenCast claim; assert the shipped content in an inline test'
+  verify: cargo test --bin eswm tests::portals_conf_defaults_to_gtk
+  risk: P2
+  security: low
+  status: passing
+  allure:
+    severity: normal
+    categories: [e11-proper-de, portal, unit]
+- id: e11s02t2
+  description: 'Document TTY launch, session env export, opt-out and portal backend requirements in docs/session.md; assert the doc exists and names each required env var'
+  verify: cargo test --bin eswm tests::session_docs_cover_tty_launch
+  risk: P3
+  security: none
+  status: passing
+  allure:
+    severity: minor
+    categories: [e11-proper-de, docs]
+- id: e11s02t3
+  description: 'Live-DRM UAT: from a fresh eswm TTY, a GTK/Qt file picker stays on eswm, systemctl --user show-environment lists the eswm vars, and the portal uses the GTK backend. Record each checked row; operator-only because a VT grab is forbidden inside another session'
+  verify: 'verify-script: specs/epics/e11-proper-de/e11s02-portal-and-docs.md'
+  risk: P2
+  security: low
+  status: passing
+  allure:
+    severity: normal
+    categories: [e11-proper-de, uat, manual]

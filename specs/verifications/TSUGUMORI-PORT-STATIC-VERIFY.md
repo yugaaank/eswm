@@ -1,7 +1,7 @@
 # Tsugumori port — static verification record
 
 **Date:** 2026-11-22
-**Plan:** `specs/tech-architecture/TSUGUMORI-ESWM-PORT.md`
+**Plan:** retired 2026-11-28 (plan removed; this record is the surviving artifact).
 **Scope:** Home-config-only port. No compositor code changed. Live DRM UAT remains operator-only.
 
 ## Implemented
