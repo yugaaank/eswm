@@ -1,7 +1,7 @@
 spec: specs/epics/e11-proper-de/e11s02-portal-and-docs.md
 story_id: e11s02
 title: 'Portal selection config and TTY launch documentation'
-status: pending
+status: in_progress
 bcps: 3
 tasks:
 - id: e11s02t1

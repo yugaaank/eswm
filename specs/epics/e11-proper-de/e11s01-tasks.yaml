@@ -1,7 +1,7 @@
 spec: specs/epics/e11-proper-de/e11s01-session-identity.md
 story_id: e11s01
 title: 'Session identity export with graceful degradation'
-status: pending
+status: in_progress
 bcps: 5
 tasks:
 - id: e11s01t1
