@@ -88,14 +88,15 @@ user changed afterwards survive.
 
 | # | Check | Result |
 | --- | --- | --- |
-| 1 | Start from a TTY, no opt-out | PENDING — operator only |
-| 2 | `systemctl --user show-environment` lists four eswm values | PENDING — operator only |
-| 3 | GTK/Qt file picker stays on eswm | PENDING — operator only |
+| 1 | Start from a TTY, no opt-out | PASS (operator: clean `eswmdev` session on VT4) |
+| 2 | `systemctl --user show-environment` lists four eswm values | PASS (operator: all four values shown in the `eswmdev` session) |
+| 3 | GTK/Qt file picker stays on eswm | PASS (operator: Super+V check; picker opened on eswm) |
 | 4 | Clean quit removes only eswm-owned values | PENDING — operator only |
 | 5 | `ESWM_NO_SD_VARS=1` starts with a skip warning | PENDING — operator only |
 
-This agent session runs inside an existing graphical session and must not grab
-the VT (ADR-0002), so no live PASS is claimed here. Automated unit coverage for
+Live PASS rows come from the operator's clean `eswmdev` login session. This
+agent session runs inside an existing graphical session and must not grab the
+VT (ADR-0002), so it did not start or quit eswm. Automated unit coverage for
 the export commands, ownership and child env is green.
 
 ## Out of scope

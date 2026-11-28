@@ -1,7 +1,7 @@
 # UAT handoff — e11 Phase 0 session identity (live DRM)
 
 Date prepared: 2026-11-28
-Branch: `e11-proper-de-phase0` (HEAD `b347acf`)
+Branch: `e11-proper-de-phase0` (HEAD `1ce9ff1`)
 Operator: **you**. Unit tests prove the command shapes, ownership tracking and
 child env; only a real session proves a GTK/Qt file picker picks eswm.
 
@@ -67,8 +67,8 @@ change to `systemctl --user show-environment`.
 | 2 | systemd user env | All four vars listed with `eswm-test` / `eswm` / `wayland` / `eswm` | PASS (agent: `show-environment`) |
 | 3 | D-Bus activation env | Same four vars in the activation environment | PARTIAL (agent: `dbus-update-activation-environment` returned success with no warning; `org.freedesktop.DBus.GetEnvironment` is unsupported by this dbus-daemon, so direct read was impossible) |
 | 4 | Child identity | Keybind-spawned app inherits eswm values | PASS (agent: kitty pid 414464 has all four vars plus `TERMINAL=kitty`; pre-existing kitty 62834 keeps its Hyprland values as expected) |
-| 5 | File picker stays home | GTK/Qt pickers appear on eswm | PENDING — see Finding 1 |
-| 6 | Portal backend | Picker uses the GTK backend from `eswm-portals.conf` | FAIL (agent: portal daemons still carry `XDG_CURRENT_DESKTOP=Tacit:Hyprland` and `WAYLAND_DISPLAY=wayland-1`) |
+| 5 | File picker stays home | GTK/Qt pickers appear on eswm | PASS (operator: clean `eswmdev` session, Super+V check; picker on eswm) |
+| 6 | Portal backend | Picker uses the GTK backend from `eswm-portals.conf` | PASS in clean `eswmdev` session (operator: portal daemons show `eswm` / `eswm-test`) |
 | 7 | Capture claim | A screen-share request gets no backend from eswm | PENDING |
 | 8 | Clean shutdown | Quit with Super+Alt+Backspace; only eswm-owned vars disappear | PENDING — operator action |
 | 9 | Opt-out startup | `ESWM_NO_SD_VARS=1` starts, logs the skip warning, leaves env untouched | PENDING — operator action |
@@ -105,6 +105,27 @@ is required.
 Row 10 is N_A because both tools are installed. The "user edit wins"
 rule is proven by unit test `session_env::tests::restore_only_owned_vars`, not
 by this live run — do not try to fake it by editing the user manager mid-run.
+
+## Clean dev-user session — rows 5 and 6 closed
+
+The operator created a throwaway `eswmdev` user and copied the eswm and
+Noctalia configs into its home. That gives a fresh `systemd --user` manager and
+D-Bus session without ending the Hyprland session. `/usr/local/bin/eswm-dev` is
+a shared copy of the built binary because `/home/yugaaank` is mode 700.
+
+A one-key checker at `/usr/local/bin/eswm-check` is bound to `Super+V`. It
+shows the session and portal environments in a Zenity dialog, then opens a GTK
+file chooser with `GTK_USE_PORTAL=1`. The operator confirmed:
+
+- dialog shows `XDG_CURRENT_DESKTOP=eswm` and `WAYLAND_DISPLAY=eswm-test`,
+  with no `Tacit:Hyprland` or `wayland-1`;
+- portal daemons carry the same eswm values;
+- the file picker opens on eswm.
+
+That closes rows 5 and 6 in a clean login session. Finding 1 still describes
+the transition-session caveat: stale Hyprland portal daemons survive a TTY
+switch because `eswm-portals.conf` is read only at portal startup. No portal
+services were restarted by the agent.
 
 ## Evidence to attach
 

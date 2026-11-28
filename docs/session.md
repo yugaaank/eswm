@@ -66,6 +66,15 @@ Capture interfaces are intentionally absent from the config. A screen-share
 request gets no backend from eswm until a capture protocol exists in a later
 phase. Packaging of the config is handled separately from the compositor.
 
+## Fresh login for portals
+
+Portal daemons are D-Bus-activated systemd user services. They read
+`XDG_CURRENT_DESKTOP` and `eswm-portals.conf` once, when they start. Exporting
+the session identity cannot change a portal daemon already started by another
+compositor. For a clean portal check, end all graphical sessions and log in
+again before starting eswm. A separate dev user on a free VT also works
+because it gets its own systemd user manager and D-Bus session.
+
 ## Verification from a live TTY
 
 1. Start eswm with session export enabled.

@@ -60,15 +60,18 @@ from silently drifting.
 
 | # | Check | Result |
 | --- | --- | --- |
-| 1 | Install `eswm-portals.conf` at the documented path | PENDING — operator only |
-| 2 | Start eswm from a TTY with export enabled | PENDING — operator only |
-| 3 | `systemctl --user show-environment` lists eswm identity | PENDING — operator only |
-| 4 | GTK/Qt file picker stays on eswm | PENDING — operator only |
+| 1 | Install `eswm-portals.conf` at the documented path | PASS (operator: root-owned 0644 file at `/usr/share/xdg-desktop-portal/eswm-portals.conf`) |
+| 2 | Start eswm from a TTY with export enabled | PASS (operator: clean `eswmdev` session on VT4) |
+| 3 | `systemctl --user show-environment` lists eswm identity | PASS (operator: all four values shown in the `eswmdev` session) |
+| 4 | GTK/Qt file picker stays on eswm | PASS (operator: Super+V check showed eswm/eswm-test portal env and the GTK picker opened on eswm) |
 | 5 | Screen-share request claims no backend eswm lacks | PENDING — operator only |
 
-Live DRM UAT cannot run inside an existing Wayland/X11 session (ADR-0002), so
-these rows stay pending for the operator. The shipped config and docs are
-covered by inline assertions; they do not substitute for the live check.
+Live DRM UAT ran in a clean `eswmdev` login session; the agent did not start or
+quit eswm (ADR-0002). A transition session with stale Hyprland portal daemons
+still bypasses `eswm-portals.conf`; see
+`specs/verifications/uat-2026-11-28-e11-phase0-live-drm.md`. The shipped config
+and docs are covered by inline assertions; they do not substitute for the
+live check.
 
 ## Out of scope
 
