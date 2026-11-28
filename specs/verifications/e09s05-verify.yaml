@@ -9,7 +9,7 @@ phases:
   branch_check:
     passed: true
     branch: e09-lua-toplevel-rules
-    note: "Same local branch as e09s04 (e09-lua-toplevel-rules) from main 14ae411; story locks held. No merge and no push."
+    note: "Same local branch as e09s04 (e09-lua-toplevel-rules) from main 14ae411; story locks held. Merged locally into main at 72887e8 by explicit operator decision; no push."
   preflight:
     passed: true
     command: "cargo clippy --all-targets && cargo test && cargo build && python3 scripts/spec-lint.py"
@@ -53,7 +53,7 @@ phases:
     risk_accepted: true
     waivers: []
     automated_proxy: "toplevel_first_commit (3), toplevel_index (3), client_request (3), toplevel_rules (3) drive a real wayland-client fixture over a Unix socket. They prove timing, lookup, set/unset request semantics and event metadata; they cannot prove live focus feel, real F11 behaviour or popup behaviour after the commit-hook change."
-    gate: "Closed by explicit operator decision without live testing. Automated gate green; live app behaviour remains unverified. No merge into local main and no push until the operator explicitly authorises."
+    gate: "Closed by explicit operator decision without live testing. Automated gate green; live app behaviour remains unverified. Operator authorised local merge on 2026-11-28; main fast-forwarded to 72887e8. No push until separately authorised."
   security_scan:
     passed: true
     automated_only: true

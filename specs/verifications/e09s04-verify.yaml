@@ -9,7 +9,7 @@ phases:
   branch_check:
     passed: true
     branch: e09-lua-toplevel-rules
-    note: "Local branch from main 14ae411; story locks for e09s04/e09s05 in specs/agent-locks.yaml. No merge and no push."
+    note: "Local branch from main 14ae411; story locks for e09s04/e09s05 in specs/agent-locks.yaml. Merged locally into main at 72887e8 by explicit operator decision; no push."
   preflight:
     passed: true
     command: "cargo clippy --all-targets && cargo test && cargo build && python3 scripts/spec-lint.py"
@@ -57,7 +57,7 @@ phases:
     risk_accepted: true
     waivers: []
     automated_proxy: "config_table, lua_function_bind, lua_event_hook, lua_window_rule, config_reload, lua_stub, decoration_refcell plus full preflight. These prove in-process validation, callback dispatch, replacement-on-reload and stub strings; they cannot prove a live TTY reload preserves the working session."
-    gate: "Closed by explicit operator decision without live testing. Automated gate green; live app behaviour remains unverified. No merge into local main and no push until the operator explicitly authorises."
+    gate: "Closed by explicit operator decision without live testing. Automated gate green; live app behaviour remains unverified. Operator authorised local merge on 2026-11-28; main fast-forwarded to 72887e8. No push until separately authorised."
   security_scan:
     passed: true
     automated_only: true
