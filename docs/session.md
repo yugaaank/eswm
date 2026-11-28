@@ -41,10 +41,13 @@ want eswm to change its variables. eswm still sets its own in-process identity
 so spawned children connect to the right socket; only the shared user
 environment is left alone.
 
-On a clean shutdown eswm removes only the values it still owns. If you change
-one of them while eswm runs, your value wins and eswm leaves it in place. This
-is why a file picker should stop RSVPing to the other compositor's party: the
-session now says who is actually hosting.
+On a clean shutdown eswm restores the systemd user environment and clears the
+D-Bus activation entries it added, but only for values that still match its
+own. If you change one of them while eswm runs, your value wins and eswm leaves
+it in place. D-Bus has no unset operation, so a variable that was absent before
+eswm started is cleared to an empty string there; systemd unsets it outright.
+This is why a file picker should stop RSVPing to the other compositor's party:
+the session now says who is actually hosting.
 
 ## Portal backends
 

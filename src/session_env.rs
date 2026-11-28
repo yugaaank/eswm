@@ -1,14 +1,14 @@
 use std::collections::BTreeMap;
+use std::ffi::OsString;
+use std::os::unix::ffi::OsStringExt;
 
 /// The identity eswm publishes so portals stop inviting file pickers to the
 /// wrong compositor's party.
-#[allow(dead_code)] // wired into startup by e11s01t5
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionIdentity {
     values: BTreeMap<String, String>,
 }
 
-#[allow(dead_code)] // wired into startup by e11s01t5
 impl SessionIdentity {
     pub fn new(wayland_display: &str) -> Self {
         let mut values = BTreeMap::new();
@@ -23,14 +23,12 @@ impl SessionIdentity {
         self.values.get(key).map(String::as_str)
     }
 
-    #[allow(dead_code)] // wired into startup by e11s01t5
     pub fn keys(&self) -> impl Iterator<Item = &str> {
         self.values.keys().map(String::as_str)
     }
 }
 
 /// Build the optional user-scope import as data so tests need no live bus.
-#[allow(dead_code)] // wired into startup by e11s01t5
 pub fn systemd_import_command(identity: &SessionIdentity) -> std::process::Command {
     let mut command = std::process::Command::new("systemctl");
     command.arg("--user").arg("import-environment");
@@ -42,7 +40,6 @@ pub fn systemd_import_command(identity: &SessionIdentity) -> std::process::Comma
 
 /// Build the optional D-Bus activation env update as data, never carrying key
 /// content or secrets along for the ride.
-#[allow(dead_code)] // wired into startup by e11s01t5
 pub fn dbus_activation_command(identity: &SessionIdentity) -> std::process::Command {
     let mut command = std::process::Command::new("dbus-update-activation-environment");
     command.arg("--systemd");
@@ -54,7 +51,6 @@ pub fn dbus_activation_command(identity: &SessionIdentity) -> std::process::Comm
 
 /// Give a child the same identity the compositor announced. Only the four
 /// session keys are applied; any TERMINAL-style caller value survives.
-#[allow(dead_code)] // wired into spawn by e11s01t5
 pub fn apply_to_command<'a>(
     identity: &SessionIdentity,
     command: &'a mut std::process::Command,
@@ -69,22 +65,15 @@ pub fn apply_to_command<'a>(
     command
 }
 
-/// Announce the identity to the user session. A missing tool, absent user bus
-/// or explicit ESWM_NO_SD_VARS is a warning, never a startup failure.
-#[allow(dead_code)] // wired into startup by e11s01t5
-pub fn export_to_user_session(identity: &SessionIdentity) {
+/// Announce the identity to the user session and return the guard that undoes
+/// the external part on shutdown. A missing tool, absent user bus or explicit
+/// ESWM_NO_SD_VARS is a warning, never a startup failure.
+pub fn export_to_user_session(identity: &SessionIdentity) -> Option<SessionExportScope> {
     if std::env::var_os("ESWM_NO_SD_VARS").is_some() {
         tracing::warn!("ESWM_NO_SD_VARS set: skipping systemd/D-Bus session export");
-        return;
+        return None;
     }
-    run_optional(
-        systemd_import_command(identity),
-        "systemd user environment",
-    );
-    run_optional(
-        dbus_activation_command(identity),
-        "D-Bus activation environment",
-    );
+    Some(SessionExportScope::install(identity.clone()))
 }
 
 fn run_optional(mut command: std::process::Command, label: &str) {
@@ -95,21 +84,165 @@ fn run_optional(mut command: std::process::Command, label: &str) {
     }
 }
 
-/// Owns the identity eswm installed in its own process and puts back only what
-/// is still ours at shutdown. A user edit to a value while we run wins.
-#[allow(dead_code)] // wired into startup by e11s01t5
-pub struct SessionScope {
+fn parse_show_environment(
+    bytes: &[u8],
+    identity: &SessionIdentity,
+) -> BTreeMap<String, Option<OsString>> {
+    let mut parsed: BTreeMap<String, Option<OsString>> = identity
+        .keys()
+        .map(|key| (key.to_owned(), None))
+        .collect();
+    for line in bytes.split(|byte| *byte == b'\n') {
+        let Some(eq) = line.iter().position(|byte| *byte == b'=') else {
+            continue;
+        };
+        let Ok(key) = std::str::from_utf8(&line[..eq]) else {
+            continue;
+        };
+        if !parsed.contains_key(key) {
+            continue;
+        }
+        let mut value = line[eq + 1..].to_vec();
+        if value.last() == Some(&b'\r') {
+            value.pop();
+        }
+        parsed.insert(key.to_owned(), Some(OsString::from_vec(value)));
+    }
+    parsed
+}
+
+fn current_external_environment(
+    identity: &SessionIdentity,
+) -> Option<BTreeMap<String, Option<OsString>>> {
+    let mut command = std::process::Command::new("systemctl");
+    command.arg("--user").arg("show-environment");
+    match command.output() {
+        Ok(output) if output.status.success() => Some(parse_show_environment(&output.stdout, identity)),
+        Ok(output) => {
+            tracing::warn!(status = %output.status, "skipping external session env snapshot");
+            None
+        }
+        Err(err) => {
+            tracing::warn!(?err, "skipping external session env snapshot");
+            None
+        }
+    }
+}
+
+fn external_restore_args(
+    previous: &BTreeMap<String, Option<OsString>>,
+    current: &BTreeMap<String, Option<OsString>>,
+    identity: &SessionIdentity,
+) -> (Vec<OsString>, Vec<OsString>, Vec<OsString>) {
+    let mut dbus = Vec::new();
+    let mut systemd_set = Vec::new();
+    let mut systemd_unset = Vec::new();
+    for (key, original) in previous {
+        let ours = OsString::from(identity.get(key).unwrap_or_default());
+        if current.get(key).and_then(|value| value.as_ref()) != Some(&ours) {
+            continue; // somebody changed it after us; their value wins
+        }
+        match original {
+            Some(value) => {
+                let mut pair = OsString::from(key);
+                pair.push("=");
+                pair.push(value);
+                dbus.push(pair.clone());
+                systemd_set.push(pair);
+            }
+            None => {
+                systemd_unset.push(OsString::from(key));
+                let mut cleared = OsString::from(key);
+                cleared.push("=");
+                dbus.push(cleared);
+            }
+        }
+    }
+    (dbus, systemd_set, systemd_unset)
+}
+
+/// Snapshots the systemd user environment before export and puts it back when
+/// eswm exits. Only values still owned by eswm are touched.
+pub struct SessionExportScope {
     identity: SessionIdentity,
-    previous: BTreeMap<String, Option<String>>,
+    previous: BTreeMap<String, Option<OsString>>,
+    captured: bool,
     restored: bool,
 }
 
-#[allow(dead_code)] // wired into startup by e11s01t5
+impl SessionExportScope {
+    fn install(identity: SessionIdentity) -> Self {
+        let (previous, captured) = match current_external_environment(&identity) {
+            Some(values) => (values, true),
+            None => (
+                identity.keys().map(|key| (key.to_owned(), None)).collect(),
+                false,
+            ),
+        };
+        let scope = Self {
+            identity,
+            previous,
+            captured,
+            restored: false,
+        };
+        run_optional(
+            systemd_import_command(&scope.identity),
+            "systemd user environment",
+        );
+        run_optional(
+            dbus_activation_command(&scope.identity),
+            "D-Bus activation environment",
+        );
+        scope
+    }
+
+    pub fn restore(&mut self) {
+        if self.restored || !self.captured {
+            return;
+        }
+        self.restored = true;
+        let Some(current) = current_external_environment(&self.identity) else {
+            return;
+        };
+        let (dbus, set, unset) = external_restore_args(&self.previous, &current, &self.identity);
+        if !dbus.is_empty() {
+            let mut command = std::process::Command::new("dbus-update-activation-environment");
+            // D-Bus has no unset verb; an absent value gets swept to empty.
+            command.args(&dbus);
+            run_optional(command, "D-Bus activation environment restore");
+        }
+        if !set.is_empty() {
+            let mut command = std::process::Command::new("systemctl");
+            command.arg("--user").arg("set-environment").args(&set);
+            run_optional(command, "systemd user environment restore");
+        }
+        if !unset.is_empty() {
+            let mut command = std::process::Command::new("systemctl");
+            command.arg("--user").arg("unset-environment").args(&unset);
+            run_optional(command, "systemd user environment cleanup");
+        }
+    }
+}
+
+impl Drop for SessionExportScope {
+    fn drop(&mut self) {
+        self.restore();
+    }
+}
+
+/// Owns the identity eswm installed in its own process and puts back only what
+/// is still ours at shutdown. A user edit to a value while we run wins.
+pub struct SessionScope {
+    identity: SessionIdentity,
+    previous: BTreeMap<String, Option<OsString>>,
+    restored: bool,
+}
+
 impl SessionScope {
     pub fn install(identity: SessionIdentity) -> Self {
         let mut previous = BTreeMap::new();
         for key in identity.keys() {
-            previous.insert(key.to_owned(), std::env::var(key).ok());
+            previous.insert(key.to_owned(), std::env::var_os(key));
             // SAFETY: installation happens once on the compositor thread before
             // any Wayland clients are accepted; tests serialise with a mutex.
             unsafe { std::env::set_var(key, identity.get(key).unwrap_or_default()) };
@@ -127,8 +260,8 @@ impl SessionScope {
         }
         self.restored = true;
         for (key, original) in &self.previous {
-            let ours = self.identity.get(key).unwrap_or_default();
-            if std::env::var(key).ok().as_deref() != Some(ours) {
+            let ours = OsString::from(self.identity.get(key).unwrap_or_default());
+            if std::env::var_os(key).as_deref() != Some(ours.as_os_str()) {
                 continue; // somebody changed it after us; their value wins
             }
             // SAFETY: paired with install(), on the compositor thread during
@@ -141,7 +274,6 @@ impl SessionScope {
     }
 }
 
-#[allow(dead_code)] // wired into startup by e11s01t5
 impl Drop for SessionScope {
     fn drop(&mut self) {
         self.restore();
@@ -215,9 +347,9 @@ mod tests {
             "XDG_SESSION_TYPE",
             "XDG_SESSION_DESKTOP",
         ];
-        let originals: Vec<(&str, Option<String>)> = keys
+        let originals: Vec<(&str, Option<std::ffi::OsString>)> = keys
             .iter()
-            .map(|key| (*key, std::env::var(key).ok()))
+            .map(|key| (*key, std::env::var_os(key)))
             .collect();
 
         // Plant known pre-eswm values so restoration is exact.
@@ -263,9 +395,9 @@ mod tests {
             "XDG_SESSION_TYPE",
             "XDG_SESSION_DESKTOP",
         ];
-        let originals: Vec<(&str, Option<String>)> = keys
+        let originals: Vec<(&str, Option<std::ffi::OsString>)> = keys
             .iter()
-            .map(|key| (*key, std::env::var(key).ok()))
+            .map(|key| (*key, std::env::var_os(key)))
             .collect();
         for key in keys {
             // SAFETY: SESSION_ENV_LOCK serialises env mutation across tests.
@@ -372,14 +504,14 @@ mod tests {
         assert_eq!(
             dbus,
             vec![
+                os("WAYLAND_DISPLAY=wayland-0"),
                 os("XDG_CURRENT_DESKTOP="),
-                os("XDG_SESSION_DESKTOP=Hyprland"),
-                os("WAYLAND_DISPLAY=wayland-0")
+                os("XDG_SESSION_DESKTOP=Hyprland")
             ]
         );
         assert_eq!(
             set,
-            vec![os("XDG_SESSION_DESKTOP=Hyprland"), os("WAYLAND_DISPLAY=wayland-0")]
+            vec![os("WAYLAND_DISPLAY=wayland-0"), os("XDG_SESSION_DESKTOP=Hyprland")]
         );
         assert_eq!(unset, vec![os("XDG_CURRENT_DESKTOP")]);
     }

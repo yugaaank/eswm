@@ -343,7 +343,7 @@ pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
     // is the common one, but an early error must not strand a stale display.
     let identity = crate::session_env::SessionIdentity::new(&crate::socket_name());
     let _session_scope = crate::session_env::SessionScope::install(identity.clone());
-    crate::session_env::export_to_user_session(&identity);
+    let _export_scope = crate::session_env::export_to_user_session(&identity);
 
     let mut event_loop = EventLoop::<'static, State>::try_new()?;
     let handle = event_loop.handle();
