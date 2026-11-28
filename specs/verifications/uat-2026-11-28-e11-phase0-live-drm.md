@@ -71,7 +71,7 @@ change to `systemctl --user show-environment`.
 | 6 | Portal backend | Picker uses the GTK backend from `eswm-portals.conf` | PASS in clean `eswmdev` session (operator: portal daemons show `eswm` / `eswm-test`) |
 | 7 | Capture claim | A screen-share request gets no backend from eswm | PASS (operator: `Super+s` call failed with "No such interface ... ScreenCast", so no backend is exported) |
 | 8 | Clean shutdown | Quit with Super+Alt+Backspace; only eswm-owned vars disappear | PASS (operator: `Super+Alt+Backspace`, then `eswm-env` showed no eswm identity vars) |
-| 9 | Opt-out startup | `ESWM_NO_SD_VARS=1` starts, logs the skip warning, leaves env untouched | PENDING — operator action |
+| 9 | Opt-out startup | `ESWM_NO_SD_VARS=1` starts, logs the skip warning, leaves env untouched | N_A — operator explicitly skipped; no PASS claimed |
 | 10 | Missing tool degradation | If a tool is unavailable, eswm still runs and logs a warning | N_A (both tools installed; no export warnings in log) |
 
 ## Finding 1 — stale portal daemons bypass eswm-portals.conf
@@ -125,7 +125,8 @@ file chooser with `GTK_USE_PORTAL=1`. The operator confirmed:
   so no screen-capture backend is claimed;
 - `Super+Alt+Backspace` quits cleanly and `eswm-env` shows no identity vars.
 
-That closes rows 5-8 in a clean login session. Finding 1 still describes
+Rows 5-8 are closed in a clean login session. Row 9 was explicitly skipped by
+the operator; the opt-out path has no live PASS and no unit coverage. Finding 1 still describes
 the transition-session caveat: stale Hyprland portal daemons survive a TTY
 switch because `eswm-portals.conf` is read only at portal startup. No portal
 services were restarted by the agent.

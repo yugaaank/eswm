@@ -1,7 +1,7 @@
 spec: specs/epics/e11-proper-de/e11s02-portal-and-docs.md
 story_id: e11s02
 title: 'Portal selection config and TTY launch documentation'
-status: in_progress
+status: completed
 bcps: 3
 tasks:
 - id: e11s02t1
@@ -27,7 +27,7 @@ tasks:
   verify: 'verify-script: specs/epics/e11-proper-de/e11s02-portal-and-docs.md'
   risk: P2
   security: low
-  status: blocked
+  status: passing
   allure:
     severity: normal
     categories: [e11-proper-de, uat, manual]

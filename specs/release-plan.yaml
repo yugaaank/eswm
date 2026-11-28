@@ -101,7 +101,7 @@ epics:
     slug: proper-de
     title: Proper DE Parity — Phase 0 (Session Identity)
     wsjf_rank: 10
-    status: in_progress
+    status: completed
     stories: []
     description: |
       Export eswm session identity to systemd/D-Bus and ship a portal config so

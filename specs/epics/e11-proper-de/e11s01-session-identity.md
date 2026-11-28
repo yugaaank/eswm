@@ -92,11 +92,12 @@ user changed afterwards survive.
 | 2 | `systemctl --user show-environment` lists four eswm values | PASS (operator: all four values shown in the `eswmdev` session) |
 | 3 | GTK/Qt file picker stays on eswm | PASS (operator: Super+V check; picker opened on eswm) |
 | 4 | Clean quit removes only eswm-owned values | PASS (operator: `Super+Alt+Backspace`, then `eswm-env` showed no identity vars) |
-| 5 | `ESWM_NO_SD_VARS=1` starts with a skip warning | PENDING — operator only |
+| 5 | `ESWM_NO_SD_VARS=1` starts with a skip warning | N_A — operator explicitly skipped; no PASS claimed |
 
 Live PASS rows come from the operator's clean `eswmdev` login session. This
 agent session runs inside an existing graphical session and must not grab the
-VT (ADR-0002), so it did not start or quit eswm. Automated unit coverage for
+VT (ADR-0002), so it did not start or quit eswm. Row 5 was explicitly skipped
+by the operator, so no opt-out PASS is claimed. Automated unit coverage for
 the export commands, ownership and child env is green.
 
 ## Out of scope

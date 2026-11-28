@@ -1,7 +1,7 @@
 id: e11
 slug: proper-de
 title: Proper DE Parity — Phase 0 (Session Identity)
-status: in_progress
+status: completed
 wsjf_rank: 10
 bcps_total: 8
 core_value: |
@@ -15,9 +15,9 @@ stories:
     title: "Session identity export with graceful degradation"
     bcps: 5
     delta: MODIFIED
-    status: in_progress
+    status: completed
   - id: e11s02
     title: "Portal selection config and TTY launch documentation"
     bcps: 3
     delta: ADDED
-    status: in_progress
+    status: completed
