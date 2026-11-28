@@ -18,6 +18,7 @@ mod ipc;
 mod lua_state;
 mod rounded_surface;
 mod rounding;
+mod session_env;
 mod udev;
 mod wm;
 use control::EventKind;
