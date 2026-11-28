@@ -84,6 +84,20 @@ user changed afterwards survive.
 5. Restart with `ESWM_NO_SD_VARS=1` and confirm eswm still starts, logs a
    skip warning, and leaves the user environment untouched.
 
+### UAT record
+
+| # | Check | Result |
+| --- | --- | --- |
+| 1 | Start from a TTY, no opt-out | PENDING — operator only |
+| 2 | `systemctl --user show-environment` lists four eswm values | PENDING — operator only |
+| 3 | GTK/Qt file picker stays on eswm | PENDING — operator only |
+| 4 | Clean quit removes only eswm-owned values | PENDING — operator only |
+| 5 | `ESWM_NO_SD_VARS=1` starts with a skip warning | PENDING — operator only |
+
+This agent session runs inside an existing graphical session and must not grab
+the VT (ADR-0002), so no live PASS is claimed here. Automated unit coverage for
+the export commands, ownership and child env is green.
+
 ## Out of scope
 
 - Xwayland `DISPLAY` export (no Xwayland today).

@@ -56,6 +56,20 @@ from silently drifting.
 4. Open a GTK/Qt file picker and confirm it stays on eswm.
 5. Confirm a screen-share request does not claim a portal backend eswm lacks.
 
+### UAT record
+
+| # | Check | Result |
+| --- | --- | --- |
+| 1 | Install `eswm-portals.conf` at the documented path | PENDING — operator only |
+| 2 | Start eswm from a TTY with export enabled | PENDING — operator only |
+| 3 | `systemctl --user show-environment` lists eswm identity | PENDING — operator only |
+| 4 | GTK/Qt file picker stays on eswm | PENDING — operator only |
+| 5 | Screen-share request claims no backend eswm lacks | PENDING — operator only |
+
+Live DRM UAT cannot run inside an existing Wayland/X11 session (ADR-0002), so
+these rows stay pending for the operator. The shipped config and docs are
+covered by inline assertions; they do not substitute for the live check.
+
 ## Out of scope
 
 - Portal ScreenCast/Screenshot support (Phase 2).

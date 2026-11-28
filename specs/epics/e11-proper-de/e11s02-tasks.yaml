@@ -27,7 +27,7 @@ tasks:
   verify: 'verify-script: specs/epics/e11-proper-de/e11s02-portal-and-docs.md'
   risk: P2
   security: low
-  status: failing
+  status: blocked
   allure:
     severity: normal
     categories: [e11-proper-de, uat, manual]
