@@ -23,9 +23,11 @@ RESULT: PASS
 
 ## Known limitations (documented, not waived as PASS)
 
-- The external systemd/D-Bus restore is unit-covered but has no fresh live DRM
-  PASS; the operator's row-8 evidence predates it. D-Bus has no unset verb, so
-  a previously absent value is cleared to an empty string there.
+- The external systemd/D-Bus restore is unit-covered and was confirmed by the
+  operator on the post-review build (`its working i have confirmed`), closing
+  row 8 of `specs/verifications/uat-2026-11-28-e11-phase0-live-drm.md`. D-Bus
+  has no unset verb, so a previously absent value is cleared to an empty string
+  there.
 - Raw coverage is 61.60% lines / 60.07% regions; filtered coverage excluding
   generated bindings and the VT-only `src/udev.rs` is 83.35% / 85.31%. Gate
   disposition and explicit local override are in

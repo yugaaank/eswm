@@ -55,11 +55,12 @@ Attempted refutation: "clean shutdown removes only eswm-owned values" was
 false in the first build — the external systemd/D-Bus values survived a quit.
 That gap was real and was fixed in `daf9631` with an ownership-guarded snapshot
 and restore, plus caller-env preservation. Second refutation: the new external
-restore has **no fresh live DRM PASS**; only unit coverage. Recorded as a known
-limitation in `docs/session.md`, the e11 story spec and the live UAT record.
-The agent cannot start or quit eswm from this graphical session (ADR-0002), so
-the operator's row-8 evidence predates the external restore. This is a
-WARNING, not a blocker for the local release.
+restore had only unit coverage at release time. The operator then ran the
+post-review build in the clean `eswmdev` DRM session and reported `its working
+i have confirmed`, closing row 8 of the live UAT record with an operator PASS.
+The D-Bus empty-string caveat for previously absent values stays documented in
+`docs/session.md`. The agent cannot start or quit eswm from this graphical
+session (ADR-0002); the agent-steered VT remains firmly unwrapped.
 
 ## Audit and security
 

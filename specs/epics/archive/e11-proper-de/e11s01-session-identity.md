@@ -100,7 +100,7 @@ so a previously absent value is cleared to an empty string there.
 | 1 | Start from a TTY, no opt-out | PASS (operator: clean `eswmdev` session on VT4) |
 | 2 | `systemctl --user show-environment` lists four eswm values | PASS (operator: all four values shown in the `eswmdev` session) |
 | 3 | GTK/Qt file picker stays on eswm | PASS (operator: Super+V check; picker opened on eswm) |
-| 4 | Clean quit removes only eswm-owned values | PASS (operator on the pre-restore build: `Super+Alt+Backspace`, then `eswm-env` showed no identity vars). External restore was added after review and is unit-covered only. |
+| 4 | Clean quit removes only eswm-owned values | PASS (operator: pre-restore build showed no identity vars after `Super+Alt+Backspace`; post-review external systemd/D-Bus restore confirmed with `its working i have confirmed`). |
 | 5 | `ESWM_NO_SD_VARS=1` starts with a skip warning | N_A — operator explicitly skipped; no PASS claimed |
 
 Live PASS rows come from the operator's clean `eswmdev` login session. This
@@ -109,7 +109,8 @@ VT (ADR-0002), so it did not start or quit eswm. Row 5 was explicitly skipped
 by the operator, so no opt-out PASS is claimed. A release review found that the
 first build restored process env only; steps 6-8 add caller-env preservation,
 external user-session restore and guard-path coverage after that evidence. The
-new external restore has unit coverage but no fresh live PASS.
+operator later ran the post-review build and confirmed the external restore
+works (`its working i have confirmed`), so row 4 now has live PASS.
 
 ## Out of scope
 

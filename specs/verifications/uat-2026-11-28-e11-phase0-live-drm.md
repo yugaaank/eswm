@@ -70,7 +70,7 @@ change to `systemctl --user show-environment`.
 | 5 | File picker stays home | GTK/Qt pickers appear on eswm | PASS (operator: clean `eswmdev` session, Super+V check; picker on eswm) |
 | 6 | Portal backend | Picker uses the GTK backend from `eswm-portals.conf` | PASS in clean `eswmdev` session (operator: portal daemons show `eswm` / `eswm-test`) |
 | 7 | Capture claim | A screen-share request gets no backend from eswm | PASS (operator: `Super+s` call failed with "No such interface ... ScreenCast", so no backend is exported) |
-| 8 | Clean shutdown | Quit with Super+Alt+Backspace; only eswm-owned vars disappear | PASS (operator on the pre-restore build: `Super+Alt+Backspace`, then `eswm-env` showed no eswm identity vars). External systemd/D-Bus restore was added after review and is unit-covered only. |
+| 8 | Clean shutdown | Quit with Super+Alt+Backspace; only eswm-owned vars disappear | PASS (operator: pre-restore build showed no eswm vars after `Super+Alt+Backspace`; post-review build restored the external systemd/D-Bus values too, operator reported `its working i have confirmed`). |
 | 9 | Opt-out startup | `ESWM_NO_SD_VARS=1` starts, logs the skip warning, leaves env untouched | N_A — operator explicitly skipped; no PASS claimed |
 | 10 | Missing tool degradation | If a tool is unavailable, eswm still runs and logs a warning | N_A (both tools installed; no export warnings in log) |
 
@@ -137,9 +137,12 @@ A release review found that the pre-restore build cleaned only eswm's own
 process environment; the systemd user and D-Bus activation values survived a
 quit. Steps 6-8 in `e11s01-session-identity.md` add caller-env preservation,
 external snapshot/restore and guard-path coverage. Those paths are green under
-`cargo test` (350 passing) but have **no fresh live PASS** — this agent session
-runs inside a graphical session and must not grab the VT (ADR-0002). Row 8 above
-records the original operator evidence, not the external restore.
+`cargo test` (350 passing), and the operator subsequently ran the post-review
+build in the clean `eswmdev` DRM session and reported `its working i have
+confirmed`. Row 8 now records that operator PASS for the external restore. The
+agent session still does not start or quit eswm: it would rather keep its VT
+than become a brick (ADR-0002). The D-Bus empty-string caveat below remains
+true for values that were absent before eswm started.
 
 ## Evidence to attach
 

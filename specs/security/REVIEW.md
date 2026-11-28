@@ -40,5 +40,6 @@
 - The ownership guard compares the current external value against eswm's own
   before restoring, so a value a user changed during the session is left
   alone. This is the same rule proven in-process by the earlier unit test.
-- The external restore is unit-covered only; no live DRM quit after the fix was
-  run. This is a verification gap, not a security finding.
+- The external restore is unit-covered and was confirmed on the post-review
+  build by the operator (`its working i have confirmed`). No remaining
+  verification gap.
