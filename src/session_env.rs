@@ -34,4 +34,26 @@ mod tests {
         assert_eq!(identity.get("XDG_SESSION_TYPE"), Some("wayland"));
         assert_eq!(identity.get("XDG_SESSION_DESKTOP"), Some("eswm"));
     }
+
+    #[test]
+    fn systemd_import_command_uses_user_scope() {
+        let identity = super::SessionIdentity::new("eswm-test");
+        let command = super::systemd_import_command(&identity);
+        assert_eq!(command.get_program(), "systemctl");
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            args,
+            [
+                "--user",
+                "import-environment",
+                "WAYLAND_DISPLAY",
+                "XDG_CURRENT_DESKTOP",
+                "XDG_SESSION_DESKTOP",
+                "XDG_SESSION_TYPE",
+            ]
+        );
+    }
 }
