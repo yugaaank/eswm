@@ -60,6 +60,10 @@ pub fn apply_to_command<'a>(
     command: &'a mut std::process::Command,
 ) -> &'a mut std::process::Command {
     for key in identity.keys() {
+        // Caller values are invited guests; eswm does not kick them out.
+        if command.get_envs().any(|(name, _)| name.to_str() == Some(key)) {
+            continue;
+        }
         command.env(key, identity.get(key).unwrap_or_default());
     }
     command

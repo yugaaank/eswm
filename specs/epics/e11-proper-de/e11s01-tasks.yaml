@@ -54,7 +54,7 @@ tasks:
   verify: cargo test --bin eswm session_env::tests::caller_env_values_are_preserved
   risk: P2
   security: low
-  status: failing
+  status: passing
   allure:
     severity: normal
     categories: [e11-proper-de, session, unit]
