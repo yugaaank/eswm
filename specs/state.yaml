@@ -7,6 +7,18 @@ release:
   last_tag: null
   last_publish: null
   ci_verified: false
+gates:
+  gate_trace:
+    verdict: WAIVED
+    generated_at: "2026-11-28T21:48:00Z"
+    rationale: "Trace tool produced a 0-story matrix because eswm's spec layout has no per-story story inventory; no FAIL rule triggered. External restore is unit-covered; live DRM evidence predates the fix."
+    heuristic_ratio: 0.0
+    downgrade_applied: false
+  coverage_override:
+    approved_by: operator_local_release_authorisation
+    reason: "Raw 61.60% lines / 60.07% regions, filtered 83.35% / 85.31%; below the skill's 80%/95% bars. Generated bindings and VT-only udev.rs are excluded from the filtered view. Evidence: specs/verifications/release-gates-2026-11-28-e11.md"
+  audit: PASS
+  security_review: PASS
 epic_cycle:
   current_step: null
   next_skill: null
