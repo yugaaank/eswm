@@ -27,7 +27,7 @@ tasks:
   verify: cargo test --bin eswm session_env::tests::dbus_activation_command_includes_vars
   risk: P1
   security: low
-  status: failing
+  status: passing
   allure:
     severity: high
     categories: [e11-proper-de, dbus, unit]

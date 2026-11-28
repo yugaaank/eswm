@@ -40,6 +40,18 @@ pub fn systemd_import_command(identity: &SessionIdentity) -> std::process::Comma
     command
 }
 
+/// Build the optional D-Bus activation env update as data, never carrying key
+/// content or secrets along for the ride.
+#[allow(dead_code)] // wired into startup by e11s01t5
+pub fn dbus_activation_command(identity: &SessionIdentity) -> std::process::Command {
+    let mut command = std::process::Command::new("dbus-update-activation-environment");
+    command.arg("--systemd");
+    for key in identity.keys() {
+        command.arg(key);
+    }
+    command
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
