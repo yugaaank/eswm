@@ -91,7 +91,7 @@ user changed afterwards survive.
 | 1 | Start from a TTY, no opt-out | PASS (operator: clean `eswmdev` session on VT4) |
 | 2 | `systemctl --user show-environment` lists four eswm values | PASS (operator: all four values shown in the `eswmdev` session) |
 | 3 | GTK/Qt file picker stays on eswm | PASS (operator: Super+V check; picker opened on eswm) |
-| 4 | Clean quit removes only eswm-owned values | PENDING — operator only |
+| 4 | Clean quit removes only eswm-owned values | PASS (operator: `Super+Alt+Backspace`, then `eswm-env` showed no identity vars) |
 | 5 | `ESWM_NO_SD_VARS=1` starts with a skip warning | PENDING — operator only |
 
 Live PASS rows come from the operator's clean `eswmdev` login session. This

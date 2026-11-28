@@ -69,8 +69,8 @@ change to `systemctl --user show-environment`.
 | 4 | Child identity | Keybind-spawned app inherits eswm values | PASS (agent: kitty pid 414464 has all four vars plus `TERMINAL=kitty`; pre-existing kitty 62834 keeps its Hyprland values as expected) |
 | 5 | File picker stays home | GTK/Qt pickers appear on eswm | PASS (operator: clean `eswmdev` session, Super+V check; picker on eswm) |
 | 6 | Portal backend | Picker uses the GTK backend from `eswm-portals.conf` | PASS in clean `eswmdev` session (operator: portal daemons show `eswm` / `eswm-test`) |
-| 7 | Capture claim | A screen-share request gets no backend from eswm | PENDING |
-| 8 | Clean shutdown | Quit with Super+Alt+Backspace; only eswm-owned vars disappear | PENDING — operator action |
+| 7 | Capture claim | A screen-share request gets no backend from eswm | PASS (operator: `Super+s` call failed with "No such interface ... ScreenCast", so no backend is exported) |
+| 8 | Clean shutdown | Quit with Super+Alt+Backspace; only eswm-owned vars disappear | PASS (operator: `Super+Alt+Backspace`, then `eswm-env` showed no eswm identity vars) |
 | 9 | Opt-out startup | `ESWM_NO_SD_VARS=1` starts, logs the skip warning, leaves env untouched | PENDING — operator action |
 | 10 | Missing tool degradation | If a tool is unavailable, eswm still runs and logs a warning | N_A (both tools installed; no export warnings in log) |
 
@@ -98,15 +98,15 @@ tr '\0' '\n' < /proc/$(pgrep -n xdg-desktop-portal)/environ | grep -E '^(WAYLAND
 ```
 
 After that, a GTK/Qt file picker should route through GTK on `eswm-test`.
-If confirmed, Phase 0 needs a startup step that restarts the portal daemons
-after the export, or docs must state that a fresh login (no other compositor)
-is required.
+The clean dev-user session below confirms the config works without restarting
+anything. Phase 0 therefore documents the fresh-login requirement instead of
+adding a startup portal restart (see `docs/session.md`).
 
 Row 10 is N_A because both tools are installed. The "user edit wins"
 rule is proven by unit test `session_env::tests::restore_only_owned_vars`, not
 by this live run — do not try to fake it by editing the user manager mid-run.
 
-## Clean dev-user session — rows 5 and 6 closed
+## Clean dev-user session — rows 5-8 closed
 
 The operator created a throwaway `eswmdev` user and copied the eswm and
 Noctalia configs into its home. That gives a fresh `systemd --user` manager and
@@ -120,9 +120,12 @@ file chooser with `GTK_USE_PORTAL=1`. The operator confirmed:
 - dialog shows `XDG_CURRENT_DESKTOP=eswm` and `WAYLAND_DISPLAY=eswm-test`,
   with no `Tacit:Hyprland` or `wayland-1`;
 - portal daemons carry the same eswm values;
-- the file picker opens on eswm.
+- the file picker opens on eswm;
+- `Super+s` gets "No such interface ... ScreenCast" at the portal object,
+  so no screen-capture backend is claimed;
+- `Super+Alt+Backspace` quits cleanly and `eswm-env` shows no identity vars.
 
-That closes rows 5 and 6 in a clean login session. Finding 1 still describes
+That closes rows 5-8 in a clean login session. Finding 1 still describes
 the transition-session caveat: stale Hyprland portal daemons survive a TTY
 switch because `eswm-portals.conf` is read only at portal startup. No portal
 services were restarted by the agent.
