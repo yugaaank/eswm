@@ -325,4 +325,87 @@ mod tests {
         assert_eq!(envs.get("WAYLAND_DISPLAY"), Some(&"caller-owned-wayland"));
         assert_eq!(envs.get("XDG_CURRENT_DESKTOP"), Some(&"eswm"));
     }
+
+    fn os(value: &str) -> std::ffi::OsString {
+        std::ffi::OsString::from(value)
+    }
+
+    #[test]
+    fn parse_show_environment_extracts_only_identity_keys() {
+        let bytes = b"LANG=C\nWAYLAND_DISPLAY=hyprland-1\nXDG_CURRENT_DESKTOP=Tacit:Hyprland\nXDG_SESSION_DESKTOP=Tacit\nXDG_SESSION_TYPE=x11\nOTHER=nope\n";
+        let identity = super::SessionIdentity::new("eswm-test");
+        let parsed = super::parse_show_environment(bytes, &identity);
+        assert_eq!(parsed.len(), 4);
+        assert_eq!(
+            parsed.get("WAYLAND_DISPLAY").and_then(|value| value.as_deref()),
+            Some(std::ffi::OsStr::new("hyprland-1"))
+        );
+        assert_eq!(
+            parsed.get("XDG_CURRENT_DESKTOP").and_then(|value| value.as_deref()),
+            Some(std::ffi::OsStr::new("Tacit:Hyprland"))
+        );
+        assert!(parsed.contains_key("XDG_SESSION_TYPE"));
+        assert!(parsed.contains_key("XDG_SESSION_DESKTOP"));
+    }
+
+    #[test]
+    fn external_restore_args_are_ownership_safe() {
+        let identity = super::SessionIdentity::new("eswm-test");
+        let previous = [
+            ("WAYLAND_DISPLAY".to_owned(), Some(os("wayland-0"))),
+            ("XDG_CURRENT_DESKTOP".to_owned(), None),
+            ("XDG_SESSION_TYPE".to_owned(), Some(os("x11"))),
+            ("XDG_SESSION_DESKTOP".to_owned(), Some(os("Hyprland"))),
+        ]
+        .into_iter()
+        .collect();
+        let current = [
+            ("WAYLAND_DISPLAY".to_owned(), Some(os("eswm-test"))),
+            ("XDG_CURRENT_DESKTOP".to_owned(), Some(os("eswm"))),
+            ("XDG_SESSION_TYPE".to_owned(), Some(os("user-tweaked"))),
+            ("XDG_SESSION_DESKTOP".to_owned(), Some(os("eswm"))),
+        ]
+        .into_iter()
+        .collect();
+
+        let (dbus, set, unset) = super::external_restore_args(&previous, &current, &identity);
+        assert_eq!(
+            dbus,
+            vec![
+                os("XDG_CURRENT_DESKTOP="),
+                os("XDG_SESSION_DESKTOP=Hyprland"),
+                os("WAYLAND_DISPLAY=wayland-0")
+            ]
+        );
+        assert_eq!(
+            set,
+            vec![os("XDG_SESSION_DESKTOP=Hyprland"), os("WAYLAND_DISPLAY=wayland-0")]
+        );
+        assert_eq!(unset, vec![os("XDG_CURRENT_DESKTOP")]);
+    }
+
+    #[test]
+    fn opt_out_skips_external_export() {
+        let _guard = SESSION_ENV_LOCK.lock().unwrap();
+        let original = std::env::var_os("ESWM_NO_SD_VARS");
+        // SAFETY: SESSION_ENV_LOCK serialises env mutation across tests.
+        unsafe { std::env::set_var("ESWM_NO_SD_VARS", "1") };
+        let identity = super::SessionIdentity::new("eswm-test");
+        let scope = super::export_to_user_session(&identity);
+        assert!(scope.is_none(), "opt-out must not create an export scope");
+        match original {
+            Some(value) => unsafe { std::env::set_var("ESWM_NO_SD_VARS", value) },
+            None => unsafe { std::env::remove_var("ESWM_NO_SD_VARS") },
+        }
+    }
+
+    #[test]
+    fn optional_export_paths_do_not_panic() {
+        let command = std::process::Command::new("true");
+        super::run_optional(command, "test success");
+        let command = std::process::Command::new("false");
+        super::run_optional(command, "test failure");
+        let command = std::process::Command::new("eswm-coverage-missing-tool");
+        super::run_optional(command, "test missing tool");
+    }
 }
