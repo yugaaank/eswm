@@ -210,4 +210,62 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn session_scope_drops_once() {
+        let _guard = SESSION_ENV_LOCK.lock().unwrap();
+        let keys = [
+            "WAYLAND_DISPLAY",
+            "XDG_CURRENT_DESKTOP",
+            "XDG_SESSION_TYPE",
+            "XDG_SESSION_DESKTOP",
+        ];
+        let originals: Vec<(&str, Option<String>)> = keys
+            .iter()
+            .map(|key| (*key, std::env::var(key).ok()))
+            .collect();
+        for key in keys {
+            // SAFETY: SESSION_ENV_LOCK serialises env mutation across tests.
+            unsafe { std::env::set_var(key, "pre-existing") };
+        }
+
+        // An un-restored scope puts everything back when it drops.
+        {
+            let _scope = super::SessionScope::install(super::SessionIdentity::new("eswm-drop-test"));
+            assert_eq!(std::env::var("XDG_SESSION_TYPE").unwrap(), "wayland");
+        }
+        assert_eq!(std::env::var("XDG_SESSION_TYPE").unwrap(), "pre-existing");
+
+        // An explicit restore makes the eventual drop a no-op: a later value
+        // must survive. Drop is not allowed to restore twice.
+        let mut scope = super::SessionScope::install(super::SessionIdentity::new("eswm-drop-test-2"));
+        scope.restore();
+        // SAFETY: SESSION_ENV_LOCK serialises env mutation across tests.
+        unsafe { std::env::set_var("XDG_CURRENT_DESKTOP", "after-restore") };
+        drop(scope);
+        assert_eq!(std::env::var("XDG_CURRENT_DESKTOP").unwrap(), "after-restore");
+
+        for (key, original) in originals {
+            // SAFETY: SESSION_ENV_LOCK serialises env mutation across tests.
+            match original {
+                Some(value) => unsafe { std::env::set_var(key, value) },
+                None => unsafe { std::env::remove_var(key) },
+            }
+        }
+    }
+
+    #[test]
+    fn session_identity_applies_to_child_command() {
+        let identity = super::SessionIdentity::new("eswm-test");
+        let mut command = std::process::Command::new("true");
+        super::apply_to_command(&identity, &mut command);
+        let envs: std::collections::BTreeMap<&str, &str> = command
+            .get_envs()
+            .filter_map(|(key, value)| Some((key.to_str()?, value?.to_str()?)))
+            .collect();
+        assert_eq!(envs.get("WAYLAND_DISPLAY"), Some(&"eswm-test"));
+        assert_eq!(envs.get("XDG_CURRENT_DESKTOP"), Some(&"eswm"));
+        assert_eq!(envs.get("XDG_SESSION_TYPE"), Some(&"wayland"));
+        assert_eq!(envs.get("XDG_SESSION_DESKTOP"), Some(&"eswm"));
+    }
 }
