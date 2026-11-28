@@ -3922,4 +3922,21 @@ mod tests {
         assert!(!conf.contains("ScreenCast"), "ScreenCast must stay unclaimed: {conf}");
         assert!(!conf.contains("Screenshot"), "Screenshot must stay unclaimed: {conf}");
     }
+
+    #[test]
+    fn session_docs_cover_tty_launch() {
+        let docs = include_str!("../docs/session.md");
+        for needle in [
+            "TTY",
+            "WAYLAND_DISPLAY",
+            "XDG_CURRENT_DESKTOP",
+            "XDG_SESSION_TYPE",
+            "XDG_SESSION_DESKTOP",
+            "ESWM_NO_SD_VARS",
+            "eswm-portals.conf",
+            "systemctl --user",
+        ] {
+            assert!(docs.contains(needle), "session docs missing {needle}");
+        }
+    }
 }
