@@ -18,7 +18,7 @@ tasks:
   verify: cargo test --bin eswm tests::session_docs_cover_tty_launch
   risk: P3
   security: none
-  status: failing
+  status: passing
   allure:
     severity: minor
     categories: [e11-proper-de, docs]
