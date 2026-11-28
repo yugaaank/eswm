@@ -52,6 +52,45 @@ pub fn dbus_activation_command(identity: &SessionIdentity) -> std::process::Comm
     command
 }
 
+/// Give a child the same identity the compositor announced. Only the four
+/// session keys are applied; any TERMINAL-style caller value survives.
+#[allow(dead_code)] // wired into spawn by e11s01t5
+pub fn apply_to_command<'a>(
+    identity: &SessionIdentity,
+    command: &'a mut std::process::Command,
+) -> &'a mut std::process::Command {
+    for key in identity.keys() {
+        command.env(key, identity.get(key).unwrap_or_default());
+    }
+    command
+}
+
+/// Announce the identity to the user session. A missing tool, absent user bus
+/// or explicit ESWM_NO_SD_VARS is a warning, never a startup failure.
+#[allow(dead_code)] // wired into startup by e11s01t5
+pub fn export_to_user_session(identity: &SessionIdentity) {
+    if std::env::var_os("ESWM_NO_SD_VARS").is_some() {
+        tracing::warn!("ESWM_NO_SD_VARS set: skipping systemd/D-Bus session export");
+        return;
+    }
+    run_optional(
+        systemd_import_command(identity),
+        "systemd user environment",
+    );
+    run_optional(
+        dbus_activation_command(identity),
+        "D-Bus activation environment",
+    );
+}
+
+fn run_optional(mut command: std::process::Command, label: &str) {
+    match command.status() {
+        Ok(status) if status.success() => {}
+        Ok(status) => tracing::warn!(%status, "failed to update {label}"),
+        Err(err) => tracing::warn!(?err, "skipping {label} update"),
+    }
+}
+
 /// Owns the identity eswm installed in its own process and puts back only what
 /// is still ours at shutdown. A user edit to a value while we run wins.
 #[allow(dead_code)] // wired into startup by e11s01t5

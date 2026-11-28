@@ -338,6 +338,13 @@ fn load_cursor_images() -> HashMap<&'static str, Vec<xcursor::parser::Image>> {
 }
 
 pub fn run_udev() -> Result<(), Box<dyn std::error::Error>> {
+    // Announce the session before any client can ask a portal where it lives.
+    // The guard restores only our own values on every exit path; a clean quit
+    // is the common one, but an early error must not strand a stale display.
+    let identity = crate::session_env::SessionIdentity::new(&crate::socket_name());
+    let _session_scope = crate::session_env::SessionScope::install(identity.clone());
+    crate::session_env::export_to_user_session(&identity);
+
     let mut event_loop = EventLoop::<'static, State>::try_new()?;
     let handle = event_loop.handle();
     let display: Display<State> = Display::new()?;

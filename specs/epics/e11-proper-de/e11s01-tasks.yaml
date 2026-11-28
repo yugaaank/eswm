@@ -45,7 +45,7 @@ tasks:
   verify: cargo test --bin eswm session_env::tests::session_scope_drops_once
   risk: P1
   security: low
-  status: failing
+  status: passing
   allure:
     severity: high
     categories: [e11-proper-de, integration, udev]

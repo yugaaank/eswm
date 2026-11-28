@@ -1773,13 +1773,13 @@ fn spawn_program(prog: &str, args: &[&str]) -> std::io::Result<u32> {
     let log = open_spawn_log_file(&log_path).ok();
     let terminal = spawn_terminal_name();
 
+    let identity = session_env::SessionIdentity::new(&socket_name());
     let mut command = Command::new(prog);
     command
         .args(args)
-        .env("WAYLAND_DISPLAY", socket_name())
-        .env("XDG_CURRENT_DESKTOP", "eswm")
         .env("TERMINAL", terminal)
         .stdin(Stdio::null());
+    session_env::apply_to_command(&identity, &mut command);
 
     match log {
         Some(file) => {
