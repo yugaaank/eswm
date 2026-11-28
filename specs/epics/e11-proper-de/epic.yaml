@@ -1,0 +1,23 @@
+id: e11
+slug: proper-de
+title: Proper DE Parity — Phase 0 (Session Identity)
+status: planned
+wsjf_rank: 10
+bcps_total: 8
+core_value: |
+  Make eswm the session that portals and file pickers belong to. Phase 0 fixes
+  the user-visible bug where GTK/Qt file choosers open in another compositor.
+  Later phases (Tacit blockers, capture, protocol completeness, polish) are
+  deferred in specs/product/SCOPE_LATEST.yaml and are not part of this capsule's
+  stories yet.
+stories:
+  - id: e11s01
+    title: "Session identity export with graceful degradation"
+    bcps: 5
+    delta: MODIFIED
+    status: pending
+  - id: e11s02
+    title: "Portal selection config and TTY launch documentation"
+    bcps: 3
+    delta: ADDED
+    status: pending

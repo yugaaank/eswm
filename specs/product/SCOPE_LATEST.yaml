@@ -1,76 +1,102 @@
 core_value: |
-  e06-input-focus enables Tacit's shell (menus, dropdowns, trays, lock screen)
-  by implementing popups, input regions, layer-surface keyboard focus, and
-  clipboard. Without this, the shell cannot receive input correctly or manage
-  focus between windows and layer surfaces.
+  e11-proper-de Phase 0 makes eswm the session that portals and file pickers
+  belong to. Without session environment export, GTK/Qt file choosers open in a
+  different running compositor even when the app itself is on eswm.
 
 summary: |
-  e06-input-focus closes the remaining Wayland protocol and input-handling gaps
-  so Tacit's shell surfaces (fuzzel menus, awww-dock, lock screen, trays) work
-  natively on eswm. Phase 2 (window/workspace state) and Phase 5 (core loop/
-  rendering) are complete; e06 adds the missing input and focus plumbing.
-  Four stories: popups with initial configure/rendering/input, surface_under
-  with input regions for pointer focus, keyboard focus that layer surfaces
-  cannot steal, and clipboard/primary selection via data_device focus.
-  This is a prerequisite for Tacit migration — the shell currently depends on
-  Hyprland's input/focus model, which eswm lacks.
+  This scope covers only Phase 0 of the proper-DE parity plan: make the
+  compositor identify itself as the active Wayland session to the user's
+  systemd/D-Bus environment, ship a portal configuration that selects a
+  compatible backend, and document how to launch eswm that way.
+  Phase 0 fixes a user-visible bug — file pickers opening in Hyprland — before
+  any new Wayland protocol work starts. It is deliberately small so the risky
+  part (touching a shared user session environment) can be guarded and
+  verified on its own.
+  Later phases (Tacit shell blockers, capture/sharing, protocol completeness,
+  visual polish) are explicit deferrals, not silent expectations.
 
 in_scope:
   - >-
-    Popup support: xdg_popup lifecycle (initial configure, commit handling, rendering at correct position relative to parent, input forwarding). Maps to e06s01.
+    Session identity export with graceful degradation: set WAYLAND_DISPLAY,
+    XDG_CURRENT_DESKTOP, XDG_SESSION_TYPE and XDG_SESSION_DESKTOP for the
+    compositor and its spawned children, push them to systemd user and D-Bus
+    activation environments when available, and clean up only values eswm set.
+    Maps to e11s01.
   - >-
-    Input regions for pointer focus: surface_under uses wl_surface input_region to determine which surface receives pointer events, not just opaque geometry. Maps to e06s02.
-  - >-
-    Keyboard focus isolation: layer surfaces with keyboard_interactivity get focus without stealing it from toplevel windows; update_keyboard_focus correctly routes focus between toplevels and layers. Maps to e06s03.
-  - >-
-    Clipboard and primary selection: wl_data_device_manager with data_source and data_offer; focus tracking so clipboard follows keyboard focus. Maps to e06s04.
-  - >-
-    Protocol additions: zwlr_layer_shell_v1 popup support, wl_data_device_manager, input_region extension, seat keyboard/pointer focus handling.
+    Portal selection files and launch documentation: install an eswm portal
+    config that defaults to the GTK backend and does not claim ScreenCast, plus
+    TTY launch guidance covering the environment export. Maps to e11s02.
 
 out_of_scope:
   - >-
-    Animations (Phase 4): deferred. Input/focus stability required first.
+    Phase 1 Tacit shell blockers (ext_session_lock_v1, idle inhibit/notify,
+    foreign toplevel, control/event parity): deferred. Session identity must be
+    correct first, otherwise those protocols attach to the wrong session.
   - >-
-    Touch input and gestures: deferred. Not needed for Tacit's desktop shell.
+    Phase 2 screen capture, PipeWire screencast and portal ScreenCast: deferred.
+    The portal config intentionally does not claim ScreenCast until a capture
+    protocol exists.
   - >-
-    Clipboard history manager: deferred. Core clipboard (single item) is in scope.
+    Phase 3 protocol completeness (fractional scale, presentation time, pointer
+    constraints, shortcuts inhibit, output management, IME, tablet,
+    security_context): deferred to separate stories after Phase 1.
   - >-
-    Foreign toplevel management (zwlr_foreign_toplevel_manager_v1): deferred to Tacit integration phase (e09). e06 provides focus/clipboard prerequisites.
+    Phase 4 visual DE polish (opacity rules, animations, blur, overview):
+    deferred. Correctness and session integration come first.
   - >-
-    Screencopy (wlr_screencopy_manager_v1): deferred to Tacit integration phase.
+    Distro packaging, CI distro matrix and Nix flake: deferred to the separate
+    e12-distro-agnostic-packaging epic proposed by the distro plan.
   - >-
-    Session lock (ext_session_lock_v1): deferred to Tacit integration phase.
-  - >-
-    Fractional scale (wp_fractional_scale_v1): deferred to e08.
-  - >-
-    XWayland support: deferred, optional build/runtime option.
+    Xwayland DISPLAY export and multi-compositor conflict arbitration beyond
+    documented guards and an opt-out: deferred. Xwayland is not present today,
+    and resolving two live compositors needs an explicit product decision.
 
 constraints:
   - >-
-    Rust 2024; dependencies: smithay 0.7, wayland-server 0.31, mlua. No new dependencies introduced in this initiative; winit is not a dependency today (ADR-0002).
-  - Lua-only configuration at ~/.config/eswm/config.lua; no JSON config path.
-  - DRM/libseat is the default runtime path; Winit is the nested dev backend only.
-  - Never copy Pinnacle source, assets, or distinctive implementation
-    (reference only).
-  - Preflight (cargo clippy && cargo test && cargo build) must be green before
-    forward work.
+    Rust 2024 with smithay 0.7, wayland-server 0.31 and mlua; no new Rust crate
+    dependencies for Phase 0. External tools are optional and must degrade to a
+    warning when absent (ADR-0002: DRM/libseat is the only runtime path).
+  - >-
+    Never clobber environment values a user or another session changed after
+    eswm set them; provide a clear opt-out following the observed Hyprland
+    pattern.
+  - >-
+    Lua-only configuration at ~/.config/eswm/config.lua; no JSON config path.
+  - >-
+    Do not copy code from cosmic-comp or Hyprland; they are behavioral
+    references only (AGENTS.md clean-room rule).
+  - >-
+    Preflight (cargo clippy --all-targets && cargo test && cargo build) and
+    spec-lint must be green before any merge.
   - >-
     eswm easy brand: short, grep-unique names; no clever abbreviations.
 
 success_criteria:
-  - Popup (fuzzel menu) opens at correct position relative to parent, accepts
-    keyboard and pointer input, dismisses on outside click.
   - >-
-    Pointer focus respects input_region: transparent parts of a window pass clicks through to surfaces below.
+    From a fresh eswm TTY session, a GTK/Qt file picker stays in eswm instead
+    of opening in another compositor (operator live UAT; cannot be run from an
+    existing Wayland/X11 session).
   - >-
-    Keyboard focus: layer surface with keyboard_interactivity (fuzzel) gets focus; toplevel on same output does not steal it; focus returns to toplevel when layer closes.
+    systemctl --user show-environment reports the eswm session variables while
+    eswm is running; D-Bus activation environment receives the same variables.
   - >-
-    Clipboard: copy/paste works between eswm clients; primary selection (middle click paste) works; clipboard follows keyboard focus.
-  - All 4 stories implemented; cargo test passes; preflight green.
+    On a machine without systemd or dbus-update-activation-environment, eswm
+    still starts and logs a warning instead of failing.
+  - >-
+    On clean shutdown, only environment entries eswm owns are removed; values
+    changed by the user afterwards survive.
+  - >-
+    An eswm portal config is shipped/installed with default=gtk and no
+    ScreenCast claim, and the launch docs describe the TTY environment flow.
+  - >-
+    All 2 Phase 0 stories are implemented with TDD tasks, spec-lint is green,
+    and preflight passes.
 
 references:
-  - specs/epics/e06-input-focus/epic.yaml — story breakdown and BCPS
-  - notes/tacit-integration.md — Tacit's requirements for popups, layers, clipboard
-  - notes/roadmap.md — Phase 2 complete, Phase 5 complete, Phase 6 next
-  - src/udev.rs — existing keyboard_focus_set, layer surface handling
-  - src/main.rs — xdg_shell, layer_shell, data_device handlers
+  - specs/epics/e11-proper-de/PROPER-DE-PLAN_LATEST.md — Phase 0 and first tickets
+  - specs/state.yaml — current session and handoff context
+  - specs/adr/ADR-0002-drm-libseat-only-runtime.md — runtime boundary
+  - src/main.rs — current spawn-time environment handling
+  - cosmic-comp/src/dbus/mod.rs and src/systemd.rs — behavioral reference only
+  - Hyprland/src/Compositor.cpp — behavioral reference only
+  - /usr/share/xdg-desktop-portal/hyprland-portals.conf — observed portal config shape

@@ -97,3 +97,13 @@ epics:
       Tiled windows gain draggable split ratios for Master and Equal layouts,
       stored per output so re-arrangement preserves them. Deferred: persistence
       across sessions, snap layouts, cross-monitor drag, touch resize.
+  - id: e11
+    slug: proper-de
+    title: Proper DE Parity — Phase 0 (Session Identity)
+    wsjf_rank: 10
+    status: planned
+    stories: []
+    description: |
+      Export eswm session identity to systemd/D-Bus and ship a portal config so
+      file pickers stay in the eswm session. Phase 1-4 protocol and polish work
+      from the proper-DE plan stays deferred. Deferred: distro packaging (e12).

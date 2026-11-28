@@ -1,0 +1,51 @@
+spec: specs/epics/e11-proper-de/e11s01-session-identity.md
+story_id: e11s01
+title: 'Session identity export with graceful degradation'
+status: pending
+bcps: 5
+tasks:
+- id: e11s01t1
+  description: 'Add src/session_env.rs with a pure identity snapshot (WAYLAND_DISPLAY, XDG_CURRENT_DESKTOP, XDG_SESSION_TYPE, XDG_SESSION_DESKTOP), set it in-process at startup, and honour an explicit opt-out env var; RED then GREEN'
+  verify: cargo test --bin eswm session_env::tests::sets_eswm_identity_vars
+  risk: P1
+  security: low
+  status: failing
+  allure:
+    severity: high
+    categories: [e11-proper-de, session, unit]
+- id: e11s01t2
+  description: 'Export the identity to systemd user scope with `systemctl --user import-environment`; build the command as data, skip with a warning when systemctl is absent or the user bus is unavailable'
+  verify: cargo test --bin eswm session_env::tests::systemd_import_command_uses_user_scope
+  risk: P1
+  security: low
+  status: failing
+  allure:
+    severity: high
+    categories: [e11-proper-de, systemd, unit]
+- id: e11s01t3
+  description: 'Export the same identity to the D-Bus activation environment with `dbus-update-activation-environment --systemd`; skip with a warning when the tool is absent; never export secrets or key content'
+  verify: cargo test --bin eswm session_env::tests::dbus_activation_command_includes_vars
+  risk: P1
+  security: low
+  status: failing
+  allure:
+    severity: high
+    categories: [e11-proper-de, dbus, unit]
+- id: e11s01t4
+  description: 'Restore only values eswm actually set on clean shutdown; leave user-changed values intact and make the guard idempotent'
+  verify: cargo test --bin eswm session_env::tests::restore_only_owned_vars
+  risk: P1
+  security: low
+  status: failing
+  allure:
+    severity: high
+    categories: [e11-proper-de, session, unit]
+- id: e11s01t5
+  description: 'Create the session scope at udev startup, drop it on shutdown, and make spawned children inherit the exported identity; complete the live-DRM UAT checklist in the story file'
+  verify: cargo test --bin eswm session_env::tests::session_scope_drops_once
+  risk: P1
+  security: low
+  status: failing
+  allure:
+    severity: high
+    categories: [e11-proper-de, integration, udev]

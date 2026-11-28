@@ -23,3 +23,7 @@ locks:
   locked_by: 'agent: develop-tdd'
   locked_at: '2026-11-26T06:19:01Z'
   files_touched: []
+- story_id: e11s01
+  locked_by: 'agent: develop-tdd'
+  locked_at: '2026-11-28T20:00:00Z'
+  files_touched: []
