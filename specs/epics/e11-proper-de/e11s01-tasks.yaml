@@ -36,7 +36,7 @@ tasks:
   verify: cargo test --bin eswm session_env::tests::restore_only_owned_vars
   risk: P1
   security: low
-  status: failing
+  status: passing
   allure:
     severity: high
     categories: [e11-proper-de, session, unit]

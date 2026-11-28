@@ -52,6 +52,59 @@ pub fn dbus_activation_command(identity: &SessionIdentity) -> std::process::Comm
     command
 }
 
+/// Owns the identity eswm installed in its own process and puts back only what
+/// is still ours at shutdown. A user edit to a value while we run wins.
+#[allow(dead_code)] // wired into startup by e11s01t5
+pub struct SessionScope {
+    identity: SessionIdentity,
+    previous: BTreeMap<String, Option<String>>,
+    restored: bool,
+}
+
+#[allow(dead_code)] // wired into startup by e11s01t5
+impl SessionScope {
+    pub fn install(identity: SessionIdentity) -> Self {
+        let mut previous = BTreeMap::new();
+        for key in identity.keys() {
+            previous.insert(key.to_owned(), std::env::var(key).ok());
+            // SAFETY: installation happens once on the compositor thread before
+            // any Wayland clients are accepted; tests serialise with a mutex.
+            unsafe { std::env::set_var(key, identity.get(key).unwrap_or_default()) };
+        }
+        Self {
+            identity,
+            previous,
+            restored: false,
+        }
+    }
+
+    pub fn restore(&mut self) {
+        if self.restored {
+            return;
+        }
+        self.restored = true;
+        for (key, original) in &self.previous {
+            let ours = self.identity.get(key).unwrap_or_default();
+            if std::env::var(key).ok().as_deref() != Some(ours) {
+                continue; // somebody changed it after us; their value wins
+            }
+            // SAFETY: paired with install(), on the compositor thread during
+            // shutdown; tests serialise with a mutex.
+            match original {
+                Some(value) => unsafe { std::env::set_var(key, value) },
+                None => unsafe { std::env::remove_var(key) },
+            }
+        }
+    }
+}
+
+#[allow(dead_code)] // wired into startup by e11s01t5
+impl Drop for SessionScope {
+    fn drop(&mut self) {
+        self.restore();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
