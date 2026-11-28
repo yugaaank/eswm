@@ -1,7 +1,7 @@
 spec: specs/epics/e09-design-decisions/e09s04-lua-config.md
 story_id: e09s04
 title: 'Lua config shape: declarative config, function binds, rules, reload'
-status: pending
+status: completed
 bcps: 2
 tasks:
   - id: e09s04t1

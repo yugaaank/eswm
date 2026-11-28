@@ -1,5 +1,6 @@
 story_id: e09s05
 verified_at: null
+closed_at: "2026-11-28T13:22:44Z"
 verifier: develop-tdd
 risk: P1
 branch: e09-lua-toplevel-rules
@@ -12,44 +13,47 @@ phases:
   preflight:
     passed: true
     command: "cargo clippy --all-targets && cargo test && cargo build && python3 scripts/spec-lint.py"
-    note: "Final contiguous run at HEAD 604e759: clippy warning-free, 337 passed, build green, spec-lint ok (27 task files, 9 epics)."
+    note: "Final contiguous run on the closure working tree: clippy warning-free, 337 passed, build green, spec-lint ok (27 task files, 9 epics)."
   task_verification:
     t1: {command: "cargo test --bin eswm toplevel_first_commit", passed: true, result: "3 passed — real xdg client registers only after first commit with real app_id/title; initial configure precedes registration; early destroy is a no-op"}
     t2: {command: "cargo test --bin eswm toplevel_index", passed: true, result: "3 passed — BTreeMap lookup, two clients independent, destroy and prune remove entries"}
     t3: {command: "cargo test --bin eswm client_request", passed: true, result: "3 passed — fullscreen and maximize set/unset via Presentation, saved rect restored, unregistered surface is a no-op"}
     t4: {command: "cargo test --bin eswm toplevel_rules", passed: true, result: "3 passed — rules match committed app_id at creation, non-match uses defaults, window_open/window_class carry real metadata in one tick"}
-    t5: {command: "manual: checklist in specs/verifications/uat-2026-11-26-e09s05-toplevel.md", passed: false, result: "PENDING — operator must run the 10-row live DRM checklist and return explicit PASS / FAIL / N-A decisions"}
+    t5: {command: "manual: checklist in specs/verifications/uat-2026-11-26-e09s05-toplevel.md", passed: false, result: "CLOSED NOT TESTED by explicit operator decision; all 10 rows N/A; no PASS and no waiver"}
   terminal_verdict:
     command: "cargo clippy --all-targets && cargo test && cargo build && python3 scripts/spec-lint.py"
     exit_code: 0
-    note: "Final contiguous run at HEAD 604e759 before evidence close: clippy clean, 337 tests, build green, spec-lint ok."
+    note: "Final contiguous run on the closure working tree: clippy clean, 337 tests, build green, spec-lint ok."
   manual:
     passed: false
-    pending: true
-    status: pending_operator_uat
+    tested: false
+    pending: false
+    status: closed_not_tested_by_operator_decision
     prepared_at: "2026-11-26T17:40:08Z"
-    completed_at: null
+    closed_at: "2026-11-28T13:22:44Z"
     owner: operator
     checklist: specs/verifications/uat-2026-11-26-e09s05-toplevel.md
-    reason: "Agent cannot run DRM/libseat inside the existing Wayland session (VT grab would kill the operator session). Operator must run the 10-row checklist on a real TTY and return an explicit PASS / FAIL / N-A decision per row."
-    evidence: []
+    reason: "Operator instructed 'mark this not tested but done' on 2026-11-28. No live DRM UAT was performed: eswm was never started on a VT for this story. Closed as an explicit operator risk acceptance, not a verification and not a waiver. Ghost windows do not respond to performance reviews, but they also did not get looked at here."
+    evidence:
+      - "specs/verifications/uat-2026-11-26-e09s05-toplevel.md (checklist prepared 2026-11-26, not executed)"
     observed_pass: []
-    na_checks: []
     failed_checks: []
-    pending_checks:
-      - "1 spawn one client with real app_id/title in state"
-      - "2 window_open and window_class carry matching id and real class in one tick"
-      - "3 two clients independent on focus/move/close"
-      - "4 client F11 fullscreen applies Presentation::Fullscreen and emits window_mode"
-      - "5 client unfullscreen restores tiled placement"
-      - "6 client maximize saves and restores rect"
-      - "7 close leaves no stale window or dock entry"
-      - "8 window_rule matches real app_id at creation"
-      - "9 destroy before first commit leaves no window or window_open"
-      - "10 popups and keyboard focus still work after commit-hook change"
-    automated_proxy: "toplevel_first_commit (3), toplevel_index (3), client_request (3), toplevel_rules (3) drive a real wayland-client fixture over a Unix socket. They prove timing, lookup, request semantics and event metadata; they cannot prove live focus feel, real F11 behaviour or popup behaviour after the commit-hook change."
+    na_checks:
+      - {check: "1 spawn one client with real app_id/title in state", decision: "N/A by operator at 2026-11-28T13:22:44Z", reason: "Operator chose to close without live UAT; no VT run performed."}
+      - {check: "2 window_open and window_class carry matching id and real class in one tick", decision: "N/A by operator at 2026-11-28T13:22:44Z", reason: "Operator chose to close without live UAT; no VT run performed."}
+      - {check: "3 two clients independent on focus/move/close", decision: "N/A by operator at 2026-11-28T13:22:44Z", reason: "Operator chose to close without live UAT; no VT run performed."}
+      - {check: "4 client F11 fullscreen applies Presentation::Fullscreen and emits window_mode", decision: "N/A by operator at 2026-11-28T13:22:44Z", reason: "Operator chose to close without live UAT; no VT run performed."}
+      - {check: "5 client unfullscreen restores tiled placement", decision: "N/A by operator at 2026-11-28T13:22:44Z", reason: "Operator chose to close without live UAT; no VT run performed."}
+      - {check: "6 client maximize saves and restores rect", decision: "N/A by operator at 2026-11-28T13:22:44Z", reason: "Operator chose to close without live UAT; no VT run performed."}
+      - {check: "7 close leaves no stale window or dock entry", decision: "N/A by operator at 2026-11-28T13:22:44Z", reason: "Operator chose to close without live UAT; no VT run performed."}
+      - {check: "8 window_rule matches real app_id at creation", decision: "N/A by operator at 2026-11-28T13:22:44Z", reason: "Operator chose to close without live UAT; no VT run performed."}
+      - {check: "9 destroy before first commit leaves no window or window_open", decision: "N/A by operator at 2026-11-28T13:22:44Z", reason: "Operator chose to close without live UAT; no VT run performed."}
+      - {check: "10 popups and keyboard focus still work after commit-hook change", decision: "N/A by operator at 2026-11-28T13:22:44Z", reason: "Operator chose to close without live UAT; no VT run performed."}
+    pending_checks: []
+    risk_accepted: true
     waivers: []
-    gate: "e09s05t5 stays failing until the operator returns explicit per-row decisions. No row has been waived. No merge into local main and no push until explicitly authorised."
+    automated_proxy: "toplevel_first_commit (3), toplevel_index (3), client_request (3), toplevel_rules (3) drive a real wayland-client fixture over a Unix socket. They prove timing, lookup, set/unset request semantics and event metadata; they cannot prove live focus feel, real F11 behaviour or popup behaviour after the commit-hook change."
+    gate: "Closed by explicit operator decision without live testing. Automated gate green; live app behaviour remains unverified. No merge into local main and no push until the operator explicitly authorises."
   security_scan:
     passed: true
     automated_only: true
@@ -58,8 +62,8 @@ phases:
     skipped: true
     reason: "scripts/check-blind-spots.sh not present (e09s01/e09s02/e09s03/e10s02 precedent)."
   gaps:
-    closed: false
+    closed: true
     notes:
-      - "Manual UAT pending operator decisions; no row has been waived."
+      - "Manual UAT closed by explicit operator decision on 2026-11-28: not tested, done. All 10 rows are N/A by that decision; no row was waived and none was claimed as PASS."
       - "Event shapes preserved: window_open {id}, window_class {id, class}; window_class is now queued at first-commit registration so it lands in the same tick as window_open."
       - "CI remains unverified per operator skip precedent; nothing pushed to origin/main."

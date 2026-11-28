@@ -4,7 +4,7 @@
 **type:** refactor
 **risk:** P1 (shared xdg-shell ownership path; see `specs/IMPACT_LATEST.md`)
 **context:** window model / xdg shell
-**status:** pending
+**status:** completed
 **bcps:** 3
 **delta:** ADDED + MODIFIED
 

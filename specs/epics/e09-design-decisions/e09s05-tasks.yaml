@@ -1,7 +1,7 @@
 spec: specs/epics/e09-design-decisions/e09s05-toplevel-requests-rules.md
 story_id: e09s05
 title: 'Toplevel ownership, client requests and window rules'
-status: pending
+status: completed
 bcps: 3
 tasks:
   - id: e09s05t1
@@ -79,7 +79,8 @@ tasks:
     verify: 'manual: checklist in specs/verifications/e09s05-verify.yaml'
     risk: P1
     security: none
-    status: failing
+    status: done
+    acceptance: 'CLOSED NOT TESTED by explicit operator decision 2026-11-28T13:22:44Z; all 10 UAT rows N/A, risk accepted, no waiver and no PASS claimed'
     allure:
       severity: high
       categories:

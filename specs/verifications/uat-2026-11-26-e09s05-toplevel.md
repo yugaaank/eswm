@@ -1,5 +1,8 @@
 # UAT handoff — e09s05 toplevel ownership, requests and rules (live DRM)
 
+> **Closed 2026-11-28T13:22:44Z:** NOT TESTED, done by explicit operator decision.
+> All 10 rows below are N/A; no PASS claimed and no waiver. See `e09s05-verify.yaml`.
+
 Date prepared: 2026-11-26
 Branch: `e09-lua-toplevel-rules`
 Operator: **you**. The fixture tests drive a real xdg-shell client over a Unix

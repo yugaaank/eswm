@@ -4,7 +4,7 @@
 **type:** refactor
 **risk:** P1 (raised from P3: shared Lua API consumed by Tacit; see `specs/IMPACT_LATEST.md`)
 **context:** lua
-**status:** pending
+**status:** completed
 **bcps:** 2
 **delta:** ADDED + MODIFIED
 

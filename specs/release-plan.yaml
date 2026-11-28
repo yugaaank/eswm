@@ -77,7 +77,7 @@ epics:
     slug: design-decisions
     title: Design Decisions (Window Model, Outputs, IPC, Lua)
     wsjf_rank: 8
-    status: in_progress
+    status: completed
     stories: []
     description: |
       Settle shapes that leak into IPC JSON, Lua API and Tacit backend: window

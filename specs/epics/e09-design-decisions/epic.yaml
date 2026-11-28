@@ -28,12 +28,12 @@ stories:
     title: "Lua config shape: declarative es.config{}, es.bind with function/action"
     bcps: 2
     delta: MODIFIED
-    status: pending
+    status: completed
   - id: e09s05
     title: "Toplevel ownership, client requests and window rules"
     bcps: 3
     delta: ADDED
-    status: pending
+    status: completed
     notes: |
       Split from e09s01 during re-plan 2026-11-22. Covers: WM-owned ToplevelSurface
       registration on first commit (real app_id/title), fullscreen_request/

@@ -1,5 +1,8 @@
 # UAT handoff — e09s04 Lua config shape (live DRM)
 
+> **Closed 2026-11-28T13:22:44Z:** NOT TESTED, done by explicit operator decision.
+> All 12 rows below are N/A; no PASS claimed and no waiver. See `e09s04-verify.yaml`.
+
 Date prepared: 2026-11-26
 Branch: `e09-lua-toplevel-rules`
 Operator: **you**. The unit tests prove validation in-process; only a live TTY

@@ -1,5 +1,6 @@
 story_id: e09s04
 verified_at: null
+closed_at: "2026-11-28T13:22:44Z"
 verifier: develop-tdd
 risk: P1
 branch: e09-lua-toplevel-rules
@@ -12,7 +13,7 @@ phases:
   preflight:
     passed: true
     command: "cargo clippy --all-targets && cargo test && cargo build && python3 scripts/spec-lint.py"
-    note: "Final contiguous run at HEAD 604e759: clippy warning-free, 337 passed, build green, spec-lint ok (27 task files, 9 epics)."
+    note: "Final contiguous run on the closure working tree: clippy warning-free, 337 passed, build green, spec-lint ok (27 task files, 9 epics)."
   task_verification:
     t1: {command: "cargo test --bin eswm config_table", passed: true, result: "valid block applies; unknown key and wrong type error by name; no partial application"}
     t2: {command: "cargo test --bin eswm lua_function_bind", passed: true, result: "Lua function binds register, execute with the optional arg, bad keys still error"}
@@ -24,35 +25,39 @@ phases:
   terminal_verdict:
     command: "cargo clippy --all-targets && cargo test && cargo build && python3 scripts/spec-lint.py"
     exit_code: 0
-    note: "Final contiguous run at HEAD 604e759 before evidence close: clippy clean, 337 tests, build green, spec-lint ok."
+    note: "Final contiguous run on the closure working tree: clippy clean, 337 tests, build green, spec-lint ok."
   manual:
     passed: false
-    pending: true
-    status: pending_operator_uat
+    tested: false
+    pending: false
+    status: closed_not_tested_by_operator_decision
     prepared_at: "2026-11-26T17:40:08Z"
-    completed_at: null
+    closed_at: "2026-11-28T13:22:44Z"
     owner: operator
     checklist: specs/verifications/uat-2026-11-26-e09s04-lua-config.md
-    reason: "Agent cannot run DRM/libseat inside the existing Wayland session (VT grab would kill the operator session). Operator must run the 12-row checklist on a real TTY and return an explicit PASS / FAIL / N-A decision per row."
-    evidence: []
+    reason: "Operator instructed 'mark this not tested but done' on 2026-11-28. No live DRM UAT was performed: eswm was never started on a VT for this story. Closed as an explicit operator risk acceptance, not a verification and not a waiver. The raccoons got the night off."
+    evidence:
+      - "specs/verifications/uat-2026-11-26-e09s04-lua-config.md (checklist prepared 2026-11-26, not executed)"
     observed_pass: []
-    na_checks: []
     failed_checks: []
-    pending_checks:
-      - "1 clean startup with the registered set_wm_mode setter"
-      - "2 declarative es.config{} values apply on reload"
-      - "3 unknown key errors by name with no partial apply"
-      - "4 wrong type errors by key with no partial apply"
-      - "5 function bind fires once per press"
-      - "6 event hook receives event data"
-      - "7 window_rule from config applies to a spawned client"
-      - "8 two reloads emit one legacy + one bus frame each, binds not duplicated"
-      - "9 failed reload keeps the previous config"
-      - "10 all six stubs raise not implemented: <name>"
-      - "11 is_file_exists returns true for a real file and false for a missing one"
-      - "12 decoration setter is visible without restart"
+    na_checks:
+      - {check: "1 clean startup with the registered set_wm_mode setter", decision: "N/A by operator at 2026-11-28T13:22:44Z", reason: "Operator chose to close without live UAT; no VT run performed."}
+      - {check: "2 declarative es.config{} values apply on reload", decision: "N/A by operator at 2026-11-28T13:22:44Z", reason: "Operator chose to close without live UAT; no VT run performed."}
+      - {check: "3 unknown key errors by name with no partial apply", decision: "N/A by operator at 2026-11-28T13:22:44Z", reason: "Operator chose to close without live UAT; no VT run performed."}
+      - {check: "4 wrong type errors by key with no partial apply", decision: "N/A by operator at 2026-11-28T13:22:44Z", reason: "Operator chose to close without live UAT; no VT run performed."}
+      - {check: "5 function bind fires once per press", decision: "N/A by operator at 2026-11-28T13:22:44Z", reason: "Operator chose to close without live UAT; no VT run performed."}
+      - {check: "6 event hook receives event data", decision: "N/A by operator at 2026-11-28T13:22:44Z", reason: "Operator chose to close without live UAT; no VT run performed."}
+      - {check: "7 window_rule from config applies to a spawned client", decision: "N/A by operator at 2026-11-28T13:22:44Z", reason: "Operator chose to close without live UAT; no VT run performed."}
+      - {check: "8 two reloads emit one legacy + one bus frame each, binds not duplicated", decision: "N/A by operator at 2026-11-28T13:22:44Z", reason: "Operator chose to close without live UAT; no VT run performed."}
+      - {check: "9 failed reload keeps the previous config", decision: "N/A by operator at 2026-11-28T13:22:44Z", reason: "Operator chose to close without live UAT; no VT run performed."}
+      - {check: "10 all six stubs raise not implemented: <name>", decision: "N/A by operator at 2026-11-28T13:22:44Z", reason: "Operator chose to close without live UAT; no VT run performed."}
+      - {check: "11 is_file_exists returns true for a real file and false for a missing one", decision: "N/A by operator at 2026-11-28T13:22:44Z", reason: "Operator chose to close without live UAT; no VT run performed."}
+      - {check: "12 decoration setter is visible without restart", decision: "N/A by operator at 2026-11-28T13:22:44Z", reason: "Operator chose to close without live UAT; no VT run performed."}
+    pending_checks: []
+    risk_accepted: true
+    waivers: []
     automated_proxy: "config_table, lua_function_bind, lua_event_hook, lua_window_rule, config_reload, lua_stub, decoration_refcell plus full preflight. These prove in-process validation, callback dispatch, replacement-on-reload and stub strings; they cannot prove a live TTY reload preserves the working session."
-    gate: "Not closed. Record stays pending until the operator returns explicit per-row decisions. No merge into local main and no push until explicitly authorised."
+    gate: "Closed by explicit operator decision without live testing. Automated gate green; live app behaviour remains unverified. No merge into local main and no push until the operator explicitly authorises."
   security_scan:
     passed: true
     automated_only: true
@@ -61,8 +66,8 @@ phases:
     skipped: true
     reason: "scripts/check-blind-spots.sh not present (e09s01/e09s02/e09s03/e10s02 precedent)."
   gaps:
-    closed: false
+    closed: true
     notes:
-      - "Manual UAT pending operator decisions; no row has been waived."
+      - "Manual UAT closed by explicit operator decision on 2026-11-28: not tested, done. All 12 rows are N/A by that decision; no row was waived and none was claimed as PASS."
       - "README.md §Configuration still documents es.dsp.set_layout_mode, removed before this branch; config.example.lua was fixed by e09s04t6. Logged as a doc nit, not changed here because the story scope only named the example config."
       - "CI remains unverified per operator skip precedent; nothing pushed to origin/main."
