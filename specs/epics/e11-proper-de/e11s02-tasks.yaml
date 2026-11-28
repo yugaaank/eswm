@@ -9,7 +9,7 @@ tasks:
   verify: cargo test --bin eswm tests::portals_conf_defaults_to_gtk
   risk: P2
   security: low
-  status: failing
+  status: passing
   allure:
     severity: normal
     categories: [e11-proper-de, portal, unit]
