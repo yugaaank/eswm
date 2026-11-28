@@ -48,7 +48,9 @@ unavailable user bus produce a warning, never a startup failure.
 #### ADDED: Opt-out and ownership-safe cleanup
 An explicit opt-out env var (`ESWM_NO_SD_VARS`) skips all external exports. On
 clean shutdown eswm restores only the variables it actually changed; values a
-user changed afterwards survive.
+user changed afterwards survive. The external restoration covers the systemd
+user environment and the D-Bus activation environment; D-Bus has no unset call,
+so a previously absent value is cleared to an empty string there.
 
 ## Reason for depth
 
@@ -73,6 +75,13 @@ user changed afterwards survive.
 5. Create the scope at `run_udev()` startup, drop it on shutdown, and have
    `spawn_program()` source child identity from the same snapshot; run the
    operator UAT below → verify: `cargo test --bin eswm session_env::tests::session_scope_drops_once`
+6. Keep caller-set child env values instead of overwriting them with the eswm
+   identity → verify: `cargo test --bin eswm session_env::tests::caller_env_values_are_preserved`
+7. Snapshot the systemd user environment before export and restore it on
+   shutdown; clear the D-Bus activation entries eswm added and skip values a
+   user changed meanwhile → verify: `cargo test --bin eswm session_env::tests::external_restore_args_are_ownership_safe`
+8. Cover the opt-out guard and optional-command failure branches without a live
+   bus → verify: `cargo test --bin eswm session_env::tests::optional_export_paths_do_not_panic`
 
 ## Verification script (operator, live DRM only)
 
@@ -91,14 +100,16 @@ user changed afterwards survive.
 | 1 | Start from a TTY, no opt-out | PASS (operator: clean `eswmdev` session on VT4) |
 | 2 | `systemctl --user show-environment` lists four eswm values | PASS (operator: all four values shown in the `eswmdev` session) |
 | 3 | GTK/Qt file picker stays on eswm | PASS (operator: Super+V check; picker opened on eswm) |
-| 4 | Clean quit removes only eswm-owned values | PASS (operator: `Super+Alt+Backspace`, then `eswm-env` showed no identity vars) |
+| 4 | Clean quit removes only eswm-owned values | PASS (operator on the pre-restore build: `Super+Alt+Backspace`, then `eswm-env` showed no identity vars). External restore was added after review and is unit-covered only. |
 | 5 | `ESWM_NO_SD_VARS=1` starts with a skip warning | N_A — operator explicitly skipped; no PASS claimed |
 
 Live PASS rows come from the operator's clean `eswmdev` login session. This
 agent session runs inside an existing graphical session and must not grab the
 VT (ADR-0002), so it did not start or quit eswm. Row 5 was explicitly skipped
-by the operator, so no opt-out PASS is claimed. Automated unit coverage for
-the export commands, ownership and child env is green.
+by the operator, so no opt-out PASS is claimed. A release review found that the
+first build restored process env only; steps 6-8 add caller-env preservation,
+external user-session restore and guard-path coverage after that evidence. The
+new external restore has unit coverage but no fresh live PASS.
 
 ## Out of scope
 

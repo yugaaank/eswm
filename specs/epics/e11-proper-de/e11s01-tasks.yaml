@@ -1,7 +1,7 @@
 spec: specs/epics/e11-proper-de/e11s01-session-identity.md
 story_id: e11s01
 title: 'Session identity export with graceful degradation'
-status: completed
+status: in_progress
 bcps: 5
 tasks:
 - id: e11s01t1
@@ -49,3 +49,30 @@ tasks:
   allure:
     severity: high
     categories: [e11-proper-de, integration, udev]
+- id: e11s01t6
+  description: 'Keep caller-set child environment values when applying the eswm identity; RED then GREEN'
+  verify: cargo test --bin eswm session_env::tests::caller_env_values_are_preserved
+  risk: P2
+  security: low
+  status: failing
+  allure:
+    severity: normal
+    categories: [e11-proper-de, session, unit]
+- id: e11s01t7
+  description: 'Snapshot the systemd user environment before export and restore it on shutdown, clearing D-Bus activation entries eswm added; RED then GREEN'
+  verify: cargo test --bin eswm session_env::tests::external_restore_args_are_ownership_safe
+  risk: P1
+  security: low
+  status: failing
+  allure:
+    severity: high
+    categories: [e11-proper-de, session, unit]
+- id: e11s01t8
+  description: 'Cover the opt-out guard and optional-command success, failure and missing-tool branches without a live bus'
+  verify: cargo test --bin eswm session_env::tests::optional_export_paths_do_not_panic
+  risk: P3
+  security: none
+  status: failing
+  allure:
+    severity: minor
+    categories: [e11-proper-de, session, unit]
